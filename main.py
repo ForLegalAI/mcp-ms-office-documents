@@ -12,6 +12,8 @@ from pathlib import Path
 from config import get_config
 from xml_tools import create_xml_file
 from middleware import ApiKeyAuthMiddleware
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse
 
 import logging
 mcp = FastMCP("MCP Office Documents")
@@ -26,6 +28,48 @@ if config.api_key:
     logger.info("[auth] API key authentication enabled")
 else:
     logger.info("[auth] No API_KEY set – authentication disabled")
+
+
+# ---------------------------------------------------------------------------
+# Kubernetes health-check endpoints
+# ---------------------------------------------------------------------------
+# These plain HTTP routes are registered at the Starlette layer (via
+# FastMCP's @custom_route) and therefore sit OUTSIDE the MCP protocol
+# middleware stack — they intentionally bypass the API-key auth middleware
+# so kubelet can poll them without credentials.
+#
+# Why HTTP (not TCP) probes?
+#   A TCP probe only verifies the socket accepts a connection. If the
+#   Python process is wedged but the listener is still bound, the kubelet
+#   never restarts the pod. An HTTP probe forces an actual response from
+#   the application, catching "alive port, dead process" failures.
+#
+# Probes (see k8s deployment manifest):
+#   /healths — startupProbe   (pod has started)
+#   /healthr — readinessProbe (pod is ready to receive traffic)
+#   /healthl — livenessProbe  (pod is alive; restart on failure)
+#
+# Each endpoint returns 200 OK with a short plain-text body. If the server
+# event loop is wedged, the request will time out and kubelet will mark
+# the probe as failed.
+# ---------------------------------------------------------------------------
+
+@mcp.custom_route("/healths", methods=["GET"])
+async def health_startup(request: Request) -> PlainTextResponse:
+    """Startup probe — returns 200 OK once the HTTP server is accepting requests."""
+    return PlainTextResponse("ok", status_code=200)
+
+
+@mcp.custom_route("/healthr", methods=["GET"])
+async def health_ready(request: Request) -> PlainTextResponse:
+    """Readiness probe — returns 200 OK when the server can serve traffic."""
+    return PlainTextResponse("ready", status_code=200)
+
+
+@mcp.custom_route("/healthl", methods=["GET"])
+async def health_live(request: Request) -> PlainTextResponse:
+    """Liveness probe — returns 200 OK while the event loop is responsive."""
+    return PlainTextResponse("alive", status_code=200)
 
 # Look for dynamic email templates in production and local locations.
 # Production (container): /app/config/email_templates.yaml
