@@ -1,0 +1,16 @@
+# Ruff linter configuration
+target-version = "py312"
+line-length = 250
+
+[lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+]
+ignore = [
+    "E501",  # line too long (handled by line-length, but be lenient)
+    "F841",  # local variable assigned but never used (allow during dev)
+]
+
+[lint.per-file-ignores]
+"tests/**" = ["E", "F"]  # lenient for test files

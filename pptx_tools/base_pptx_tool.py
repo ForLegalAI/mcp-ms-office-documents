@@ -7,7 +7,7 @@ from .slide_builder import PowerpointPresentation
 logger = logging.getLogger(__name__)
 
 
-def create_presentation(slides: List[Dict[str, Any]], format: str = "4:3") -> str:
+def create_presentation(slides: List[Dict[str, Any]], format: str = "4:3", file_name: str | None = None) -> str:
     """Create a PowerPoint presentation from structured slides and upload it.
 
     :param slides: List of slide dicts with keys based on slide_type
@@ -29,7 +29,7 @@ def create_presentation(slides: List[Dict[str, Any]], format: str = "4:3") -> st
         file_object = presentation.save()
 
         # Upload presentation
-        text = upload_file(file_object, "pptx")
+        text = upload_file(file_object, "pptx", filename=file_name)
         file_object.close()
 
         logger.info("PowerPoint upload completed")

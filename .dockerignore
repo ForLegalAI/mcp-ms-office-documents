@@ -142,6 +142,7 @@ $RECYCLE.BIN/
 .svn/
 .hg/
 .bzr/
+.github/
 
 # =============================================================================
 # DOCKER AND CONTAINERIZATION

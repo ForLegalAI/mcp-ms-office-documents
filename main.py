@@ -169,7 +169,8 @@ class PowerPointSlide(BaseModel):
     annotations={"title": "Markdown to Excel Converter"}
 )
 async def create_excel_document(
-    markdown_content: Annotated[str, Field(description="Markdown content containing tables, headers, and formulas. Use '## Sheet: Sheet Name' to create multiple worksheets. Use T1.B[0] for cross-table references and B[0] for current row references. Use SheetName!T1.B[0] for cross-sheet references (resolves to SheetName!B2 in Excel). ALWAYS use [0], [1], [2] notation, NEVER use absolute row numbers like B2, B3. Do NOT count table header as first row, first row has index [0]. Supports cell formatting: **bold**, *italic*.")]
+    markdown_content: Annotated[str, Field(description="Markdown content containing tables, headers, and formulas. Use '## Sheet: Sheet Name' to create multiple worksheets. Use T1.B[0] for cross-table references and B[0] for current row references. Use SheetName!T1.B[0] for cross-sheet references (resolves to SheetName!B2 in Excel). ALWAYS use [0], [1], [2] notation, NEVER use absolute row numbers like B2, B3. Do NOT count table header as first row, first row has index [0]. Supports cell formatting: **bold**, *italic*.")],
+    file_name: Annotated[Optional[str], Field(description="Custom filename for the output file (without extension). If not provided, a unique identifier will be used.", default=None)] = None,
 ) -> str:
     """
     Converts markdown to Excel with advanced formula support.
@@ -178,7 +179,7 @@ async def create_excel_document(
     logger.info("Converting markdown to Excel document")
 
     try:
-        result = await run_blocking(markdown_to_excel, markdown_content)
+        result = await run_blocking(markdown_to_excel, markdown_content, file_name=file_name)
         logger.info("Excel document uploaded successfully")
         return result
     except Exception as e:
@@ -232,6 +233,7 @@ async def create_word_document(
     header_text: Annotated[Optional[str], Field(description="Text for document header (top of every page). Use {page} for auto page number, {pages} for total pages.", default=None)] = None,
     footer_text: Annotated[Optional[str], Field(description="Text for document footer (bottom of every page). Use {page} for auto page number, {pages} for total pages.", default=None)] = None,
     include_toc: Annotated[Optional[bool], Field(description="If true, inserts a Table of Contents at the beginning of the document. The TOC updates automatically when opened in Word.", default=False)] = False,
+    file_name: Annotated[Optional[str], Field(description="Custom filename for the output file (without extension). If not provided, a unique identifier will be used.", default=None)] = None,
 ) -> str:
     """
     Converts markdown to professionally formatted Word document.
@@ -250,6 +252,7 @@ async def create_word_document(
             header_text=header_text,
             footer_text=footer_text,
             include_toc=include_toc or False,
+            file_name=file_name,
         )
         logger.info("Word document uploaded successfully")
         return result
@@ -281,14 +284,15 @@ All slides support optional 'speaker_notes': str field."""
     format: Annotated[Literal["4:3", "16:9"], Field(
         default="16:9",
         description="Aspect ratio: '16:9' (widescreen) or '4:3' (traditional)"
-    )] = "16:9"
+    )] = "16:9",
+    file_name: Annotated[Optional[str], Field(description="Custom filename for the output file (without extension). If not provided, a unique identifier will be used.", default=None)] = None,
 ) -> str:
     """Creates PowerPoint presentations with structured slide models and professional templates."""
 
     logger.info(f"Creating PowerPoint presentation with {len(slides)} slides in {format} format")
 
     try:
-        result = await run_blocking(create_presentation, slides, format)
+        result = await run_blocking(create_presentation, slides, format, file_name=file_name)
         logger.info(f"PowerPoint presentation created: {result}")
         return result
     except Exception as e:
@@ -308,7 +312,8 @@ async def create_email_draft(
     cc: Annotated[Optional[List[str]], Field(description="List of CC recipient email addresses", default=None)],
     bcc: Annotated[Optional[List[str]], Field(description="List of BCC recipient email addresses", default=None)],
     priority: Annotated[str, Field(description="Email priority: 'low', 'normal', or 'high'", default="normal")],
-    language: Annotated[str, Field(description="Language code for proofreading in Outlook (e.g., 'cs-CZ' for Czech, 'en-US' for English, 'de-DE' for German, 'sk-SK' for Slovak)", default="cs-CZ")]
+    language: Annotated[str, Field(description="Language code for proofreading in Outlook (e.g., 'cs-CZ' for Czech, 'en-US' for English, 'de-DE' for German, 'sk-SK' for Slovak)", default="cs-CZ")],
+    file_name: Annotated[Optional[str], Field(description="Custom filename for the output file (without extension). If not provided, a unique identifier will be used.", default=None)] = None,
 ) -> str:
     """
     Creates professional email drafts in EML format with preset styling and language settings.
@@ -326,6 +331,7 @@ async def create_email_draft(
             content=content,
             priority=priority,
             language=language,
+            file_name=file_name,
         )
         logger.info(f"Email draft created: {result}")
         return result
@@ -340,7 +346,8 @@ async def create_email_draft(
     annotations={"title": "XML File Creator"}
 )
 async def create_xml_document(
-    xml_content: Annotated[str, Field(description="Complete, well-formed XML content. Must be valid XML with proper opening and closing tags.")]
+    xml_content: Annotated[str, Field(description="Complete, well-formed XML content. Must be valid XML with proper opening and closing tags.")],
+    file_name: Annotated[Optional[str], Field(description="Custom filename for the output file (without extension). If not provided, a unique identifier will be used.", default=None)] = None,
 ) -> str:
     """
     Creates an XML file from provided XML content.
@@ -350,7 +357,7 @@ async def create_xml_document(
     logger.info("Creating XML file")
 
     try:
-        result = await run_blocking(create_xml_file, xml_content)
+        result = await run_blocking(create_xml_file, xml_content, file_name=file_name)
         logger.info(f"XML file created successfully.")
         return result
     except Exception as e:

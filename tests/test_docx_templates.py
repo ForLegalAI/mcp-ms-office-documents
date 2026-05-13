@@ -1178,6 +1178,36 @@ Steps to follow:
         path = save_document(doc, "list_15_with_empty_lines.docx")
         assert path.exists()
 
+    def test_no_empty_paragraph_before_block_content(self):
+        """Regression test: block content replacing a standalone placeholder must not
+        leave a spurious empty paragraph before the inserted content."""
+        doc = Document()
+        para = doc.add_paragraph()
+        para.add_run("{{items}}")
+
+        context = {"items": "- Alpha\n- Beta\n- Gamma"}
+
+        _replace_placeholders_in_document(doc, context)
+
+        path = save_document(doc, "list_16_no_empty_paragraph.docx")
+        assert path.exists()
+
+        doc2 = Document(path)
+        non_empty = [p for p in doc2.paragraphs if p.text.strip()]
+        empty = [p for p in doc2.paragraphs if not p.text.strip()]
+
+        # All three list items must be present
+        assert len(non_empty) == 3, f"Expected 3 non-empty paragraphs, got {len(non_empty)}"
+        assert any("Alpha" in p.text for p in non_empty)
+        assert any("Beta" in p.text for p in non_empty)
+        assert any("Gamma" in p.text for p in non_empty)
+
+        # There must be no empty paragraphs (the bug would leave one at the top)
+        assert len(empty) == 0, (
+            f"Expected no empty paragraphs, but found {len(empty)}: "
+            f"{[p.text for p in doc2.paragraphs]}"
+        )
+
 
 # =============================================================================
 # Heading Tests in Custom Templates

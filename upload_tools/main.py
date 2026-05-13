@@ -1,6 +1,6 @@
 import logging
 from config import get_config
-from .utils import generate_unique_object_name
+from .utils import generate_unique_object_name, generate_named_object_name
 from .backends.local import upload_to_local_folder
 from .backends.s3 import upload_to_s3
 from .backends.gcs import upload_to_gcs
@@ -29,17 +29,23 @@ elif UPLOAD_STRATEGY == "MINIO":
     logger.info("MinIO upload strategy set.")
 
 
-def upload_file(file_object, suffix: str) -> str:
+def upload_file(file_object, suffix: str, filename: str | None = None) -> str:
     """Upload a file to configured backend and return appropriate response.
 
     :param file_object: File-like object to upload
     :param suffix: File extension (e.g., 'pptx', 'docx', 'xlsx', 'eml')
+    :param filename: Optional human-readable filename (without extension). When provided,
+        the uploaded object will use this name (sanitized) with a short UUID prefix instead
+        of a full UUID.
     :return: Status message with download URL or save location
     :raises RuntimeError: If upload fails for any reason
     """
 
     try:
-        object_name = generate_unique_object_name(suffix)
+        if filename:
+            object_name = generate_named_object_name(filename, suffix)
+        else:
+            object_name = generate_unique_object_name(suffix)
     except Exception as e:
         logger.error("Failed to generate object name for suffix '%s': %s", suffix, e, exc_info=True)
         raise RuntimeError(f"Error preparing upload: {e}") from e

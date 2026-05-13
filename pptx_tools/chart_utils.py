@@ -5,11 +5,10 @@ using python-pptx's chart capabilities.
 """
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any, Optional
 
 from pptx.chart.data import CategoryChartData
 from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
-from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 
 logger = logging.getLogger(__name__)

@@ -1,7 +1,7 @@
 import io
 import logging
 import re
-from typing import List, Dict, Tuple
+from typing import List, Dict
 from openpyxl import Workbook
 
 from upload_tools import upload_file
@@ -74,7 +74,7 @@ def _scan_table_positions(lines: List[str]) -> Dict[str, Dict[str, int]]:
     return all_positions
 
 
-def markdown_to_excel(markdown_content: str) -> str:
+def markdown_to_excel(markdown_content: str, file_name: str | None = None) -> str:
     """Convert Markdown to Excel workbook (focused on tables and headers).
 
     Always starts from an empty Workbook (no templates).
@@ -200,7 +200,7 @@ def markdown_to_excel(markdown_content: str) -> str:
         logger.info("Saving Excel workbook to memory buffer")
         wb.save(file_object)
         file_object.seek(0)
-        result = upload_file(file_object, "xlsx")
+        result = upload_file(file_object, "xlsx", filename=file_name)
         logger.info("Excel upload completed (headers=%d, tables=%d)", headers_count, tables_count)
         return result
     except Exception as e:

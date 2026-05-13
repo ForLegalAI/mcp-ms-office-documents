@@ -27,7 +27,7 @@ def _create_workbook_from_markdown(markdown_content: str) -> Workbook:
     """
     captured = {}
 
-    def fake_upload(file_obj, suffix):
+    def fake_upload(file_obj, suffix, **kwargs):
         captured['data'] = file_obj.read()
         file_obj.seek(0)
         return "https://fake-url/test.xlsx"

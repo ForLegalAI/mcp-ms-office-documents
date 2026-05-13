@@ -54,7 +54,7 @@ def validate_xml(xml_content: str) -> Tuple[bool, str]:
         return False, f"Unexpected error during XML validation: {str(e)}"
 
 
-def create_xml_file(xml_content: str) -> str:
+def create_xml_file(xml_content: str, file_name: str | None = None) -> str:
     """Create an XML file from the provided XML content.
 
     Validates that the content is well-formed XML before saving.
@@ -101,7 +101,7 @@ def create_xml_file(xml_content: str) -> str:
 
         try:
             # Upload the file
-            result = upload_file(file_object, "xml")
+            result = upload_file(file_object, "xml", filename=file_name)
             logger.info("XML file uploaded successfully")
             return result
         finally:

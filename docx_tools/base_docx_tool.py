@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 
 def markdown_to_word(markdown_content, title=None, author=None, subject=None,
-                     header_text=None, footer_text=None, include_toc=False):
+                     header_text=None, footer_text=None, include_toc=False, file_name=None):
     """Convert Markdown to Word document."""
     logger.info("Starting markdown_to_word conversion")
     path = load_templates()
@@ -211,7 +211,7 @@ def markdown_to_word(markdown_content, title=None, author=None, subject=None,
         doc.save(file_object)
         file_object.seek(0)
 
-        result = upload_file(file_object, "docx")
+        result = upload_file(file_object, "docx", filename=file_name)
         file_object.close()
 
         logger.info(

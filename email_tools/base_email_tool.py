@@ -35,7 +35,7 @@ def _load_template() -> str:
         raise
 
 
-def create_eml(to=None, cc=None, bcc=None, re=None, content=None, priority="normal", language="cs-CZ"):
+def create_eml(to=None, cc=None, bcc=None, re=None, content=None, priority="normal", language="cs-CZ", file_name=None):
     """Create an unsent email draft (EML) using a Mustache HTML template.
 
     Template variables:
@@ -104,7 +104,7 @@ def create_eml(to=None, cc=None, bcc=None, re=None, content=None, priority="norm
         buffer.write(msg_bytes)
         buffer.seek(0)
 
-        return upload_file(buffer, "eml")
+        return upload_file(buffer, "eml", filename=file_name)
     except Exception as e:
         logger.error("Failed to create email draft: %s", e, exc_info=True)
         raise RuntimeError(f"Failed to create email draft: {e}") from e

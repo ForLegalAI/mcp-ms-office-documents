@@ -44,6 +44,8 @@ Just ask your AI to _"create a sales presentation"_ or _"draft a welcome email"_
 | 📧 **Email** | `create_email_draft` | HTML email drafts (`.eml`) · Subject, recipients, priority, language |
 | 🗂️ **XML** | `create_xml_file` | Well-formed XML files · Auto-validates & adds XML declaration if missing |
 
+All tools accept an optional **`file_name`** parameter. When provided, the output file will use that name (without extension) instead of a randomly generated identifier.
+
 **Bonus — Dynamic Templates:**
 
 - 📧 **Reusable Email Templates** — Define parameterized email layouts in YAML. Each becomes its own tool with typed arguments (e.g., `first_name`, `promo_code`).
@@ -124,12 +126,25 @@ Leave `API_KEY` empty or unset to allow all requests without authentication.
 
 Set `UPLOAD_STRATEGY=S3` and provide:
 
-| Variable | Description |
-|----------|-------------|
-| `AWS_ACCESS_KEY` | Your AWS access key |
-| `AWS_SECRET_ACCESS_KEY` | Your AWS secret key |
-| `AWS_REGION` | AWS region (e.g., `us-east-1`) |
-| `S3_BUCKET` | S3 bucket name |
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `S3_BUCKET` | S3 bucket name | ✅ Always |
+| `AWS_ACCESS_KEY` | AWS access key ID | ⚠️ See below |
+| `AWS_SECRET_ACCESS_KEY` | AWS secret access key | ⚠️ See below |
+| `AWS_REGION` | AWS region (e.g., `us-east-1`) | ⚠️ See below |
+
+**Credential modes:**
+
+- **Explicit credentials** — Set all three of `AWS_ACCESS_KEY`, `AWS_SECRET_ACCESS_KEY`, and `AWS_REGION`. Recommended for simple setups.
+
+- **AWS default credential chain** — Leave the credential variables unset and boto3 will automatically discover credentials from the standard chain:
+  - `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` environment variables
+  - Shared credential / config files (`~/.aws/credentials`)
+  - AWS SSO sessions (`aws sso login`) — useful for local development
+  - **IRSA (IAM Roles for Service Accounts)** — for AWS EKS deployments
+  - ECS container credentials / EC2 instance metadata (IMDSv2)
+
+  In this mode only `S3_BUCKET` is required; region is resolved automatically.
 
 </details>
 

@@ -213,21 +213,20 @@ def _replace_placeholder_in_paragraph(
 
         # Add text before placeholder (plain text, preserve any formatting would be complex)
         if text_before:
-            run = paragraph.add_run(text_before)
+            paragraph.add_run(text_before)
 
         if has_block_content and doc is not None:
-            # For block content, we need to insert as separate paragraphs
-            # First, handle any text_after by adding it later
-            if text_after:
-                # We'll need to add text_after to the last inserted paragraph
-                pass
-
             # Insert block content after this paragraph
             _insert_markdown_content_after_paragraph(doc, paragraph, value)
 
             # If there's text after, add it as a run to this paragraph
             if text_after:
                 paragraph.add_run(text_after)
+
+            # If the placeholder occupied the whole paragraph (no surrounding text),
+            # the paragraph is now empty – remove it to avoid a spurious blank line.
+            if not text_before and not text_after:
+                p_element.getparent().remove(p_element)
         else:
             # Simple inline replacement
             # Parse and add the replacement value with markdown formatting
@@ -525,7 +524,7 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any]) -> None:
                     doc.save(buffer)
                     buffer.seek(0)
 
-                    result = upload_file(buffer, "docx")
+                    result = upload_file(buffer, "docx", filename=payload.get("file_name") or _name)
                 finally:
                     buffer.close()
 

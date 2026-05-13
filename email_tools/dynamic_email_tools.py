@@ -159,7 +159,7 @@ def register_email_template_tools_from_yaml(mcp: FastMCP, yaml_path: Path) -> No
                         try:
                             buffer.write(msg.as_bytes())
                             buffer.seek(0)
-                            return upload_file(buffer, "eml")
+                            return upload_file(buffer, "eml", filename=safe_payload.get("file_name") or safe_payload.get("subject") or _name)
                         except Exception as e:  # pragma: no cover
                             logger.error(f"[dynamic-email] Error creating email draft for template '{_name}': {e}")
                             raise ToolError(f"Error creating email draft for template '{_name}': {e}")

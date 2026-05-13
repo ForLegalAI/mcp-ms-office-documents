@@ -154,7 +154,7 @@ class TestCreateXmlFile:
         """Test that XML declaration is added when not present."""
         captured_content = {}
 
-        def capture_upload(file_obj, suffix):
+        def capture_upload(file_obj, suffix, **kwargs):
             captured_content['data'] = file_obj.getvalue()
             return "http://example.com/file.xml"
 
@@ -172,7 +172,7 @@ class TestCreateXmlFile:
         """Test that existing XML declaration is preserved."""
         captured_content = {}
 
-        def capture_upload(file_obj, suffix):
+        def capture_upload(file_obj, suffix, **kwargs):
             captured_content['data'] = file_obj.getvalue()
             return "http://example.com/file.xml"
 
@@ -190,7 +190,7 @@ class TestCreateXmlFile:
         """Test that declared encoding is respected."""
         captured_content = {}
 
-        def capture_upload(file_obj, suffix):
+        def capture_upload(file_obj, suffix, **kwargs):
             captured_content['data'] = file_obj.getvalue()
             return "http://example.com/file.xml"
 
@@ -209,7 +209,7 @@ class TestCreateXmlFile:
         """Test that leading/trailing whitespace is stripped."""
         captured_content = {}
 
-        def capture_upload(file_obj, suffix):
+        def capture_upload(file_obj, suffix, **kwargs):
             captured_content['data'] = file_obj.getvalue()
             return "http://example.com/file.xml"
 
