@@ -1,4 +1,5 @@
 """Block-level markdown elements: tables, lists, images, alignment, horizontal lines."""
+import re
 import logging
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -68,9 +69,14 @@ def add_table_to_doc(table_data, doc):
             if j < cols:
                 try:
                     cell = word_table.cell(i, j)
+                    # Split on <br> variants to create multiple paragraphs in cell
+                    segments = re.split(r'<br\s*/?>', cell_text)
                     if cell.paragraphs:
                         cell.paragraphs[0].clear()
-                    parse_inline_formatting(cell_text, cell.paragraphs[0])
+                    parse_inline_formatting(segments[0], cell.paragraphs[0])
+                    for seg in segments[1:]:
+                        new_para = cell.add_paragraph()
+                        parse_inline_formatting(seg.strip(), new_para)
                 except Exception as e:
                     logger.warning("Failed to populate table cell [%d, %d]: %s", i, j, e)
     return word_table

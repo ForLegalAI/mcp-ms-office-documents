@@ -220,6 +220,32 @@ class TestTables:
         doc = save_test_document(markdown, "table_aligned.docx")
         assert doc is not None
 
+    def test_table_cell_line_breaks(self):
+        """Test that <br> in table cells creates multiple paragraphs."""
+        markdown = """| Header 1 | Header 2 |
+|----------|----------|
+| Line one<br>Line two | Single line |
+| **Bold**<br>*Italic* | A<br/>B<br>C |
+"""
+        doc = save_test_document(markdown, "table_cell_line_breaks.docx")
+        assert doc is not None
+        # Find the table
+        table = doc.tables[0]
+        # First data row, first cell should have 2 paragraphs
+        cell_0_0 = table.cell(1, 0)
+        assert len(cell_0_0.paragraphs) == 2
+        assert cell_0_0.paragraphs[0].text == "Line one"
+        assert cell_0_0.paragraphs[1].text == "Line two"
+        # First data row, second cell should have 1 paragraph
+        cell_0_1 = table.cell(1, 1)
+        assert len(cell_0_1.paragraphs) == 1
+        # Second data row, second cell should have 3 paragraphs (A, B, C)
+        cell_1_1 = table.cell(2, 1)
+        assert len(cell_1_1.paragraphs) == 3
+        assert cell_1_1.paragraphs[0].text == "A"
+        assert cell_1_1.paragraphs[1].text == "B"
+        assert cell_1_1.paragraphs[2].text == "C"
+
 
 # =============================================================================
 # Inline Formatting Tests

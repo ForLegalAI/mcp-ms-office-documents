@@ -70,6 +70,9 @@ _ALIGN_CLOSE_RE = re.compile(r'^</(?:center|div)>\s*$', re.IGNORECASE)
 
 _PAGE_TOKEN_RE = re.compile(r'(\{page}|\{pages})')
 
+# HTML <br> tag variants (used for line breaks inside table cells etc.)
+_BR_RE = re.compile(r'<br\s*/?>', re.IGNORECASE)
+
 
 # ---------------------------------------------------------------------------
 # Utility

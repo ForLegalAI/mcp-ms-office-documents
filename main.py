@@ -200,7 +200,7 @@ async def create_word_document(
         "- Headings: # H1, ## H2, ### H3, #### H4, ##### H5, ###### H6\n"
         "- Unordered lists: - item (or * or +); nest with 3-space indent\n"
         "- Ordered lists: 1. item, 2. item; nest with 3-space indent\n"
-        "- Tables: | H1 | H2 |\\n|---|---|\\n| C1 | C2 | (cells support inline formatting)\n"
+        "- Tables: | H1 | H2 |\\n|---|---|\\n| C1 | C2 | (cells support inline formatting and <br> for new paragraph)\n"
         "- Block quotes: > text (supports inline formatting)\n"
         "- Page break: --- (three+ dashes alone on a line — starts new page)\n"
         "- Horizontal line: *** (three+ asterisks alone on a line — visual separator)\n"

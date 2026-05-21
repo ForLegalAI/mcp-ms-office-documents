@@ -6,7 +6,7 @@ import logging
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.opc.constants import RELATIONSHIP_TYPE
-from .patterns import _INLINE_FORMAT_RE, _LINK_RE, _ESCAPE_RE
+from .patterns import _INLINE_FORMAT_RE, _LINK_RE, _ESCAPE_RE, _BR_RE
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +97,10 @@ def parse_inline_formatting(text, paragraph, bold=False, italic=False):
     for entity, char in _SAFE_HTML_ENTITIES:
         if entity in text:
             text = text.replace(entity, char)
+    # Normalize <br>, <br/>, <br /> tags to the two-space soft-break marker
+    # so they produce line breaks (common in table cells where real newlines
+    # would break the row).
+    text = _BR_RE.sub('  \n', text)
     escape_ctx = {"map": {}, "counter": 0}
     text = _handle_escapes(text, escape_ctx)
     line_parts = text.split('  \n')
