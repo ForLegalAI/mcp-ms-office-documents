@@ -25,8 +25,31 @@ ALIGNMENT_MAP = {
 # ---------------------------------------------------------------------------
 # Tables
 # ---------------------------------------------------------------------------
+_SEPARATOR_RE = re.compile(r'^[|:\-\s]+$')
+
+def _parse_alignment_row(line):
+    """Extract column alignments from a markdown table separator row.
+    Returns a list of alignment values (WD_ALIGN_PARAGRAPH) or None per column.
+    """
+    cells = [c.strip() for c in line.split('|')[1:-1]]
+    alignments = []
+    for cell in cells:
+        cell = cell.strip()
+        if cell.startswith(':') and cell.endswith(':'):
+            alignments.append(WD_ALIGN_PARAGRAPH.CENTER)
+        elif cell.endswith(':'):
+            alignments.append(WD_ALIGN_PARAGRAPH.RIGHT)
+        else:
+            alignments.append(None)  # left is default, no need to set explicitly
+    return alignments
+
 def parse_table(lines, start_idx):
-    """Parse markdown table and return the table data and next line index."""
+    """Parse markdown table and return table data, column alignments, and next line index.
+    Returns:
+        Tuple of (table_data, col_alignments, next_line_index).
+        table_data is a list of rows (each row is a list of cell strings).
+        col_alignments is a list of WD_ALIGN_PARAGRAPH values (or None) per column.
+    """
     table_lines = []
     i = start_idx
     while i < len(lines):
@@ -37,16 +60,48 @@ def parse_table(lines, start_idx):
         else:
             break
     if len(table_lines) < 2:
-        return None, start_idx + 1
+        return None, None, start_idx + 1
     table_data = []
+    col_alignments = None
     for line in table_lines:
-        if '---' in line or ':-:' in line or ':--' in line or '--:' in line:
-            continue
+        # Detect separator row and extract alignment
+        if _SEPARATOR_RE.match(line.replace('|', ' | ')):
+            cells = [c.strip() for c in line.split('|')[1:-1]]
+            if all(re.match(r'^:?-+:?$', c.strip()) for c in cells if c.strip()):
+                col_alignments = _parse_alignment_row(line)
+                continue
         cells = [cell.strip() for cell in line.split('|')[1:-1]]
         table_data.append(cells)
-    return table_data, i
-def add_table_to_doc(table_data, doc):
+    return table_data, col_alignments, i
+
+def _remove_table_borders(table):
+    """Remove all borders from a Word table (makes it invisible)."""
+    tbl = table._tbl
+    tblPr = tbl.tblPr
+    if tblPr is None:
+        tblPr = OxmlElement('w:tblPr')
+        tbl.insert(0, tblPr)
+    borders = OxmlElement('w:tblBorders')
+    for border_name in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
+        border = OxmlElement(f'w:{border_name}')
+        border.set(qn('w:val'), 'none')
+        border.set(qn('w:sz'), '0')
+        border.set(qn('w:space'), '0')
+        border.set(qn('w:color'), 'auto')
+        borders.append(border)
+    # Remove existing borders element if present
+    existing = tblPr.find(qn('w:tblBorders'))
+    if existing is not None:
+        tblPr.remove(existing)
+    tblPr.append(borders)
+
+def add_table_to_doc(table_data, doc, col_alignments=None, borderless=False):
     """Add table data to Word document.
+    Args:
+        table_data: List of rows, each a list of cell text strings.
+        doc: python-docx Document instance.
+        col_alignments: Optional list of WD_ALIGN_PARAGRAPH per column.
+        borderless: If True, remove all table borders (invisible table).
     Returns the created ``Table`` object, or ``None`` when the table could
     not be created (empty data or exception).
     """
@@ -64,6 +119,8 @@ def add_table_to_doc(table_data, doc):
         except Exception as e2:
             logger.error("Failed to create table: %s", e2, exc_info=True)
             return None
+    if borderless:
+        _remove_table_borders(word_table)
     for i, row_data in enumerate(table_data):
         for j, cell_text in enumerate(row_data):
             if j < cols:
@@ -77,6 +134,10 @@ def add_table_to_doc(table_data, doc):
                     for seg in segments[1:]:
                         new_para = cell.add_paragraph()
                         parse_inline_formatting(seg.strip(), new_para)
+                    # Apply column alignment to all paragraphs in cell
+                    if col_alignments and j < len(col_alignments) and col_alignments[j]:
+                        for para in cell.paragraphs:
+                            para.alignment = col_alignments[j]
                 except Exception as e:
                     logger.warning("Failed to populate table cell [%d, %d]: %s", i, j, e)
     return word_table

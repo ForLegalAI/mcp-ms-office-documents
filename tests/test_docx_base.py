@@ -211,7 +211,7 @@ class TestTables:
         assert doc is not None
 
     def test_table_with_alignment(self):
-        """Test table with column alignment markers."""
+        """Test table with column alignment markers applied to cells."""
         markdown = """| Left | Center | Right |
 |:-----|:------:|------:|
 | L1   | C1     | R1    |
@@ -219,6 +219,39 @@ class TestTables:
 """
         doc = save_test_document(markdown, "table_aligned.docx")
         assert doc is not None
+        table = doc.tables[0]
+        # Header row + 2 data rows
+        assert len(table.rows) == 3
+        # Check alignment on data cells
+        # Left column (:---) — default, so alignment is None
+        assert table.cell(1, 0).paragraphs[0].alignment is None
+        # Center column (:---:)
+        assert table.cell(1, 1).paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
+        # Right column (---:)
+        assert table.cell(1, 2).paragraphs[0].alignment == WD_ALIGN_PARAGRAPH.RIGHT
+
+    def test_table_borderless(self):
+        """Test that <!-- borderless --> directive removes table borders."""
+        markdown = """<!-- borderless -->
+| English | French |
+|---------|--------|
+| Hello   | Bonjour |
+| Goodbye | Au revoir |
+"""
+        doc = save_test_document(markdown, "table_borderless.docx")
+        assert doc is not None
+        table = doc.tables[0]
+        # Verify borders are set to 'none'
+        tblPr = table._tbl.tblPr
+        borders = tblPr.find('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}tblBorders')
+        assert borders is not None
+        # Check that all border elements have val='none'
+        for border in borders:
+            assert border.get('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}val') == 'none'
+        # Verify the directive itself didn't create a paragraph
+        # (only the table should be in the doc body, no "<!-- borderless -->" text)
+        for para in doc.paragraphs:
+            assert '<!--' not in para.text
 
     def test_table_cell_line_breaks(self):
         """Test that <br> in table cells creates multiple paragraphs."""

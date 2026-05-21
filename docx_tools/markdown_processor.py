@@ -118,9 +118,17 @@ def process_markdown_block(doc, lines, start_idx, return_element=True):
             return start_idx + 1, elements
         # Table (lines starting with |)
         if TABLE_LINE_PATTERN.match(stripped):
-            table_data, next_idx = parse_table(lines, start_idx)
+            table_data, col_alignments, next_idx = parse_table(lines, start_idx)
             if table_data:
-                word_table = add_table_to_doc(table_data, doc)
+                # Check if previous line is a <!-- borderless --> directive
+                borderless = False
+                if start_idx > 0:
+                    prev = lines[start_idx - 1].strip().lower()
+                    if prev in ('<!-- borderless -->', '<!--borderless-->'):
+                        borderless = True
+                word_table = add_table_to_doc(table_data, doc,
+                                             col_alignments=col_alignments,
+                                             borderless=borderless)
                 if word_table is not None:
                     _collect(word_table._tbl)
                 return next_idx, elements
@@ -172,6 +180,9 @@ def process_markdown_block(doc, lines, start_idx, return_element=True):
             quote_para.style = 'Quote'
             parse_inline_formatting(quote_text, quote_para)
             _collect(quote_para._p)
+            return start_idx + 1, elements
+        # HTML comment directives (e.g. <!-- borderless -->) — skip silently
+        if stripped.startswith('<!--') and stripped.endswith('-->'):
             return start_idx + 1, elements
         # Regular paragraph
         para = doc.add_paragraph()
