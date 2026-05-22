@@ -1,7 +1,6 @@
 """Inline markdown formatting: bold, italic, strikethrough, underline, code, links.
 Handles escape sequences and hyperlink insertion into python-docx paragraphs.
 """
-import html
 import logging
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
