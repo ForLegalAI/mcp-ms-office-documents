@@ -77,9 +77,13 @@ def set_header_footer(doc, text, kind='header'):
         even_part = getattr(section, even_kind, None)
         if even_part is not None and doc.settings.element.find(qn('w:evenAndOddHeaders')) is not None:
             _update_part(even_part)
+
+
 # ---------------------------------------------------------------------------
 # Table of Contents
 # ---------------------------------------------------------------------------
+
+
 def add_toc(doc):
     """Insert a Table of Contents field.
     The TOC is based on Heading styles 1-3 and will update when the document

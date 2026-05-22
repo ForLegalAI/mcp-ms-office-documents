@@ -155,7 +155,13 @@ def process_markdown_block(doc, lines, start_idx, return_element=True):
         # Image (![alt](url))
         img_match = IMAGE_PATTERN.match(stripped)
         if img_match:
+            body = doc._body._body
+            existing_children = list(body) if return_element else None
             add_image_to_doc(doc, img_match.group(2), img_match.group(1))
+            if return_element:
+                for element in list(body)[len(existing_children):]:
+                    elements.append(element)
+                    body.remove(element)
             return start_idx + 1, elements
         # Alignment (inline or block-open)
         align_result = detect_alignment(stripped)

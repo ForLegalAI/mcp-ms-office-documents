@@ -15,7 +15,11 @@ from .patterns import (
     _ALIGN_CLOSE_RE,
 )
 from .inline_formatting import parse_inline_formatting
+from .patterns import _BR_RE
+
 logger = logging.getLogger(__name__)
+
+
 ALIGNMENT_MAP = {
     'right': WD_ALIGN_PARAGRAPH.RIGHT,
     'center': WD_ALIGN_PARAGRAPH.CENTER,
@@ -137,7 +141,7 @@ def add_table_to_doc(table_data, doc, col_alignments=None, borderless=False, col
                 try:
                     cell = word_table.cell(i, j)
                     # Split on <br> variants to create multiple paragraphs in cell
-                    segments = re.split(r'<br\s*/?>', cell_text)
+                    segments = _BR_RE.split(cell_text)
                     if cell.paragraphs:
                         cell.paragraphs[0].clear()
                     parse_inline_formatting(segments[0], cell.paragraphs[0])
@@ -288,6 +292,8 @@ def detect_alignment(line):
         align = ALIGNMENT_MAP.get((m.group(1) or 'center').lower(), WD_ALIGN_PARAGRAPH.CENTER)
         return None, align
     return None
+
+
 def process_alignment_block(lines, start_idx, doc, alignment, return_elements=False):
     """Process lines inside a multi-line alignment block."""
     elements = [] if return_elements else None

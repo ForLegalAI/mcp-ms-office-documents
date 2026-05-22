@@ -109,6 +109,8 @@ def parse_inline_formatting(text, paragraph, bold=False, italic=False):
         _parse_formatting_segment(line_part, paragraph, bold, italic, escape_ctx)
         if line_idx < len(line_parts) - 1:
             paragraph.add_run().add_break()
+
+
 def _parse_formatting_segment(text, paragraph, bold=False, italic=False, escape_ctx=None):
     """Parse a single text segment for inline markdown formatting."""
     for part in _INLINE_FORMAT_RE.split(text):
