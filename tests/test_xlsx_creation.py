@@ -688,8 +688,444 @@ class TestTableParsingImprovements:
         assert ws.cell(row=2, column=2).value == 500.0
 
 
+class TestFreezeDirective:
+    """Tests for <!-- freeze --> directive."""
+
+    def test_freeze_panes_applied(self):
+        """Freeze directive freezes below the table header row."""
+        markdown = """<!-- freeze -->
+| Name | Value |
+|------|-------|
+| A    | 1     |
+| B    | 2     |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb.active
+        assert ws.freeze_panes == "A2"
+
+    def test_freeze_not_applied_by_default(self):
+        """Without freeze directive, no freeze panes."""
+        markdown = """| Name | Value |
+|------|-------|
+| A    | 1     |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb.active
+        assert ws.freeze_panes is None
+
+    def test_freeze_with_header_offset(self):
+        """Freeze works when table starts after a header."""
+        markdown = """# Title
+
+<!-- freeze -->
+| Name | Value |
+|------|-------|
+| A    | 1     |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb.active
+        # Table starts at row 3 (after header at row 1 + spacing), so freeze at A4
+        assert ws.freeze_panes == "A4"
+
+
+class TestTypesDirective:
+    """Tests for <!-- types: ... --> directive."""
+
+    def test_currency_type(self):
+        """Currency directive strips symbol and stores as number."""
+        markdown = """<!-- types: text, currency:$ -->
+| Item  | Price    |
+|-------|----------|
+| Apple | $1,234.56 |
+| Banana | $50.00  |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb.active
+        assert ws.cell(row=2, column=2).value == 1234.56
+        assert ws.cell(row=3, column=2).value == 50.00
+        assert '$' in ws.cell(row=2, column=2).number_format
+
+    def test_bool_type(self):
+        """Bool directive converts true/false strings to Excel booleans."""
+        markdown = """<!-- types: text, bool -->
+| Name | Active |
+|------|--------|
+| A    | true   |
+| B    | false  |
+| C    | yes    |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb.active
+        assert ws.cell(row=2, column=2).value is True
+        assert ws.cell(row=3, column=2).value is False
+        assert ws.cell(row=4, column=2).value is True
+
+    def test_text_type_prevents_conversion(self):
+        """Text directive keeps values as strings even if they look like numbers."""
+        markdown = """<!-- types: text -->
+| Code  |
+|-------|
+| 00123 |
+| 45678 |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb.active
+        assert ws.cell(row=2, column=1).value == "00123"
+        assert ws.cell(row=3, column=1).value == "45678"
+
+    def test_euro_currency(self):
+        """European currency with dot-as-thousands separator."""
+        markdown = """<!-- types: currency:€ -->
+| Amount     |
+|------------|
+| €1.234,56  |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb.active
+        assert abs(ws.cell(row=2, column=1).value - 1234.56) < 0.01
+        assert '€' in ws.cell(row=2, column=1).number_format
+
+    def test_date_type_with_format(self):
+        """Date type with explicit format."""
+        markdown = """<!-- types: text, date:DD.MM.YYYY -->
+| Name | Born       |
+|------|------------|
+| Alice | 15.03.1990 |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb.active
+        cell_val = ws.cell(row=2, column=2).value
+        assert hasattr(cell_val, 'year')  # It's a datetime
+        assert cell_val.day == 15
+        assert cell_val.month == 3
+        assert ws.cell(row=2, column=2).number_format == "DD.MM.YYYY"
+
+    def test_partial_types_only_some_columns(self):
+        """Types directive can specify fewer types than columns — rest use auto-detection."""
+        markdown = """<!-- types: text, number -->
+| Code | Amount | Date       |
+|------|--------|------------|
+| 007  | 1500   | 2024-01-15 |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb.active
+        # First col: forced text
+        assert ws.cell(row=2, column=1).value == "007"
+        # Second col: forced number
+        assert ws.cell(row=2, column=2).value == 1500.0
+        # Third col: no type spec → auto-detection (date)
+        cell_val = ws.cell(row=2, column=3).value
+        assert hasattr(cell_val, 'year')
+
+
+class TestTypesDirectiveAdvanced:
+    """Advanced tests for <!-- types: ... --> directive edge cases and interactions."""
+
+    def test_percent_type(self):
+        """Percent directive converts '75%' to 0.75 with 0% format."""
+        markdown = """<!-- types: text, percent -->
+| Task | Progress |
+|------|----------|
+| A    | 75%      |
+| B    | 100%     |
+| C    | 0%       |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb.active
+        assert ws.cell(row=2, column=2).value == pytest.approx(0.75)
+        assert ws.cell(row=2, column=2).number_format == '0%'
+        assert ws.cell(row=3, column=2).value == pytest.approx(1.0)
+        assert ws.cell(row=4, column=2).value == pytest.approx(0.0)
+
+    def test_number_type_with_format(self):
+        """Number directive with explicit format applies the format."""
+        markdown = """<!-- types: number:0.00 -->
+| Score |
+|-------|
+| 3.14159 |
+| 2.71828 |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb.active
+        assert ws.cell(row=2, column=1).value == pytest.approx(3.14159)
+        assert ws.cell(row=2, column=1).number_format == '0.00'
+
+    def test_number_type_without_format(self):
+        """Number directive without format applies #,##0 for large numbers."""
+        markdown = """<!-- types: number -->
+| Amount |
+|--------|
+| 50000  |
+| 500    |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb.active
+        assert ws.cell(row=2, column=1).value == 50000.0
+        assert ws.cell(row=2, column=1).number_format == '#,##0'
+        # Small number — no forced format
+        assert ws.cell(row=3, column=1).value == 500.0
+
+    def test_unknown_type_falls_through(self):
+        """An unknown type spec falls through to normal auto-detection."""
+        markdown = """<!-- types: unknowntype -->
+| Value |
+|-------|
+| 1234  |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb.active
+        # Falls through to normal resolve_cell, which detects a number
+        assert ws.cell(row=2, column=1).value == 1234.0
+
+    def test_types_only_apply_to_data_rows(self):
+        """Type directives do NOT affect the header row."""
+        markdown = """<!-- types: number -->
+| Amount |
+|--------|
+| 100    |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb.active
+        # Header row should still be text "Amount" with header styling
+        assert ws.cell(row=1, column=1).value == "Amount"
+        assert ws.cell(row=1, column=1).font.bold is True
+
+    def test_types_with_alignment(self):
+        """Types directive respects explicit column alignment from separator row."""
+        markdown = """<!-- types: text, currency:$ -->
+| Item  | Price    |
+|:------|:--------:|
+| Apple | $50.00   |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb.active
+        # Left alignment from separator
+        assert ws.cell(row=2, column=1).alignment.horizontal == 'left'
+        # Center alignment from separator overrides the default 'right' for numbers
+        assert ws.cell(row=2, column=2).alignment.horizontal == 'center'
+
+    def test_bool_alignment_center(self):
+        """Bool values get center alignment when no explicit alignment specified."""
+        markdown = """<!-- types: bool -->
+| Active |
+|--------|
+| true   |
+| false  |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb.active
+        assert ws.cell(row=2, column=1).value is True
+        assert ws.cell(row=2, column=1).alignment.horizontal == 'center'
+        assert ws.cell(row=3, column=1).value is False
+        assert ws.cell(row=3, column=1).alignment.horizontal == 'center'
+
+    def test_currency_czk(self):
+        """Czech koruna currency format."""
+        markdown = """<!-- types: currency:Kč -->
+| Cena     |
+|----------|
+| 1 234,56 Kč |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb.active
+        assert abs(ws.cell(row=2, column=1).value - 1234.56) < 0.01
+        assert 'Kč' in ws.cell(row=2, column=1).number_format
+
+    def test_multiple_directives_stacked(self):
+        """Multiple directives above a table all take effect."""
+        markdown = """<!-- freeze -->
+<!-- types: text, number -->
+| Code | Value |
+|------|-------|
+| ABC  | 5000  |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb.active
+        # Freeze should be applied
+        assert ws.freeze_panes == "A2"
+        # Types should be applied
+        assert ws.cell(row=2, column=1).value == "ABC"
+        assert ws.cell(row=2, column=2).value == 5000.0
+
+    def test_directives_dont_carry_across_tables(self):
+        """Directives only apply to the immediately following table."""
+        markdown = """<!-- types: text -->
+| Code |
+|------|
+| 007  |
+
+| Amount |
+|--------|
+| 1234   |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb.active
+        # First table: text directive forces string
+        assert ws.cell(row=2, column=1).value == "007"
+        # Second table: no directive, auto-detection → number
+        # Second table starts at row 1 + 2 (table size) + 2 (spacing) = row 5
+        # Actually need to find it dynamically
+        found_number = False
+        for row in ws.iter_rows(min_row=3, values_only=True):
+            for val in row:
+                if val == 1234.0:
+                    found_number = True
+        assert found_number, "Second table should auto-detect 1234 as a number"
+
+    def test_directives_dont_carry_across_sheets(self):
+        """Directives are reset when a new sheet is started."""
+        markdown = """## Sheet: Sheet1
+
+<!-- types: text -->
+| Code |
+|------|
+| 007  |
+
+## Sheet: Sheet2
+
+| Code |
+|------|
+| 007  |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws1 = wb["Sheet1"]
+        ws2 = wb["Sheet2"]
+        # Sheet1: text directive forces string
+        assert ws1.cell(row=2, column=1).value == "007"
+        # Sheet2: no directive → auto-detection would parse as number
+        # (007 → 7.0 without text directive)
+        assert ws2.cell(row=2, column=1).value == 7.0
+
+    def test_date_type_without_format(self):
+        """Date type without explicit format uses auto-detected format."""
+        markdown = """<!-- types: date -->
+| When       |
+|------------|
+| 2024-06-15 |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb.active
+        cell = ws.cell(row=2, column=1)
+        assert hasattr(cell.value, 'year')
+        assert cell.value.year == 2024
+        assert cell.value.month == 6
+        assert cell.value.day == 15
+
+    def test_currency_unparseable_value(self):
+        """Currency type with unparseable value falls back to text."""
+        markdown = """<!-- types: currency:$ -->
+| Price   |
+|---------|
+| N/A     |
+"""
+        wb = _create_workbook_from_markdown(markdown)
+        ws = wb.active
+        assert ws.cell(row=2, column=1).value == "N/A"
+
+
+class TestDirectiveParserUnit:
+    """Unit tests for _parse_types_directive helper."""
+
+    def test_empty_string(self):
+        from xlsx_tools.helpers import _parse_types_directive
+        assert _parse_types_directive("") == []
+
+    def test_single_type(self):
+        from xlsx_tools.helpers import _parse_types_directive
+        result = _parse_types_directive("text")
+        assert result == ["text"]
+
+    def test_multiple_types(self):
+        from xlsx_tools.helpers import _parse_types_directive
+        result = _parse_types_directive("text, currency:$, date, bool, number")
+        assert result == ["text", "currency:$", "date", "bool", "number"]
+
+    def test_blank_entries_become_none(self):
+        from xlsx_tools.helpers import _parse_types_directive
+        result = _parse_types_directive("text, , number")
+        assert result == ["text", None, "number"]
+
+    def test_whitespace_handling(self):
+        from xlsx_tools.helpers import _parse_types_directive
+        result = _parse_types_directive("  text  ,  number:0.00  ")
+        assert result == ["text", "number:0.00"]
+
+
+class TestApplyColumnTypeUnit:
+    """Unit tests for _apply_column_type helper."""
+
+    def test_text_type(self):
+        from xlsx_tools.helpers import _apply_column_type
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        cell = ws.cell(row=1, column=1)
+        result = _apply_column_type(cell, "00123", "text")
+        assert result is True
+        assert cell.value == "00123"
+
+    def test_bool_true_values(self):
+        from xlsx_tools.helpers import _apply_column_type
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        for val in ("true", "True", "yes", "YES", "1", "on"):
+            cell = ws.cell(row=1, column=1)
+            result = _apply_column_type(cell, val, "bool")
+            assert result is True
+            assert cell.value is True, f"Expected True for '{val}'"
+
+    def test_bool_false_values(self):
+        from xlsx_tools.helpers import _apply_column_type
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        for val in ("false", "False", "no", "NO", "0", "off"):
+            cell = ws.cell(row=1, column=1)
+            result = _apply_column_type(cell, val, "bool")
+            assert result is True
+            assert cell.value is False, f"Expected False for '{val}'"
+
+    def test_bool_unrecognized(self):
+        from xlsx_tools.helpers import _apply_column_type
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        cell = ws.cell(row=1, column=1)
+        result = _apply_column_type(cell, "maybe", "bool")
+        assert result is True
+        assert cell.value == "maybe"
+
+    def test_percent(self):
+        from xlsx_tools.helpers import _apply_column_type
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        cell = ws.cell(row=1, column=1)
+        result = _apply_column_type(cell, "45%", "percent")
+        assert result is True
+        assert cell.value == pytest.approx(0.45)
+        assert cell.number_format == '0%'
+
+    def test_none_type_returns_false(self):
+        from xlsx_tools.helpers import _apply_column_type
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        cell = ws.cell(row=1, column=1)
+        result = _apply_column_type(cell, "hello", None)
+        assert result is False
+
+    def test_unknown_type_returns_false(self):
+        from xlsx_tools.helpers import _apply_column_type
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        cell = ws.cell(row=1, column=1)
+        result = _apply_column_type(cell, "hello", "foobar")
+        assert result is False
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
-
-
 

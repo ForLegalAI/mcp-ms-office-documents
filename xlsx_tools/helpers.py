@@ -485,6 +485,130 @@ def adjust_formula_references(
         return formula
 
 
+# ── Directive Helpers ──────────────────────────────────────────────────────────
+
+# Currency symbols → Excel format string
+_CURRENCY_FORMATS = {
+    '$': '$#,##0.00',
+    '€': '#,##0.00 €',
+    '£': '£#,##0.00',
+    '¥': '¥#,##0',
+    'Kč': '#,##0.00 "Kč"',
+    'zł': '#,##0.00 "zł"',
+    'kr': '#,##0.00 "kr"',
+    'CHF': '"CHF" #,##0.00',
+    'R$': '"R$" #,##0.00',
+    '₹': '₹#,##0.00',
+}
+
+
+def _parse_types_directive(value: str) -> list[str | None]:
+    """Parse a types directive value like 'text, currency:$, date, bool, number'.
+
+    Returns a list of type specs (or None for unspecified columns).
+    """
+    if not value:
+        return []
+    return [t.strip() or None for t in value.split(',')]
+
+
+def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
+    """Apply column type coercion to a cell based on directive.
+
+    Returns True if type was applied (caller should skip default processing),
+    False if default processing should continue.
+    """
+    if not type_spec:
+        return False
+
+    clean = raw_text.strip()
+    type_lower = type_spec.lower()
+
+    # text — force string, no conversion
+    if type_lower == 'text':
+        cell.value = clean
+        return True
+
+    # bool — map common boolean strings to Excel boolean
+    if type_lower == 'bool':
+        lower_val = clean.lower()
+        if lower_val in ('true', 'yes', '1', 'on'):
+            cell.value = True
+        elif lower_val in ('false', 'no', '0', 'off'):
+            cell.value = False
+        else:
+            cell.value = clean  # Unrecognized → keep as text
+        return True
+
+    # currency:<symbol> — strip symbol and thousands separators, store as number
+    if type_lower.startswith('currency'):
+        symbol = type_spec.split(':', 1)[1].strip() if ':' in type_spec else '$'
+        # Strip the currency symbol and common thousand separators
+        numeric_str = clean.replace(symbol, '').replace(' ', '').strip()
+        # Handle both comma-as-thousands (1,234.56) and dot-as-thousands (1.234,56)
+        if ',' in numeric_str and '.' in numeric_str:
+            # Determine which is the decimal separator (last one wins)
+            last_comma = numeric_str.rfind(',')
+            last_dot = numeric_str.rfind('.')
+            if last_comma > last_dot:
+                # European: 1.234,56
+                numeric_str = numeric_str.replace('.', '').replace(',', '.')
+            else:
+                # English: 1,234.56
+                numeric_str = numeric_str.replace(',', '')
+        elif ',' in numeric_str and '.' not in numeric_str:
+            # Could be thousands (1,234) or decimal (1,5) — assume thousands if >3 digits after comma
+            parts = numeric_str.split(',')
+            if len(parts[-1]) == 3:
+                numeric_str = numeric_str.replace(',', '')
+            else:
+                numeric_str = numeric_str.replace(',', '.')
+        try:
+            cell.value = float(numeric_str)
+            cell.number_format = _CURRENCY_FORMATS.get(symbol, f'#,##0.00 "{symbol}"')
+        except ValueError:
+            cell.value = clean  # Can't parse → keep as text
+        return True
+
+    # number or number:<format> — parse as number with optional format
+    if type_lower.startswith('number'):
+        fmt = type_spec.split(':', 1)[1].strip() if ':' in type_spec else None
+        numeric_str = clean.replace(',', '').replace(' ', '')
+        try:
+            cell.value = float(numeric_str)
+            if fmt:
+                cell.number_format = fmt
+            elif cell.value >= 1000:
+                cell.number_format = '#,##0'
+        except ValueError:
+            cell.value = clean
+        return True
+
+    # date or date:<format> — parse with dateutil, apply format
+    if type_lower.startswith('date'):
+        fmt = type_spec.split(':', 1)[1].strip() if ':' in type_spec else None
+        result = _try_parse_date(clean)
+        if result:
+            dt, default_fmt = result
+            cell.value = dt
+            cell.number_format = fmt or default_fmt
+        else:
+            cell.value = clean
+        return True
+
+    # percent — parse as percent
+    if type_lower == 'percent':
+        numeric_str = clean.rstrip('%').strip()
+        try:
+            cell.value = float(numeric_str) / 100
+            cell.number_format = '0%'
+        except ValueError:
+            cell.value = clean
+        return True
+
+    return False
+
+
 # ── Table Rendering ───────────────────────────────────────────────────────────
 
 def add_table_to_sheet(
@@ -495,10 +619,16 @@ def add_table_to_sheet(
     all_sheet_table_positions: dict[str, dict[str, int]] | None = None,
     auto_filter: bool = False,
     table_index: int = 0,
+    directives: dict[str, str] | None = None,
 ) -> int:
     """Add table data to Excel worksheet with proper formatting and formula support."""
     if not table_data:
         return start_row
+
+    directives = directives or {}
+
+    # Parse column type hints from <!-- types: text, currency:$, date, bool --> directive
+    col_types: list[str | None] = _parse_types_directive(directives.get('types', ''))
 
     # Extract column alignments if available (from TableData subclass)
     col_alignments: list[str | None] = []
@@ -517,6 +647,23 @@ def add_table_to_sheet(
         for col_idx, cell_text in enumerate(row_data):
             try:
                 cell = worksheet.cell(row=current_excel_row, column=col_idx + 1)
+
+                # If column type directive applies (data rows only), use it
+                col_type = col_types[col_idx] if col_idx < len(col_types) else None
+                if row_idx > 0 and col_type and _apply_column_type(cell, cell_text, col_type):
+                    # Type directive handled the cell value — just apply border/alignment
+                    cell.border = border
+                    explicit_align = col_alignments[col_idx] if col_idx < len(col_alignments) else None
+                    if explicit_align:
+                        cell.alignment = Alignment(horizontal=explicit_align)
+                    elif isinstance(cell.value, bool):
+                        cell.alignment = Alignment(horizontal='center')
+                    elif isinstance(cell.value, (int, float, datetime)):
+                        cell.alignment = Alignment(horizontal='right')
+                    else:
+                        cell.alignment = Alignment(horizontal='left')
+                    continue
+
                 resolved = resolve_cell(cell_text)
 
                 if resolved.is_formula:
@@ -564,19 +711,37 @@ def add_table_to_sheet(
                 logger.warning("Error processing cell [row=%d, col=%d]: %s", current_excel_row, col_idx + 1, e)
 
     # Column widths — based on clean text length (not raw markdown with formatting markers)
+    # When type directives are active, estimate display width from the type spec.
     FORMULA_WIDTH_CAP = 12  # Formulas display as numbers, cap their width contribution
     for col_idx in range(len(table_data[0]) if table_data else 0):
         column_letter = get_column_letter(col_idx + 1)
+        col_type = col_types[col_idx] if col_idx < len(col_types) else None
         max_length = 0
-        for row in table_data:
+        for row_idx, row in enumerate(table_data):
             if col_idx < len(row):
-                resolved = resolve_cell(row[col_idx])
-                if resolved.is_formula:
-                    length = FORMULA_WIDTH_CAP
-                elif resolved.is_date:
-                    length = len(resolved.date_format)
+                # For data rows with a type directive, estimate from the directive
+                if row_idx > 0 and col_type:
+                    type_lower = col_type.lower()
+                    if type_lower == 'bool':
+                        length = 5  # "FALSE" is longest
+                    elif type_lower.startswith('currency'):
+                        # Symbol + number — use raw text length as decent estimate
+                        length = len(row[col_idx].strip())
+                    elif type_lower.startswith('date'):
+                        fmt = col_type.split(':', 1)[1].strip() if ':' in col_type else "YYYY-MM-DD"
+                        length = len(fmt)
+                    elif type_lower == 'percent':
+                        length = 6  # e.g. "85.0%"
+                    else:
+                        length = len(row[col_idx].strip())
                 else:
-                    length = len(str(resolved.value))
+                    resolved = resolve_cell(row[col_idx])
+                    if resolved.is_formula:
+                        length = FORMULA_WIDTH_CAP
+                    elif resolved.is_date:
+                        length = len(resolved.date_format)
+                    else:
+                        length = len(str(resolved.value))
                 max_length = max(max_length, length)
         adjusted_width = min(max(max_length + COLUMN_WIDTH_PADDING, MIN_COLUMN_WIDTH), MAX_COLUMN_WIDTH)
         worksheet.column_dimensions[column_letter].width = adjusted_width

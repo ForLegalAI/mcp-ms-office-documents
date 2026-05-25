@@ -15,6 +15,8 @@ from .helpers import parse_table
 
 # Pattern for multi-sheet heading: ## Sheet: Name
 SHEET_HEADING_PATTERN = re.compile(r'^##\s+Sheet:\s+(.+)$')
+# Pattern for comment directives: <!-- key: value --> or <!-- key -->
+DIRECTIVE_PATTERN = re.compile(r'^<!--\s*(\w[\w-]*)(?:\s*:\s*(.*?))?\s*-->$')
 
 # Spacing inserted after a header row (rows)
 HEADER_ROW_SPACING = 2
@@ -57,6 +59,7 @@ class TableEvent:
     table_key: str = ""  # e.g. "T1", "T2"
     start_row: int = 1  # The Excel row where this table starts
     sheet_name: str = ""  # Which sheet this table belongs to
+    directives: dict[str, str] = field(default_factory=dict)  # Comment directives above the table
 
 
 # Union type for all events
@@ -76,6 +79,7 @@ def walk_markdown_lines(lines: list[str]) -> list[LineEvent]:
     current_row = 1
     table_counter = 1
     first_sheet_named = False
+    pending_directives: dict[str, str] = {}
 
     i = 0
     while i < len(lines):
@@ -85,9 +89,19 @@ def walk_markdown_lines(lines: list[str]) -> list[LineEvent]:
             i += 1
             continue
 
+        # Check for comment directives (<!-- key: value --> or <!-- key -->)
+        directive_match = DIRECTIVE_PATTERN.match(line)
+        if directive_match:
+            key = directive_match.group(1).lower()
+            value = (directive_match.group(2) or "").strip()
+            pending_directives[key] = value
+            i += 1
+            continue
+
         # Check for sheet heading
         sheet_match = SHEET_HEADING_PATTERN.match(line)
         if sheet_match:
+            pending_directives = {}  # Directives don't carry across sheets
             sheet_name = _sanitize_sheet_name(sheet_match.group(1).strip())
             is_rename = not first_sheet_named and current_row == 1
 
@@ -106,6 +120,7 @@ def walk_markdown_lines(lines: list[str]) -> list[LineEvent]:
 
         # Headers
         if line.startswith('#'):
+            pending_directives = {}  # Directives don't carry across headers
             header_level = len(line) - len(line.lstrip('#'))
             header_text = line.lstrip('#').strip()
 
@@ -124,9 +139,11 @@ def walk_markdown_lines(lines: list[str]) -> list[LineEvent]:
                     table_key=table_key,
                     start_row=current_row,
                     sheet_name=current_sheet,
+                    directives=pending_directives,
                 ))
                 current_row += len(table_data) + TABLE_BOTTOM_SPACING
                 table_counter += 1
+            pending_directives = {}
 
         # Skip other content
         else:

@@ -108,7 +108,12 @@ def markdown_to_excel(markdown_content: str, file_name: str | None = None, auto_
                     all_sheet_table_positions=all_sheet_table_positions,
                     auto_filter=auto_filter,
                     table_index=tables_count,
+                    directives=event.directives,
                 )
+
+                # Handle freeze directive — freeze below header row of this table
+                if 'freeze' in event.directives:
+                    ws.freeze_panes = f"A{event.start_row + 1}"
 
                 tables_count += 1
                 logger.debug(
