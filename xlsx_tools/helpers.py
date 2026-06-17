@@ -605,7 +605,10 @@ def adjust_formula_references(
             sr = _resolve_row(pos, table_num, start_offset, current_excel_row)
             er = _resolve_row(pos, table_num, end_offset, current_excel_row)
             qs = _quote_sheet_name(sheet)
-            result = f"{func_name}({qs}!{start_col}{sr}:{qs}!{end_col}{er})"
+            # Excel range syntax allows the sheet prefix only ONCE, on the
+            # first endpoint: =SUM(Data!B2:B4). Putting it on both endpoints
+            # (=SUM(Data!B2:Data!B4)) is invalid and yields #VALUE!.
+            result = f"{func_name}({qs}!{start_col}{sr}:{end_col}{er})"
             logger.debug("  Cross-sheet func: %s → %s", match.group(0), result)
             return result
 
@@ -700,11 +703,18 @@ def adjust_formula_references(
 
         adjusted = re.sub(table_pattern, replace_table_reference, adjusted)
 
-        # Determine current table start for relative references
-        current_table_start = None
-        for table_key, table_start_row in table_positions.items():
-            if table_start_row <= current_excel_row:
-                current_table_start = table_start_row
+        # Local row-relative references (e.g. ``B[0]``, ``A[-1]``) — the form
+        # documented as "current row references" in the tool description. These
+        # resolve relative to the row the formula lives in: ``B[0]`` → current
+        # row's column B, ``B[-1]`` → the row above, ``B[1]`` → the row below.
+        #
+        # This is deliberately distinct from the table-relative ``T1.B[n]``
+        # form (resolved above), which is offset from the table's FIRST data
+        # row regardless of which row the formula is in. Conflating the two
+        # (the previous implementation used ``current_table_start + 1 + offset``
+        # here) silently broke every row past the first data row — e.g. ``A[0]``
+        # on row 4 resolved to the first data cell instead of A4, corrupting
+        # running totals, period-over-period growth, and cumulative sums.
 
         # Row-relative range e.g. B[0]:E[0] (BEFORE single-cell relative)
         range_pattern = r'([A-Z]+)\[([+-]?\d+)\]:([A-Z]+)\[([+-]?\d+)\]'
@@ -714,12 +724,8 @@ def adjust_formula_references(
             start_offset = int(match.group(2))
             end_col = match.group(3)
             end_offset = int(match.group(4))
-            if current_table_start is not None:
-                start_row = current_table_start + 1 + start_offset
-                end_row = current_table_start + 1 + end_offset
-            else:
-                start_row = current_excel_row + start_offset
-                end_row = current_excel_row + end_offset
+            start_row = current_excel_row + start_offset
+            end_row = current_excel_row + end_offset
             return f"{start_col}{start_row}:{end_col}{end_row}"
 
         adjusted = re.sub(range_pattern, replace_range, adjusted)
@@ -730,10 +736,7 @@ def adjust_formula_references(
         def replace_rel(match):
             column = match.group(1)
             offset = int(match.group(2))
-            if current_table_start is not None:
-                actual_row = current_table_start + 1 + offset
-            else:
-                actual_row = current_excel_row + offset
+            actual_row = current_excel_row + offset
             result = f"{column}{actual_row}"
             logger.debug("  Relative ref: %s → %s", match.group(0), result)
             return result
@@ -1084,9 +1087,30 @@ def _default_number_format_for(value: float, financial_modeling: bool) -> str:
     return DEFAULT_NUMBER_FORMAT if is_whole else DEFAULT_NUMBER_FORMAT_DECIMALS
 
 
+# Plausible year window for the financial-modeling "years as text" convention.
+# Excel's own date system starts at 1900, and forward-looking models rarely
+# project past 2100. Restricting to this window keeps the convention (so a
+# column of period headers like 2024, 2025, 2026E stays as text labels and
+# doesn't get summed/formatted as the number 2,024) while NOT coercing
+# legitimate 4-digit magnitudes — revenue of $1,500mm, a count of 5000, an
+# ID of 1234 — to text, which would silently break SUM in real Excel and
+# drop their number formatting.
+_YEAR_MIN = 1900
+_YEAR_MAX = 2100
+
+
 def _is_year_string(value: str) -> bool:
-    """Return True if value is a 4-digit year like '2024' or '2024'."""
-    return bool(re.fullmatch(r"\d{4}", value.strip()))
+    """Return True if value is a 4-digit year like '2024' within a plausible range.
+
+    Restricted to ``_YEAR_MIN``–``_YEAR_MAX`` so that non-year 4-digit numbers
+    (revenue, counts, IDs) are not mistakenly forced to text. See the
+    ``_YEAR_MIN`` / ``_YEAR_MAX`` constants for the rationale.
+    """
+    stripped = value.strip()
+    if not re.fullmatch(r"\d{4}", stripped):
+        return False
+    n = int(stripped)
+    return _YEAR_MIN <= n <= _YEAR_MAX
 
 
 # ── Table Rendering ───────────────────────────────────────────────────────────
