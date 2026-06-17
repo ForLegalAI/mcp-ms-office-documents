@@ -169,6 +169,32 @@ class TestSourcesDirective:
         assert _expand_coord_range("B2:B5") == ["B2", "B3", "B4", "B5"]
         assert _expand_coord_range("B5:B2") == ["B2", "B3", "B4", "B5"]  # reversed ok
 
+    def test_single_cell_overrides_range_when_listed_first(self):
+        """A single-cell entry wins over a range that covers the same cell,
+        even when the single entry appears before the range in the directive."""
+        result = parse_sources_directive(
+            "B2=Specific source, B2:B3=Range source"
+        )
+        assert result["B2"] == "Specific source"
+        assert result["B3"] == "Range source"
+
+    def test_single_cell_overrides_range_when_listed_last(self):
+        """The single-cell entry also wins when listed after the range."""
+        result = parse_sources_directive(
+            "B2:B3=Range source, B2=Specific source"
+        )
+        assert result["B2"] == "Specific source"
+        assert result["B3"] == "Range source"
+
+    def test_multiple_singles_override_range(self):
+        """Multiple single-cell entries each override the range for their cell."""
+        result = parse_sources_directive(
+            "B2:B4=Range, B2=First, B4=Third"
+        )
+        assert result["B2"] == "First"
+        assert result["B3"] == "Range"
+        assert result["B4"] == "Third"
+
     def test_attach_source_comment(self):
         wb = Workbook()
         cell = wb.active["A1"]
@@ -206,9 +232,13 @@ class TestFormatVariants:
     def test_percent_dash_variant(self):
         assert _apply_percent_format_variant("dash") == "0.0%;(0.0%);-"
 
-    def test_percent_no_variant_returns_legacy_format(self):
-        """Preserving backward compat: bare 'percent' directive → 0%."""
-        assert _apply_percent_format_variant(None) == "0%"
+    def test_percent_no_variant_returns_default_format(self):
+        """Bare 'percent' directive → 0.0% (CFA convention: one decimal)."""
+        assert _apply_percent_format_variant(None) == "0.0%"
+
+    def test_percent_integer_variant_returns_no_decimal(self):
+        """percent:integer → 0% (opt-out for users who want no decimals)."""
+        assert _apply_percent_format_variant("integer") == "0%"
 
 
 # ── Years-as-text ────────────────────────────────────────────────────────────
@@ -403,11 +433,11 @@ class TestEndToEndFinancial:
         assert wb_cached.active["B4"].value == 2100000
 
 
-# ── Round 2 additions ────────────────────────────────────────────────────────
+# ── Multiples format ────────────────────────────────────────────────────────
 
 
 class TestMultiplesFormat:
-    """A1: valuation multiples render as '12.5x' via the multiple type."""
+    """Valuation multiples render as '12.5x' via the multiple type."""
 
     def test_multiples_format_variants_dict(self):
         from xlsx_tools.helpers import MULTIPLES_FORMAT_VARIANTS
@@ -467,9 +497,53 @@ class TestMultiplesFormat:
         assert ws["A2"].value == 12.5
         assert ws["A2"].number_format == '0.0"x"'
 
+    def test_number_multiple_alias_parses_value(self):
+        """`number:multiple` is an alias for `multiple` — stores the raw number
+        with the 'x' display format, instead of leaving the value as the
+        raw text '12.5x' (which would break any formula referencing it)."""
+        from xlsx_tools.helpers import _apply_column_type
+        from openpyxl import Workbook
+
+        for alias in ("number:multiple", "number:multiples"):
+            wb = Workbook()
+            cell = wb.active["A1"]
+            _apply_column_type(cell, "12.5x", alias)
+            assert cell.value == 12.5, f"alias {alias!r} did not parse as number"
+            assert cell.number_format == '0.0"x"', f"alias {alias!r} did not get multiples format"
+
+    def test_number_multiple_alias_with_variant(self):
+        """The alias preserves variant support (number:multiple:dash)."""
+        from xlsx_tools.helpers import _apply_column_type
+        from openpyxl import Workbook
+
+        # Note: the alias rewrite only triggers on exactly 'number:multiple'
+        # or 'number:multiples' (no further variant segment). A user wanting
+        # the dash variant should use 'multiple:dash' directly.
+        wb = Workbook()
+        cell = wb.active["A1"]
+        _apply_column_type(cell, "12.5x", "number:multiple")
+        assert cell.value == 12.5
+
+    def test_number_multiple_alias_e2e_via_markdown(self):
+        """End-to-end: `number:multiple` in a types directive produces a
+        numeric cell that downstream formulas can reference without #VALUE!."""
+        markdown = """<!-- types: text, number:multiple -->
+| Label | Multiple |
+|-------|----------|
+| A     | 12.5x    |
+| B     | =B2*2    |
+"""
+        data = _intercept_upload(markdown, recalc=True)
+        wb = load_workbook(io.BytesIO(data), data_only=True)
+        ws = wb.active
+        # B2 stored as number 12.5 (not '12.5x' string)
+        assert ws["B2"].value == 12.5
+        # B3 formula (=B2*2) resolves to 25 — would be #VALUE! if B2 were text
+        assert ws["B3"].value == 25
+
 
 class TestExternalReferenceColor:
-    """B5: external-workbook references get red font in financial mode."""
+    """External-workbook references get red font in financial mode."""
 
     def _style(self, formula):
         from xlsx_tools.helpers import apply_financial_styling

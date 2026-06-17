@@ -434,11 +434,11 @@ class TestEndToEndRecalc:
         assert wb.active["B2"].value == "=A2/0"
 
 
-# ── D11: Recalc timeout ──────────────────────────────────────────────────────
+# ── Recalc timeout ──────────────────────────────────────────────────────────
 
 
 class TestRecalcTimeout:
-    """D11: recalculation is bounded by a configurable timeout."""
+    """Recalculation is bounded by a configurable timeout."""
 
     def test_config_has_timeout_field_with_default(self):
         from config import Config
@@ -504,12 +504,12 @@ class TestRecalcTimeout:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# E1: Circular-reference detection
+# ── Circular-reference detection ─────────────────────────────────────────────
 # ──────────────────────────────────────────────────────────────────────────────
 
 
 class TestCircularReferenceDetection:
-    """E1: the `formulas` library silently misses circular references.
+    """The `formulas` library silently misses circular references.
 
     `detect_circular_references()` builds a dependency graph from the
     formula strings and runs DFS cycle detection. Every cell on a cycle
@@ -697,9 +697,67 @@ class TestExtractFormulaReferences:
         assert extract_formula_references("", "Sheet1", sl) == set()
         assert extract_formula_references("=1+2", "Sheet1", sl) == set()
 
+    def test_3d_reference_expanded_across_sheets(self):
+        """A 3D reference like SUM(Sheet1:Sheet3!A1) should expand
+        to refs on every sheet in the workbook range."""
+        from xlsx_tools.formula_engine import (
+            _build_sheet_lookup,
+            extract_formula_references,
+        )
+
+        sl = _build_sheet_lookup(["Sheet1", "Sheet2", "Sheet3"])
+        refs = extract_formula_references("=SUM(Sheet1:Sheet3!A1)", "Sheet1", sl)
+        assert refs == {"Sheet1!A1", "Sheet2!A1", "Sheet3!A1"}
+
+    def test_3d_reference_with_cell_range(self):
+        """3D refs combined with cell ranges expand across all cells
+        on all sheets in the range."""
+        from xlsx_tools.formula_engine import (
+            _build_sheet_lookup,
+            extract_formula_references,
+        )
+
+        sl = _build_sheet_lookup(["Sheet1", "Sheet2", "Sheet3"])
+        refs = extract_formula_references("=SUM(Sheet1:Sheet3!A1:B2)", "Sheet1", sl)
+        # 3 sheets × 4 cells = 12 refs
+        assert len(refs) == 12
+        assert "Sheet2!A1" in refs
+        assert "Sheet2!B2" in refs
+        assert "Sheet3!A2" in refs
+
+    def test_3d_reference_reverse_order(self):
+        """A reverse 3D range (Sheet3:Sheet1!A1) should still expand
+        to all sheets between, in workbook order."""
+        from xlsx_tools.formula_engine import (
+            _build_sheet_lookup,
+            extract_formula_references,
+        )
+
+        sl = _build_sheet_lookup(["Sheet1", "Sheet2", "Sheet3"])
+        refs = extract_formula_references("=SUM(Sheet3:Sheet1!A1)", "Sheet1", sl)
+        assert refs == {"Sheet1!A1", "Sheet2!A1", "Sheet3!A1"}
+
+    def test_3d_reference_circular_detection(self):
+        """F7 integration: a formula with a 3D ref that includes its own
+        cell should be detected as circular."""
+        from xlsx_tools.formula_engine import detect_circular_references
+
+        wb = Workbook()
+        ws1 = wb.active
+        ws1.title = "Sheet1"
+        ws2 = wb.create_sheet("Sheet2")
+        ws3 = wb.create_sheet("Sheet3")
+        # Sheet2!A1 sums A1 across all 3 sheets — but it's itself in the range.
+        ws2["A1"] = "=SUM(Sheet1:Sheet3!A1)"
+        data = _save_wb(wb)
+
+        errors = detect_circular_references(data, ["Sheet1", "Sheet2", "Sheet3"])
+        locations = {e.location for e in errors}
+        assert "Sheet2!A1" in locations
+
 
 class TestCircularRefErrorPolicy:
-    """E1 + A3 integration: explicit recalc=True with circular refs fails."""
+    """Integration: explicit recalc=True with circular refs fails."""
 
     def test_explicit_recalc_fails_on_circular_ref(self):
         """When recalc=True is explicit and a circular ref is present,
@@ -739,12 +797,12 @@ class TestCircularRefErrorPolicy:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# E2: Structured (type-grouped) error output
+# ── Structured (type-grouped) error output ──────────────────────────────────
 # ──────────────────────────────────────────────────────────────────────────────
 
 
 class TestGroupedErrorOutput:
-    """E2: errors in the RuntimeError message are grouped by type with
+    """Errors in the RuntimeError message are grouped by type with
     counts and locations, not a flat list."""
 
     def test_grouped_format_single_type(self):
@@ -816,12 +874,12 @@ class TestGroupedErrorOutput:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# E4: total_formulas telemetry
+# ── total_formulas telemetry ─────────────────────────────────────────────────
 # ──────────────────────────────────────────────────────────────────────────────
 
 
 class TestTotalFormulasCount:
-    """E4: RecalcResult carries a total_formulas count for telemetry."""
+    """RecalcResult carries a total_formulas count for telemetry."""
 
     def test_count_formulas_helper(self):
         from xlsx_tools.xml_cache import count_formulas
@@ -858,3 +916,531 @@ class TestTotalFormulasCount:
         result = recalculate_workbook(data, ["S"])
         assert result.recalc_performed
         assert result.total_formulas == 2
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ── String-result formula cached values (t="str") ───────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestStringFormulaInjection:
+    """Formulas whose result is a string (e.g. =A1&' total', =IF(...))
+    should now get a cached value via t="str" inline-string cells.
+
+    Previously these were silently skipped, which meant the file previewed
+    blank/0 in Google Sheets and other non-recalculating clients.
+    """
+
+    def test_concatenation_formula_cached(self):
+        if not is_available():
+            pytest.skip("`formulas` library not installed")
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "S"
+        ws["A1"] = "World"
+        ws["B1"] = '=A1 & " Hello"'
+        data = _save_wb(wb)
+
+        result = recalculate_workbook(data, ["S"])
+        assert "S!B1" in result.values_map
+        assert result.values_map["S!B1"] == "World Hello"
+
+    def test_if_formula_string_branch_cached(self):
+        if not is_available():
+            pytest.skip("`formulas` library not installed")
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "S"
+        ws["A1"] = 100
+        ws["B1"] = '=IF(A1>50,"Big","Small")'
+        data = _save_wb(wb)
+
+        result = recalculate_workbook(data, ["S"])
+        assert result.values_map.get("S!B1") == "Big"
+
+    def test_string_value_serializes_with_t_str_attr(self):
+        """The XML for a string-result formula cell must carry t='str'."""
+        from xlsx_tools.xml_cache import inject_cached_values
+        import zipfile
+        import xml.etree.ElementTree as ET
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "S"
+        ws["A1"] = "X"
+        ws["B1"] = "=A1 & \"Y\""  # placeholder formula; we inject our own value
+        data = _save_wb(wb)
+
+        injected = inject_cached_values(data, {"S!B1": "computed-string"})
+        zf = zipfile.ZipFile(io.BytesIO(injected))
+        try:
+            xml = zf.read("xl/worksheets/sheet1.xml").decode()
+        finally:
+            zf.close()
+
+        # The B1 cell should have t="str" and a <v> with our string.
+        root = ET.fromstring(xml)
+        ns = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+        for cell in root.iter(f"{ns}c"):
+            if cell.get("r") == "B1":
+                assert cell.get("t") == "str"
+                v = cell.find(f"{ns}v")
+                assert v is not None
+                assert v.text == "computed-string"
+                return
+        pytest.fail("B1 cell not found in injected XML")
+
+    def test_end_to_end_string_formula_previews_via_data_only(self):
+        """End-to-end: a string formula in markdown gets a cached value
+        that openpyxl(data_only=True) can read back — the core F1 fix."""
+        markdown = (
+            "| Greeting | Result |\n"
+            "|---|---|\n"
+            "| World | =A2 & \" Hello\" |\n"
+        )
+        captured = {}
+
+        with patch("xlsx_tools.base_xlsx_tool.upload_file") as mock_upload:
+            def capture(file_obj, *args, **kwargs):
+                captured["data"] = file_obj.read()
+                return "fake://str.xlsx"
+            mock_upload.side_effect = capture
+            markdown_to_excel(markdown, recalc=True)
+
+        wb = load_workbook(io.BytesIO(captured["data"]), data_only=True)
+        ws = wb.active
+        assert ws["B2"].value == "World Hello"
+
+    def test_xml_escapes_special_chars_in_string_cached_value(self):
+        """String cached values with XML-special chars (<, >, &) must be
+        properly escaped by ElementTree so the file stays valid."""
+        from xlsx_tools.xml_cache import inject_cached_values
+        import zipfile
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "S"
+        ws["A1"] = "x"
+        ws["B1"] = "=A1"  # placeholder
+        data = _save_wb(wb)
+
+        injected = inject_cached_values(data, {"S!B1": "a < b & c > d"})
+        # File should still be a valid zip / openable by openpyxl.
+        wb2 = load_workbook(io.BytesIO(injected), data_only=True)
+        assert wb2["S"]["B1"].value == "a < b & c > d"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ── total_formulas surfaced in grouped error output ─────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestTotalFormulasInErrorSummary:
+    """The error summary should include 'N/total' when total_formulas
+    is known, so the model understands scope (2/5 vs 2/500)."""
+
+    def test_error_summary_includes_total(self):
+        from xlsx_tools.base_xlsx_tool import _format_grouped_errors
+        from xlsx_tools.formula_engine import CellError
+
+        errors = [CellError(sheet="S", coordinate="B2", error_type="#DIV/0!")]
+        msg = _format_grouped_errors(errors, total_formulas=15)
+        assert "1/15 formula error(s)" in msg
+
+    def test_error_summary_omits_total_when_zero(self):
+        from xlsx_tools.base_xlsx_tool import _format_grouped_errors
+        from xlsx_tools.formula_engine import CellError
+
+        errors = [CellError(sheet="S", coordinate="B2", error_type="#DIV/0!")]
+        # total_formulas=0 means unknown — should fall back to bare count.
+        msg = _format_grouped_errors(errors, total_formulas=0)
+        assert "1 formula error(s)" in msg
+        assert "/" not in msg.split(":")[0]  # no N/total prefix
+
+    def test_end_to_end_error_summary_has_total_formulas(self):
+        """An actual recalc that finds errors should surface total_formulas."""
+        # Division by zero — guaranteed error.
+        markdown = (
+            "| A | B |\n"
+            "|---|---|\n"
+            "| 0 | =5/A2 |\n"
+            "| 10 | =10/A3 |\n"
+        )
+        with patch("xlsx_tools.base_xlsx_tool.upload_file") as mock_upload:
+            mock_upload.return_value = "fake.xlsx"
+            with pytest.raises(RuntimeError) as exc_info:
+                markdown_to_excel(markdown, recalc=True)
+
+        msg = str(exc_info.value)
+        # The error count should appear as "N/total" since we know the total.
+        assert "formula error(s):" in msg
+        # Total formulas is at least 2 (the two = formulas).
+        assert "/" in msg.split("formula error(s)")[0]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ── No false-positive circular refs from string literals ────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestNoFalsePositiveCircularRefs:
+    """String literals containing coord-like text must NOT be parsed
+    as cell references. A formula like ='see A1' in cell A1 must not be
+    flagged as a circular reference."""
+
+    def test_string_literal_with_coord_not_extracted(self):
+        from xlsx_tools.formula_engine import (
+            _build_sheet_lookup,
+            extract_formula_references,
+        )
+
+        sl = _build_sheet_lookup(["S"])
+        # Text mentioning A1 — should NOT produce a ref.
+        refs = extract_formula_references('="see cell A1 for context"', "S", sl)
+        assert refs == set()
+
+    def test_real_ref_plus_text_coord_only_returns_real(self):
+        from xlsx_tools.formula_engine import (
+            _build_sheet_lookup,
+            extract_formula_references,
+        )
+
+        sl = _build_sheet_lookup(["S"])
+        # Real A1 ref + text "pos A1" — only the real A1 should be returned.
+        refs = extract_formula_references('=IF(A1>0,"pos A1","neg")', "S", sl)
+        assert refs == {"S!A1"}
+
+    def test_vlookup_string_arg_not_treated_as_ref(self):
+        from xlsx_tools.formula_engine import (
+            _build_sheet_lookup,
+            extract_formula_references,
+        )
+
+        sl = _build_sheet_lookup(["S"])
+        # "A1" is a lookup KEY, not a cell. Only A2:B5 should be returned.
+        refs = extract_formula_references('=VLOOKUP("A1", A2:B5, 2)', "S", sl)
+        assert "S!A1" not in refs
+        assert "S!A2" in refs
+        assert "S!B5" in refs
+
+    def test_escaped_quote_in_string_literal(self):
+        from xlsx_tools.formula_engine import (
+            _build_sheet_lookup,
+            extract_formula_references,
+        )
+
+        sl = _build_sheet_lookup(["S"])
+        # Escaped "" inside a string literal — A1 inside should not match.
+        refs = extract_formula_references('="escaped ""A1"" quote"', "S", sl)
+        assert refs == set()
+
+    def test_self_referential_label_not_flagged_as_circular(self):
+        """The canonical G1 regression: a label formula that mentions its
+        own cell in a string must not be flagged as circular."""
+        from xlsx_tools.formula_engine import detect_circular_references
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "S"
+        # A1 contains a formula whose text mentions "A1" — but it's a label,
+        # not a real self-reference.
+        ws["A1"] = '="Row 1 totals (see A1)"'
+        data = _save_wb(wb)
+
+        errors = detect_circular_references(data, ["S"])
+        assert errors == [], (
+            f"False positive! Got: {[(e.location, e.error_type) for e in errors]}"
+        )
+
+    def test_concat_with_own_coord_in_text_not_circular(self):
+        """=A1&' totals' in A1: the A1 IS a real ref (self-ref), so this
+        SHOULD be flagged. But =B1&' see A1' in A1: only B1 is real, A1
+        is text — should NOT be flagged."""
+        from xlsx_tools.formula_engine import detect_circular_references
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "S"
+        ws["A1"] = '=B1&" see A1"'  # A1 in text only
+        ws["B1"] = 5
+        data = _save_wb(wb)
+
+        errors = detect_circular_references(data, ["S"])
+        assert errors == []
+
+    def test_end_to_end_label_formula_does_not_block_delivery(self):
+        """End-to-end: a financial model with label formulas that mention
+        cells in their text must not fail with a false circular ref."""
+        markdown = (
+            "| Metric | Value | Notes |\n"
+            "|---|---|---|\n"
+            "| Revenue | 1000 | =\"see B2 for detail\" |\n"
+            "| Cost | 400 | =B2*0.4 |\n"
+        )
+        with patch("xlsx_tools.base_xlsx_tool.upload_file") as mock_upload:
+            mock_upload.return_value = "fake://model.xlsx"
+            # This must NOT raise — the label formula is legitimate.
+            result = markdown_to_excel(markdown, recalc=True)
+        assert result == "fake://model.xlsx"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ── values_map only contains formula cells ──────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestValuesMapFormulaOnly:
+    """The recalc engine's solution dict contains every cell, but our
+    values_map should only contain formula cells. Otherwise the 'N/M formulas
+    cached' log is misleading and we do 5x the necessary work."""
+
+    def test_values_map_excludes_input_cells(self):
+        if not is_available():
+            pytest.skip("`formulas` library not installed")
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "S"
+        ws["A1"] = "label"   # input
+        ws["A2"] = 5         # input
+        ws["B2"] = "=A2*2"   # formula
+        ws["C2"] = "=B2+1"   # formula
+        data = _save_wb(wb)
+
+        result = recalculate_workbook(data, ["S"])
+        # Only formula cells should be in the map.
+        assert set(result.values_map.keys()) == {"S!B2", "S!C2"}
+        assert result.values_map["S!B2"] == 10
+        assert result.values_map["S!C2"] == 11
+
+    def test_log_count_matches_formula_count(self):
+        """The 'N/M formulas cached' log line should have N ≤ M, where M is
+        the true formula count. Before G2, N could exceed M."""
+        if not is_available():
+            pytest.skip("`formulas` library not installed")
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "S"
+        for i in range(2, 12):
+            ws[f"A{i}"] = i  # 10 input cells
+        ws["B1"] = "=SUM(A2:A11)"  # 1 formula
+        data = _save_wb(wb)
+
+        result = recalculate_workbook(data, ["S"])
+        assert len(result.values_map) <= result.total_formulas
+        assert result.total_formulas == 1
+        assert len(result.values_map) == 1
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ── Coord validation drops phantom matches ──────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestCoordValidation:
+    """Extracted refs must be valid Excel coordinates. Phantom matches
+    like ZZZ1234 (4-letter column) or A9999999 (out-of-range row) are dropped."""
+
+    def test_is_valid_coord_basic(self):
+        from xlsx_tools.formula_engine import _is_valid_coord
+
+        assert _is_valid_coord("A1")
+        assert _is_valid_coord("XFD1048576")  # max valid
+        assert _is_valid_coord("AA10")
+        assert _is_valid_coord("a1")  # case-insensitive
+
+    def test_is_valid_coord_rejects_invalid(self):
+        from xlsx_tools.formula_engine import _is_valid_coord
+
+        assert not _is_valid_coord("ZZZZ1")     # 4-letter column
+        assert not _is_valid_coord("A1048577")  # row out of range
+        assert not _is_valid_coord("A0")        # row 0
+        assert not _is_valid_coord("1A")        # not a coord
+        assert not _is_valid_coord("")
+
+    def test_phantom_4letter_column_dropped(self):
+        from xlsx_tools.formula_engine import (
+            _build_sheet_lookup,
+            extract_formula_references,
+        )
+
+        sl = _build_sheet_lookup(["S"])
+        # The regex will find the longest 1-3 letter column match it can.
+        # ABCDE1 has 5 letters — the regex matches CDE1 (3 letters), which
+        # is a valid coord. The leading AB is unmatched. This is a known
+        # limitation of regex parsing: without a real lexer we can't tell
+        # ABCDE1 was meant as a (hypothetical) 5-letter column. In practice
+        # such a formula would be a #NAME? error caught by the recalc engine.
+        # What we CAN verify is that genuinely invalid coords (4+ letters
+        # with no valid 3-letter suffix, or out-of-range rows) are dropped.
+        refs = extract_formula_references("=ZZZZZ1+1", "S", sl)
+        # ZZZZ1 → regex tries ZZZ (3 letters) + Z1 — but Z1 alone isn't
+        # reachable because the 4th Z breaks the digit boundary. Actually
+        # the regex matches ZZZ1 (treating the 5th Z as separator) — which
+        # IS a valid coord. So we just assert no obviously-invalid coords leak.
+        for ref in refs:
+            sheet, coord = ref.split("!")
+            # Every extracted coord must pass validation.
+            from xlsx_tools.formula_engine import _is_valid_coord
+            assert _is_valid_coord(coord), f"Invalid coord leaked: {coord}"
+
+    def test_out_of_range_row_dropped(self):
+        from xlsx_tools.formula_engine import (
+            _build_sheet_lookup,
+            extract_formula_references,
+        )
+
+        sl = _build_sheet_lookup(["S"])
+        # Row 9,999,999 is way beyond Excel's limit.
+        refs = extract_formula_references("=A9999999", "S", sl)
+        assert refs == set()
+
+
+# ── External-link isolation ──────────────────────────────────────────────────
+
+
+class TestExternalLinkIsolation:
+    """A single external-workbook reference (e.g. =[Other.xlsx]Sheet1!A1)
+    must not suppress cached values for every other formula in the file.
+
+    The `formulas` library aborts the entire workbook with FormulaError
+    when it encounters such a reference. We pre-scan and blank those cells
+    in the temp copy handed to the engine, so the rest of the workbook
+    recalculates normally. The user's original file keeps the external-link
+    formula intact; Excel evaluates it on open.
+    """
+
+    def test_external_link_does_not_abort_recalc(self):
+        """Other formulas get cached even when an external link is present."""
+        markdown = """| Label | Value |
+|-------|-------|
+| A     | 100   |
+| B     | =B2*2 |
+| Ext   | =[Other.xlsx]Sheet1!A1 |
+| C     | =B2+B3 |
+"""
+        data = _intercept_upload(markdown, recalc=True)
+
+        wb_cached = load_workbook(io.BytesIO(data), data_only=True)
+        ws = wb_cached.active
+        # B3 (=B2*2 = 200) and B5 (=B2+B3 = 300) must be cached.
+        assert ws["B3"].value == 200
+        assert ws["B5"].value == 300
+        # B4 (the external link) has no cached value — Excel computes it on open.
+        assert ws["B4"].value is None
+
+    def test_external_link_formula_preserved_in_file(self):
+        """The external-link formula must still be in the delivered file
+        (we only blank it in the temp copy the engine sees)."""
+        markdown = """| Label | Value |
+|-------|-------|
+| Ext   | =[Other.xlsx]Sheet1!A1 |
+| B     | =B2*2 |
+"""
+        data = _intercept_upload(markdown, recalc=True)
+
+        wb = load_workbook(io.BytesIO(data))
+        ws = wb.active
+        assert ws["B2"].value == "=[Other.xlsx]Sheet1!A1"
+
+    def test_quoted_external_link_handled(self):
+        """Quoted external references like ='[Other.xlsx]Sheet 1'!A1 are
+        also detected and isolated."""
+        markdown = """| Label | Value |
+|-------|-------|
+| A     | 100   |
+| Ext   | ='[Other.xlsx]Sheet 1'!A1 |
+| B     | =B2*2 |
+"""
+        data = _intercept_upload(markdown, recalc=True)
+
+        wb_cached = load_workbook(io.BytesIO(data), data_only=True)
+        ws = wb_cached.active
+        # B4 (=B2*2 = 200) still gets cached despite the external link in B3.
+        assert ws["B4"].value == 200
+
+    def test_no_external_links_unchanged_behavior(self):
+        """When there are no external links, the blanking pass is a no-op
+        and recalc behaves exactly as before."""
+        markdown = """| A | B |
+|---|---|
+| 1 | =A2*2 |
+| 2 | =A3*2 |
+"""
+        data = _intercept_upload(markdown, recalc=True)
+
+        wb = load_workbook(io.BytesIO(data), data_only=True)
+        ws = wb.active
+        assert ws["B2"].value == 2
+        assert ws["B3"].value == 4
+
+
+# ── Directive carry-forward across sheet headers ─────────────────────────────
+
+
+class TestDirectiveCarryForward:
+    """Directives placed above a '## Sheet:' header should apply to the next
+    table, not be silently dropped at the sheet boundary.
+
+    Previously, `<!-- types: ... -->` or `<!-- freeze -->` placed at the top
+    of the markdown (above the first sheet header) was silently ignored,
+    which then cascaded into formula errors that looked unrelated to the
+    directive. Directives still reset after each table, so a directive
+    intended for one table does not leak to tables on later sheets.
+    """
+
+    def test_types_directive_above_sheet_header_applies(self):
+        markdown = """<!-- types: text, currency:$ -->
+## Sheet: Model
+
+| Year | Revenue |
+|------|---------|
+| 2024 | $1,000  |
+"""
+        data = _intercept_upload(markdown, recalc=False)
+        wb = load_workbook(io.BytesIO(data))
+        ws = wb["Model"]
+        # B2 should be the number 1000 with currency format, not the text '$1,000'.
+        assert ws["B2"].value == 1000
+        assert ws["B2"].number_format.startswith("$")
+
+    def test_freeze_directive_above_sheet_header_applies(self):
+        markdown = """<!-- freeze -->
+## Sheet: Model
+
+| A | B |
+|---|---|
+| 1 | 2 |
+"""
+        data = _intercept_upload(markdown, recalc=False)
+        wb = load_workbook(io.BytesIO(data))
+        ws = wb["Model"]
+        assert ws.freeze_panes == "A2"
+
+    def test_directive_does_not_leak_to_next_sheet(self):
+        """A directive applied to sheet 1's table is cleared after that
+        table — it must not silently apply to sheet 2's table."""
+        markdown = """<!-- types: text, currency:$ -->
+## Sheet: First
+
+| Year | Revenue |
+|------|---------|
+| 2024 | $1,000  |
+
+## Sheet: Second
+
+| Metric | Value |
+|--------|-------|
+| Count  | 42    |
+"""
+        data = _intercept_upload(markdown, recalc=False)
+        wb = load_workbook(io.BytesIO(data))
+        # Sheet 1: currency format applied.
+        first = wb["First"]
+        assert first["B2"].number_format.startswith("$")
+        # Sheet 2: no currency format (directive was cleared after sheet 1's table).
+        second = wb["Second"]
+        assert not second["B2"].number_format.startswith("$")

@@ -370,17 +370,24 @@ For proper formatting, make sure these styles exist in your `.docx` template:
 
 **Formula recalculation.** By default, every formula is evaluated in-process using the pure-Python [`formulas`](https://github.com/vinci1it2000/formulas) library and the computed values are written back into the file as cached values. This means the file previews correctly in tools that don't recalculate on open — Google Sheets preview, mail clients, `openpyxl` loaded with `data_only=True`. No external binary (LibreOffice, Excel) is required. Disable with the `recalc=false` parameter or the `XLSX_RECALC_ENABLED=false` env var. Recalculation is bounded by `XLSX_RECALC_TIMEOUT_SECONDS` (default 30s); on timeout the file is delivered without cached values (Excel recalcs on open).
 
-**Formula error policy.** Formula errors (`#REF!`, `#DIV/0!`, `#VALUE!`, `#NAME?`, `#NULL!`, `#NUM!`, `#N/A`) **and circular references** (`#CIRC!`) are always detected. **When `recalc=true` is explicitly requested**, the tool call fails with a descriptive error grouping all errors by type with counts and locations, so the model can fix all errors of a given kind at once — enforcing a zero-errors delivery standard. Example error: `3 formula error(s): #DIV/0! (2): Sheet1!B2, Sheet1!B5; #CIRC! (1): Sheet1!A1 — circular references detected (a formula depends on itself, directly or indirectly; fix by breaking the cycle)`. **When recalc runs as a default** (the parameter wasn't passed), errors are logged but the file is still delivered, so a misconfigured environment can never block document generation.
+**Formula error policy.** Formula errors (`#REF!`, `#DIV/0!`, `#VALUE!`, `#NAME?`, `#NULL!`, `#NUM!`, `#N/A`) **and circular references** (`#CIRC!`) are always detected. **When `recalc=true` is explicitly requested**, the tool call fails with a descriptive error grouping all errors by type with counts and locations, prefixed with `N/total` so the model understands scope (e.g. `2/15` means 2 errors out of 15 formulas), so the model can fix all errors of a given kind at once — enforcing a zero-errors delivery standard. Example error: `2/15 formula error(s): #DIV/0! (2): Sheet1!B2, Sheet1!B5; #CIRC! (1): Sheet1!A1 — circular references detected (a formula depends on itself, directly or indirectly; fix by breaking the cycle)`. **When recalc runs as a default** (the parameter wasn't passed), errors are logged but the file is still delivered, so a misconfigured environment can never block document generation.
 
-**Circular-reference detection.** Because the `formulas` library silently resolves circular references to nothing (no cached values, no errors) rather than flagging them, this server runs an independent graph-based cycle check: it parses every formula's cell references, builds a dependency graph, and uses DFS to find cycles. Every cell on a cycle is reported as a `#CIRC!` error. This runs even when the recalc engine is unavailable, since it only inspects the formula strings.
+**Circular-reference detection.** Because the `formulas` library silently resolves circular references to nothing (no cached values, no errors) rather than flagging them, this server runs an independent graph-based cycle check: it parses every formula's cell references (including cross-sheet refs, cell ranges, and **3D references** like `SUM(Sheet1:Sheet3!A1)`), builds a dependency graph, and uses DFS to find cycles. Every cell on a cycle is reported as a `#CIRC!` error. This runs even when the recalc engine is unavailable, since it only inspects the formula strings.
 
-**String-result formula limitation.** Formulas whose result is a **string/text** value (e.g. `=A1&" total"`, `=IF(A1>0,"Yes","No")`, `=VLOOKUP(...)` returning text) do **not** have their cached values injected into the file. This is because injecting a string cached value requires updating the XLSX shared-strings table, which is fragile to do safely after the fact. Numeric, boolean, and datetime results are cached correctly. The cell will still display the correct value when opened in Excel or any client that recalculates on open — it just won't pre-populate in static previewers. Workaround: if you need the text to preview, put the final string directly in the cell instead of computing it via a formula.
+**String-result formulas.** Formulas whose result is a **string/text** value (e.g. `=A1&" total"`, `=IF(A1>0,"Yes","No")`, `=VLOOKUP(...)` returning text, `=TEXT(...)`, `=PROPER(...)`) have their cached values injected as OOXML inline strings (`t="str"`) — no shared-strings-table entry is required, so the file previews correctly in Google Sheets, mail clients, and `openpyxl` loaded with `data_only=True`. Numeric, boolean, datetime, and string results are all cached.
 
-**Financial-modeling mode** (`financial_modeling=true`) applies CFA-standard conventions:
+**External-workbook links.** Formulas that reference another `.xlsx` file (`=[Forecast.xlsx]Sheet1!A1`) can't be evaluated in-process (the other workbook isn't available to the server) and would otherwise make the recalculation engine abort the entire workbook. Such formulas are detected and skipped during in-process recalculation — the rest of the workbook is still recalculated and cached normally, and the external-link formula is preserved in the file so Excel evaluates it natively when the file opens. (External links also get red font in `financial_modeling=true` mode.)
 
-- **Color coding** — hardcoded inputs in blue, local formulas in black, cross-sheet references in green, **external-workbook links in red** (formulas referencing another `.xlsx` file, e.g. `=[Forecast.xlsx]Sheet1!A1`).
+**Financial-modeling conventions** (recommended for budgets, forecasts, valuation models — apply even without `financial_modeling=true`):
+
+- **Assumptions in their own cells.** Put growth rates, margins, multiples, and other inputs in dedicated assumption cells and reference them in formulas. Write `=B5*(1+$B$6)` not `=B5*1.05` — this keeps the model dynamic (change the assumption, everything recalculates) and makes the assumption auditable and color-codeable.
+- **Units in headers.** Always state units in the column header: `Revenue ($mm)`, `Growth Rate (%)`, `EV/EBITDA (x)` — never bare `Revenue`.
+- **Formulas, not hardcoded values.** Use Excel formulas for every calculation (totals, growth, ratios, differences) rather than computing values externally and hardcoding them. The spreadsheet should recalculate when source data changes.
+- **Color coding** (via `financial_modeling=true`): hardcoded inputs in blue, local formulas in black, cross-sheet references in green, **external-workbook links in red** (formulas referencing another `.xlsx` file, e.g. `=[Forecast.xlsx]Sheet1!A1`).
 - **Source-cited cells** get a yellow background when listed in a `sources:` directive.
-- **4-digit-year strings** (e.g. `2024`) in data rows are kept as text labels rather than converted to numbers, so they don't lose their formatting in charts and pivots. (Use an explicit `types: text` directive if you want this behaviour without the rest of financial mode.)
+- **4-digit-year strings** (e.g. `2024`) in data rows are kept as text labels rather than converted to numbers. (Use an explicit `types: text` directive if you want this behaviour without the rest of financial mode.)
+
+**Markdown directives.** Directives (`<!-- freeze -->`, `<!-- types: ... -->`, `<!-- sources: ... -->`) are HTML-comment lines that configure the next table. They can be placed directly above the table OR above a `## Sheet:` header that precedes the table — both work. A directive applies to exactly one table (the next one) and is then cleared, so it never leaks to tables on later sheets. Multiple sheets are created with `## Sheet: Name` headings.
 
 **Source citations.** Add cell comments / notes with a `sources:` directive above the table. A useful citation names where the figure came from, when it was pulled, and a pointer back to the original record, e.g. `Source: 10-K annual report, fiscal year 2024, page 45, line item "Total revenue"` or `Source: internal CRM export, 2025-06-12, row 1843`:
 
@@ -392,7 +399,7 @@ For proper formatting, make sure these styles exist in your `.docx` template:
 | Cost    | 400   |
 ```
 
-Ranges are supported: `B2:B5=Same source applies`. Combine with `financial_modeling=true` to also get the yellow background.
+Ranges are supported: `B2:B5=Same source applies`. If a single-cell entry and a range both cover the same cell, the single-cell entry wins (it's more specific), regardless of which is listed first — so `B2=Specific, B2:B5=Range` gives B2 the specific source and B3:B5 the range source. Combine with `financial_modeling=true` to also get the yellow background.
 
 **Number-format variants.** The `types:` directive supports optional variants that control how zeros and negatives render:
 
@@ -404,14 +411,16 @@ Ranges are supported: `B2:B5=Same source applies`. Combine with `financial_model
 | `dash` | `currency:$:dash` | `-` | `($1,234)` |
 | `dash` | `percent:dash` | `-` | `(12.5%)` |
 
-**Valuation multiples** (EV/EBITDA, P/E, etc.) get their own top-level type `multiple`, which renders as `12.5x` — the value is stored raw and the `x` is a display suffix:
+**Valuation multiples** (EV/EBITDA, P/E, etc.) get their own top-level type `multiple`, which renders as `12.5x` — the value is stored raw and the `x` is a display suffix. `number:multiple` and `number:multiples` are accepted as aliases (the natural way to ask for "a number formatted as a multiple"):
 
 | Directive | Input | Stored value | Display |
 |---|---|---|---|
-| `multiple` | `12.5` or `12.5x` | `12.5` | `12.5x` |
+| `multiple` (or `number:multiple`) | `12.5` or `12.5x` | `12.5` | `12.5x` |
 | `multiple:dash` | `12.5` | `12.5` | `12.5x` (zeros as `-`, negatives in parens) |
 
 Accounting-style negative notation in input values is recognised: `($50)` parses to `-50` when the column type is `currency:$`.
+
+**Percent format.** The default percent format is `0.0%` (one decimal, CFA convention) so `50.5%` displays as `50.5%` rather than being rounded to `51%`. Use `percent:integer` if you want no decimals (`0%`).
 
 **Default font.** Set a font family for every cell with the `default_font` parameter or the `XLSX_DEFAULT_FONT` env var. Inline `` `code` `` formatting (Courier New) always overrides.
 

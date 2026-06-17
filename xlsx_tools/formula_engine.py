@@ -70,9 +70,11 @@ class RecalcResult:
             engine could not be initialised (e.g. dependency missing) or
             raised before producing a solution.
         values_map: Mapping of ``"Sheet!Cell"`` -> computed Python scalar.
-            Only cells that contained a formula AND produced a non-error,
-            non-string value are included. Numeric values are unwrapped
-            from numpy types to native Python int/float/bool.
+            Only cells that contained a formula AND produced a non-error
+            value are included. Numeric values are unwrapped from numpy
+            types to native Python int/float/bool. String results are
+            included and serialized with ``t="str"`` (inline string, no
+            shared-strings-table entry required).
         errors: Formula errors detected. Empty if none.
         skip_reason: Human-readable reason when recalc was skipped
             (engine unavailable or engine raised). None otherwise.
@@ -197,6 +199,105 @@ def _suppress_tqdm() -> None:
     os.environ.setdefault("TQDM_DISABLE", "1")
 
 
+def _collect_formula_cells(
+    xlsx_bytes_or_path: bytes | str,
+    sheet_lookup: dict[str, str],
+) -> set[str] | None:
+    """Return the set of ``"Sheet!Cell"`` keys for cells that contain a formula.
+
+    Used to filter the recalc engine's solution dict (which includes every
+    cell, not just formulas) down to just the formula cells we actually
+    want to cache. Returns ``None`` if the workbook can't be parsed — the
+    caller treats None as "filter disabled" and caches everything (the
+    injection layer filters by presence of ``<f>`` anyway, so this is
+    just an optimisation, not a correctness requirement).
+    """
+    try:
+        from openpyxl import load_workbook
+        import io as _io
+
+        if isinstance(xlsx_bytes_or_path, (bytes, bytearray)):
+            wb = load_workbook(_io.BytesIO(xlsx_bytes_or_path))
+        else:
+            wb = load_workbook(str(xlsx_bytes_or_path))
+    except Exception as e:
+        logger.debug("Formula-cell collection skipped (workbook parse failed): %s", e)
+        return None
+
+    formula_keys: set[str] = set()
+    try:
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            for row in ws.iter_rows():
+                for cell in row:
+                    if (
+                        isinstance(cell.value, str)
+                        and cell.value.startswith("=")
+                    ):
+                        formula_keys.add(_format_location(sheet_name, cell.coordinate))
+    finally:
+        wb.close()
+
+    return formula_keys
+
+
+# A formula references an external workbook when it contains a sheet
+# reference whose workbook name is wrapped in square brackets — e.g.
+# `=[Budget.xlsx]Sheet1!A1` or `='[C:\Reports\FY24.xlsx]P&L'!B2`. The
+# `formulas` library can't resolve these (the other workbook isn't
+# available in-process) and aborts the whole workbook with FormulaError.
+# Match the bracketed-bookbook pattern after the leading '='.
+_EXTERNAL_LINK_RE = re.compile(r"=\s*'?\[", re.IGNORECASE)
+
+
+def _blank_external_link_formulas(xlsx_path: str) -> list[str]:
+    """Blank out external-link formulas in ``xlsx_path`` in place.
+
+    Opens the temp copy of the workbook that is handed to the recalc
+    engine and clears the value of any cell whose formula references an
+    external workbook (e.g. ``=[Other.xlsx]Sheet1!A1``). Returns the
+    list of affected ``"Sheet!Cell"`` keys for logging/telemetry.
+
+    This keeps a single unsupported cell from suppressing cached values
+    for every other formula in the file. The user's original file is
+    never modified — only the temp copy the engine loads from — and
+    Excel will recalc the external links natively when the file opens.
+    """
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        return []
+
+    try:
+        wb = load_workbook(xlsx_path)
+    except Exception as e:
+        logger.debug("External-link scan skipped (workbook parse failed): %s", e)
+        return []
+
+    skipped: list[str] = []
+    try:
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            for row in ws.iter_rows():
+                for cell in row:
+                    val = cell.value
+                    if (
+                        isinstance(val, str)
+                        and val.startswith("=")
+                        and _EXTERNAL_LINK_RE.match(val)
+                    ):
+                        skipped.append(_format_location(sheet_name, cell.coordinate))
+                        cell.value = None
+        if skipped:
+            wb.save(xlsx_path)
+    except Exception as e:
+        logger.debug("External-link blanking failed: %s", e)
+    finally:
+        wb.close()
+
+    return skipped
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 
 
@@ -268,6 +369,30 @@ def recalculate_workbook(
         # callers that aren't using recalculation.
         import formulas
 
+        # Pre-pass: collect the set of cells that actually contain formulas.
+        # The `formulas` library's solution dict includes EVERY cell (inputs
+        # and formulas alike), so without this filter we'd build a values_map
+        # 5-10x larger than needed and log a misleading "N/M formulas cached"
+        # count. We only want to cache values for cells whose original content
+        # was a formula (= prefix).
+        formula_cells = _collect_formula_cells(xlsx_bytes_or_path, sheet_lookup)
+
+        # Isolate external-link formulas. The `formulas` library aborts the
+        # ENTIRE workbook with FormulaError when it encounters an external-
+        # workbook reference like `=[Other.xlsx]Sheet1!A1`. A single such
+        # cell anywhere would otherwise suppress cached values for every
+        # formula in the file. We blank those cells in the temp copy handed
+        # to the engine (the user's file is untouched; Excel recalcs external
+        # links on open anyway). External-link cells are recorded as skipped.
+        skipped_external = _blank_external_link_formulas(load_path)
+        if skipped_external:
+            logger.info(
+                "External-link formulas not recalculated in-process (%d cell(s)); "
+                "Excel will evaluate them on open: %s",
+                len(skipped_external),
+                ", ".join(skipped_external[:10]),
+            )
+
         logger.debug("Loading workbook into formulas engine: %s", load_path)
         model = formulas.ExcelModel().loads(load_path).finish()
         solution = model.calculate()
@@ -279,6 +404,14 @@ def recalculate_workbook(
 
             upper_sheet, coordinate = match.group(1), match.group(2)
             original_sheet = sheet_lookup.get(upper_sheet, upper_sheet)
+
+            # Only cache values for cells that actually contained a formula.
+            # The engine returns values for input cells too; injecting those
+            # would be wasted work (xml_cache filters them anyway) and
+            # skews the "N/M formulas cached" log line.
+            location_key_check = _format_location(original_sheet, coordinate)
+            if formula_cells is not None and location_key_check not in formula_cells:
+                continue
 
             scalar = _unwrap_scalar(value)
             if scalar is None:
@@ -294,14 +427,6 @@ def recalculate_workbook(
                         error_type=err,
                     )
                 )
-                continue
-
-            # String results are not injected as cached values — Excel
-            # stores them via the shared-strings table, not inline in <v>,
-            # and openpyxl wrote the formula cell with no shared-strings
-            # entry. Injecting a raw string would corrupt the file. Skip
-            # string results; the formula will recompute on open in Excel.
-            if isinstance(scalar, str):
                 continue
 
             location_key = _format_location(original_sheet, coordinate)
@@ -384,11 +509,17 @@ _REF_TOKENS_RE = re.compile(
         '?                              #   optional opening quote
         (?: ([A-Za-z_][\w\s]*) )        #   group 1: sheet name (greedy-ish)
         '?                              #   optional closing quote
+        (?:                             #   optional :sheet range (3D ref)
+            :                           #     literal colon
+            '?                          #     optional opening quote
+            ([A-Za-z_][\w\s]*)          #     group 2: end sheet name
+            '?                          #     optional closing quote
+        )?
         !                               #   bang
     )?
-    (\$?[A-Z]{1,3}\$?\d{1,7})           # group 2: first cell (e.g. B2, $A$1)
-    (?::                               # optional :range
-        (\$?[A-Z]{1,3}\$?\d{1,7})       #   group 3: second cell
+    (\$?[A-Z]{1,3}\$?\d{1,7})           # group 3: first cell (e.g. B2, $A$1)
+    (?::                               # optional :cell range
+        (\$?[A-Z]{1,3}\$?\d{1,7})       #   group 4: second cell
     )?
     """,
     re.IGNORECASE | re.VERBOSE,
@@ -435,6 +566,71 @@ def _expand_range(start: str, end: str) -> list[str]:
     return cells
 
 
+def _is_valid_coord(coord: str) -> bool:
+    """Return True if ``coord`` is a real Excel cell coordinate (e.g. A1, XFD1048576).
+
+    Used to filter out phantom matches from the regex — e.g. ``Table1[Revenue]``
+    yields a ``BLE1`` match that isn't a valid coordinate. Validation:
+    column letters 1-3 chars and at most XFD (16384); row 1-1048576.
+    """
+    import re as _re
+    m = _re.match(r"^([A-Z]{1,3})(\d+)$", coord.upper())
+    if not m:
+        return False
+    col, row = m.group(1), int(m.group(2))
+    # Row must fit Excel's 1,048,576-row limit.
+    if row < 1 or row > 1048576:
+        return False
+    # Column must fit Excel's 16,384-column limit (XFD).
+    n = 0
+    for ch in col:
+        n = n * 26 + (ord(ch) - ord("A") + 1)
+    return 1 <= n <= 16384
+
+
+def _strip_string_literals(formula: str) -> str:
+    """Remove double-quoted string literals from a formula string.
+
+    Excel string literals are delimited by ``"`` and use ``""`` for an
+    escaped quote inside the literal. Cell-coordinate patterns (``A1``,
+    ``B2``) appearing *inside* a string literal are NOT cell references —
+    they're just text — so we strip them before regex-matching for refs.
+
+    Without this, a formula like ``="see cell A1 for context"`` would
+    produce a phantom ``A1`` reference, and a self-referential label
+    like ``=A1&" totals"`` placed in A1 would falsely report a circular
+    reference.
+
+    We replace each literal with a single space (not the empty string)
+    so adjacent tokens on either side of the literal don't accidentally
+    fuse into a new coord-like token.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(formula)
+    while i < n:
+        ch = formula[i]
+        if ch == '"':
+            # Skip until the closing unescaped quote. An escaped quote
+            # inside the literal is "" (two consecutive double quotes).
+            i += 1
+            while i < n:
+                if formula[i] == '"':
+                    if i + 1 < n and formula[i + 1] == '"':
+                        # Escaped quote — skip both chars.
+                        i += 2
+                        continue
+                    # Unescaped closing quote.
+                    i += 1
+                    break
+                i += 1
+            out.append(" ")  # placeholder so tokens don't fuse
+        else:
+            out.append(ch)
+            i += 1
+    return "".join(out)
+
+
 def extract_formula_references(
     formula: str,
     current_sheet: str,
@@ -458,27 +654,67 @@ def extract_formula_references(
     if not formula:
         return set()
 
-    refs: set[str] = set()
-    for match in _REF_TOKENS_RE.finditer(formula):
-        sheet_raw, cell_start, cell_end = match.group(1), match.group(2), match.group(3)
+    # Strip string literals first so coord-like text inside them (e.g.
+    # "see A1" or a VLOOKUP key "A1") isn't mistaken for a cell ref.
+    cleaned = _strip_string_literals(formula)
 
-        # Resolve the sheet: explicit prefix, else the formula's own sheet.
+    refs: set[str] = set()
+    for match in _REF_TOKENS_RE.finditer(cleaned):
+        sheet_raw, sheet_end_raw, cell_start, cell_end = (
+            match.group(1),
+            match.group(2),
+            match.group(3),
+            match.group(4),
+        )
+
         if sheet_raw:
-            sheet = sheet_lookup.get(sheet_raw.strip().upper())
-            if sheet is None:
+            # Resolve the (start) sheet. For a 3D ref like Sheet1:Sheet3!A1,
+            # expand to every sheet in the workbook between the two names.
+            start_sheet = sheet_lookup.get(sheet_raw.strip().upper())
+            if start_sheet is None:
                 # Unknown sheet — skip; recalc engine will flag #REF! if real.
                 continue
-        else:
-            sheet = current_sheet
 
-        if cell_end:
-            # Range: expand to individual cells.
-            for coord in _expand_range(
-                _normalize_coord(cell_start), _normalize_coord(cell_end)
-            ):
-                refs.add(_format_location(sheet, coord))
+            if sheet_end_raw:
+                # 3D reference (Sheet1:Sheet3!A1). Expand across every sheet
+                # in workbook order between start and end, inclusive. We use
+                # workbook order from sheet_lookup's values rather than
+                # alphabetical, matching Excel's behaviour.
+                end_sheet = sheet_lookup.get(sheet_end_raw.strip().upper())
+                if end_sheet is None:
+                    continue
+                # Preserve the workbook's sheet ordering for expansion.
+                ordered_sheets = list(sheet_lookup.values())
+                try:
+                    i_start = ordered_sheets.index(start_sheet)
+                    i_end = ordered_sheets.index(end_sheet)
+                    if i_start > i_end:
+                        i_start, i_end = i_end, i_start
+                    target_sheets = ordered_sheets[i_start : i_end + 1]
+                except ValueError:
+                    target_sheets = [start_sheet]
+            else:
+                target_sheets = [start_sheet]
         else:
-            refs.add(_format_location(sheet, _normalize_coord(cell_start)))
+            # No sheet prefix — resolve to the formula's own sheet.
+            target_sheets = [current_sheet]
+
+        for sheet in target_sheets:
+            if cell_end:
+                # Cell range: expand to individual cells.
+                start_norm = _normalize_coord(cell_start)
+                end_norm = _normalize_coord(cell_end)
+                # Drop the match entirely if either corner isn't a valid
+                # Excel coordinate (e.g. phantom BLE1 from "Table1[Rev]").
+                if not _is_valid_coord(start_norm) or not _is_valid_coord(end_norm):
+                    continue
+                for coord in _expand_range(start_norm, end_norm):
+                    refs.add(_format_location(sheet, coord))
+            else:
+                coord = _normalize_coord(cell_start)
+                if not _is_valid_coord(coord):
+                    continue
+                refs.add(_format_location(sheet, coord))
 
     return refs
 

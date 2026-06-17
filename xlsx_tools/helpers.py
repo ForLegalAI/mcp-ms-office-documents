@@ -291,7 +291,7 @@ def resolve_cell(raw_text: str) -> CellResult:
 
     # Step 5: Try numeric conversion
     try:
-        numeric_val = float(clean_text)
+        numeric_val = float(_strip_thousands_separators(clean_text))
         return CellResult(
             value=numeric_val,
             bold=bold, italic=italic, monospace=monospace,
@@ -446,13 +446,24 @@ def parse_sources_directive(value: str) -> dict[str, str]:
        Expands the Excel range to individual cells, each getting the
        same source text.
 
+    When a single-cell entry and a range entry both cover the same cell,
+    the single-cell entry wins (it is more specific). For example, in
+    ``B2:B5=Range source, B3=Cell-specific source`` the cell B3 gets
+    the cell-specific text while B2, B4, B5 get the range text. This
+    also applies when the single-cell entry is listed first in the
+    directive.
+
     The coordinate keys in the returned dict are bare coordinates
     (e.g. ``"B2"``) without a sheet prefix — the caller knows which
     sheet it's processing.
     """
     if not value:
         return {}
-    result: dict[str, str] = {}
+    # Two passes: ranges first (less specific), then singles (more
+    # specific) so a single-cell entry always overrides a range that
+    # happens to cover the same cell, regardless of declaration order.
+    range_entries: list[tuple[str, str]] = []
+    single_entries: list[tuple[str, str]] = []
     for entry in value.split(','):
         entry = entry.strip()
         if not entry or '=' not in entry:
@@ -462,12 +473,16 @@ def parse_sources_directive(value: str) -> dict[str, str]:
         source_text = source_text.strip()
         if not coord_part or not source_text:
             continue
-        # Range form: B2:B5
         if ':' in coord_part:
-            for coord in _expand_coord_range(coord_part):
-                result[coord] = source_text
+            range_entries.append((coord_part, source_text))
         else:
-            result[coord_part] = source_text
+            single_entries.append((coord_part, source_text))
+    result: dict[str, str] = {}
+    for coord_part, source_text in range_entries:
+        for coord in _expand_coord_range(coord_part):
+            result[coord] = source_text
+    for coord_part, source_text in single_entries:
+        result[coord_part] = source_text
     return result
 
 
@@ -507,12 +522,41 @@ def _resolve_row(positions: dict[str, int], table_num: int, offset: int, fallbac
 
     Returns:
         The absolute Excel row number.
+
+    A missing table key (e.g. ``T9`` when only 3 tables exist) is logged at
+    WARNING level — the formula still resolves (using the fallback row) so the
+    file ships, but the model gets a signal that a reference likely points at
+    the wrong cell, which is the most common source of silently-wrong formulas.
     """
     key = f"T{table_num}"
     base = positions.get(key)
     if base is not None:
         return base + 1 + offset  # +1 to skip header row
+    logger.warning(
+        "Formula references %s but no such table exists in the target sheet "
+        "(known tables: %s); falling back to current row. This likely produces "
+        "a wrong cell reference — check the table numbering.",
+        key, ", ".join(sorted(positions.keys())) or "none",
+    )
     return fallback_row + offset
+
+
+def _warn_unknown_sheet(sheet: str, all_sheet_table_positions: dict[str, dict[str, int]]) -> None:
+    """Log a warning when a cross-sheet reference names a sheet that doesn't exist.
+
+    The formula still resolves (the regex emits a syntactically valid cross-sheet
+    ref), but Excel will show ``#REF!`` on open — better to surface the typo
+    (e.g. ``Revenue!T1.B[0]`` when the sheet is actually ``Revenue Model``)
+    during generation than let it fail silently in the client.
+    """
+    if sheet not in all_sheet_table_positions:
+        known = ", ".join(sorted(all_sheet_table_positions.keys())) or "none"
+        logger.warning(
+            "Formula references sheet '%s' which does not exist in the workbook "
+            "(known sheets: %s). The generated reference will likely resolve to "
+            "#REF! in Excel.",
+            sheet, known,
+        )
 
 
 def _make_cell_ref(column: str, row: int, sheet: str | None = None) -> str:
@@ -556,6 +600,7 @@ def adjust_formula_references(
             start_offset = int(match.group(5))
             end_col = match.group(6)
             end_offset = int(match.group(7))
+            _warn_unknown_sheet(sheet, all_sheet_table_positions)
             pos = all_sheet_table_positions.get(sheet, {})
             sr = _resolve_row(pos, table_num, start_offset, current_excel_row)
             er = _resolve_row(pos, table_num, end_offset, current_excel_row)
@@ -577,6 +622,7 @@ def adjust_formula_references(
             et_num = int(match.group(5))
             end_col = match.group(6)
             end_offset = int(match.group(7))
+            _warn_unknown_sheet(sheet, all_sheet_table_positions)
             pos = all_sheet_table_positions.get(sheet, {})
             sr = _resolve_row(pos, st_num, start_offset, current_excel_row)
             er = _resolve_row(pos, et_num, end_offset, current_excel_row)
@@ -595,6 +641,7 @@ def adjust_formula_references(
             table_num = int(match.group(2))
             column = match.group(3)
             offset = int(match.group(4))
+            _warn_unknown_sheet(sheet, all_sheet_table_positions)
             pos = all_sheet_table_positions.get(sheet, {})
             actual_row = _resolve_row(pos, table_num, offset, current_excel_row)
             result = _make_cell_ref(column, actual_row, sheet)
@@ -717,6 +764,21 @@ _CURRENCY_FORMATS = {
     '₹': '₹#,##0.00',
 }
 
+# Zero-decimal variants for currency (`currency:<symbol>:integer`).
+# Used for whole-unit financial figures ($mm, $bn) where decimals are noise.
+_CURRENCY_ZERO_DECIMAL_FORMATS = {
+    '$': '$#,##0',
+    '€': '#,##0 €',
+    '£': '£#,##0',
+    '¥': '¥#,##0',
+    'Kč': '#,##0 "Kč"',
+    'zł': '#,##0 "zł"',
+    'kr': '#,##0 "kr"',
+    'CHF': '"CHF" #,##0',
+    'R$': '"R$" #,##0',
+    '₹': '₹#,##0',
+}
+
 
 def _parse_types_directive(value: str) -> list[str | None]:
     """Parse a types directive value like 'text, currency:$, date, bool, number'.
@@ -739,6 +801,16 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
 
     clean = raw_text.strip()
     type_lower = type_spec.lower()
+
+    # Alias: `number:multiple` / `number:multiples` → `multiple`. Users
+    # naturally write `number:multiple` expecting "number formatted as a
+    # multiple", but `multiple` is its own type, not a `number:` variant.
+    # Without this rewrite the parser would treat `multiple` as a literal
+    # number-format string (which Excel doesn't understand), leaving the
+    # value as raw text '12.5x' and breaking formulas that reference it.
+    if type_lower in ('number:multiple', 'number:multiples'):
+        type_lower = 'multiple'
+        type_spec = 'multiple'
 
     # text — force string, no conversion
     if type_lower == 'text':
@@ -792,7 +864,7 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
             if is_negative:
                 value = -abs(value)
             cell.value = value
-            base_format = _CURRENCY_FORMATS.get(symbol, f'#,##0.00 "{symbol}"')
+            base_format = _currency_base_format(symbol, variant)
             cell.number_format = _apply_format_variant(base_format, variant)
         except ValueError:
             cell.value = clean  # Can't parse → keep as text
@@ -802,7 +874,7 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
     if type_lower.startswith('number'):
         parts = type_spec.split(':', 1)
         fmt_or_variant = parts[1].strip() if len(parts) > 1 else None
-        numeric_str = clean.replace(',', '').replace(' ', '')
+        numeric_str = _strip_thousands_separators(clean)
         try:
             cell.value = float(numeric_str)
             if fmt_or_variant:
@@ -812,8 +884,10 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
                     cell.number_format = NUMBER_FORMAT_VARIANTS[fmt_or_variant.lower()]
                 else:
                     cell.number_format = fmt_or_variant
-            elif cell.value >= 1000:
-                cell.number_format = '#,##0'
+            else:
+                # No explicit format: pick by magnitude, preserving decimals
+                # (was a bug: everything >= 1000 was force-rounded to #,##0).
+                cell.number_format = DEFAULT_NUMBER_FORMAT if cell.value.is_integer() else DEFAULT_NUMBER_FORMAT_DECIMALS
         except ValueError:
             cell.value = clean
         return True
@@ -861,6 +935,34 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
     return False
 
 
+def _strip_thousands_separators(s: str) -> str:
+    """Normalize a numeric string that may contain thousands separators.
+
+    Handles English (``1,234.56``), European (``1.234,56``), and bare
+    thousands (``1,234``). Used so plain numeric cells without a `types`
+    directive still parse when the value includes commas — previously
+    ``float("1,234")`` raised and the value stayed a string.
+    """
+    s = s.strip()
+    if ',' not in s and '.' not in s:
+        return s
+    if ',' in s and '.' in s:
+        last_comma = s.rfind(',')
+        last_dot = s.rfind('.')
+        if last_comma > last_dot:
+            # European: 1.234,56
+            return s.replace('.', '').replace(',', '.')
+        # English: 1,234.56
+        return s.replace(',', '')
+    if ',' in s:
+        # Ambiguous: assume thousands if exactly 3 digits follow the comma.
+        parts = s.split(',')
+        if len(parts[-1]) == 3:
+            return s.replace(',', '')
+        return s.replace(',', '.')
+    return s
+
+
 def _apply_format_variant(base_format: str, variant: str | None) -> str:
     """Apply a financial-modeling variant (dash, parens) to a base number format.
 
@@ -884,19 +986,48 @@ def _apply_format_variant(base_format: str, variant: str | None) -> str:
     return base_format
 
 
+# Variant keywords that select the zero-decimal currency format. Financial
+# models frequently show whole-dollar amounts (revenue/profit in $mm, $bn)
+# where the `.00` is noise. `currency:$:integer` (or `:int`/`:whole`) maps
+# these to the symbol's zero-decimal base format.
+_INTEGER_VARIANT_KEYWORDS = {"integer", "int", "whole"}
+
+
+def _currency_base_format(symbol: str, variant: str | None) -> str:
+    """Return the base currency number format for a symbol and variant.
+
+    The variant selects precision: ``integer``/``int``/``whole`` (or any
+    variant combined with ``integer``) yields the zero-decimal form
+    (``$#,##0``), otherwise the default two-decimal form (``$#,##0.00``).
+    Unknown symbols fall back to ``#,##0.00 "<symbol>"`` / ``#,##0 "<symbol>"``.
+    """
+    zero_decimal = bool(variant) and any(
+        kw in variant for kw in _INTEGER_VARIANT_KEYWORDS
+    )
+    if zero_decimal:
+        return _CURRENCY_ZERO_DECIMAL_FORMATS.get(
+            symbol, f'#,##0 "{symbol}"'
+        )
+    return _CURRENCY_FORMATS.get(symbol, f'#,##0.00 "{symbol}"')
+
+
 def _apply_percent_format_variant(variant: str | None) -> str:
     """Return the Excel percent number format for the given variant.
 
-    When ``variant`` is None or "legacy"/"default" with no request for
-    financial conventions, returns the original ``0%`` format to preserve
-    backward compatibility with workbooks generated before the variant
-    feature existed.
+    Defaults to ``0.0%`` (one decimal) per the CFA/financial-modeling
+    convention — bare ``50.5%`` should display as ``50.5%``, not ``51%``
+    (which is what ``0%`` would produce, silently losing the decimal).
+    Use the explicit ``percent:integer`` variant for the old no-decimal
+    ``0%`` behaviour when backward compatibility with a pre-existing
+    template matters.
     """
     if not variant:
-        return "0%"  # original behaviour
+        return "0.0%"  # CFA convention: one decimal
+    if variant == "integer":
+        return "0%"  # opt-out for users who want no decimals
     if variant == "default":
         return PERCENT_FORMAT_VARIANTS["default"]
-    return PERCENT_FORMAT_VARIANTS.get(variant, "0%")
+    return PERCENT_FORMAT_VARIANTS.get(variant, "0.0%")
 
 
 def _apply_multiples_format_variant(variant: str | None) -> str:
@@ -909,6 +1040,48 @@ def _apply_multiples_format_variant(variant: str | None) -> str:
     if not variant or variant == "default":
         return MULTIPLES_FORMAT_VARIANTS["default"]
     return MULTIPLES_FORMAT_VARIANTS.get(variant, MULTIPLES_FORMAT_VARIANTS["default"])
+
+
+# ── Default number formats for plain numeric cells (no `types` directive) ─────
+#
+# When a column has no explicit `types` directive, `resolve_cell` returns a
+# bare numeric value with no number_format. The rendering block in
+# `add_table_to_sheet` then assigns a default based on magnitude. These
+# formats implement two conventions:
+#
+#   - Whole numbers → `#,##0` (no trailing `.00` noise, no precision lost).
+#   - Non-whole numbers → `#,##0.00` (preserves decimals; the old code
+#     unconditionally used `#,##0` for values >= 1000, silently rounding
+#     `1500.75` to `1,501`).
+#
+# When financial_modeling is active, the same defaults are promoted to the
+# dash variant so zeros render as `-` and negatives in parentheses — the
+# CFA convention the skill's financial-modeling standard requires.
+DEFAULT_NUMBER_FORMAT = "#,##0"
+DEFAULT_NUMBER_FORMAT_DECIMALS = "#,##0.00"
+
+# Financial dash/parens variants applied as the default number format when
+# `financial_modeling=True` and the cell has no explicit format from a
+# `types` directive. These are the same strings used by the corresponding
+# variants in NUMBER_FORMAT_VARIANTS / PERCENT_FORMAT_VARIANTS, inlined
+# here for the "no directive" default path.
+FINANCIAL_DEFAULT_NUMBER = "#,##0;(#,##0);-"
+FINANCIAL_DEFAULT_NUMBER_DECIMALS = "#,##0.00;(#,##0.00);-"
+FINANCIAL_DEFAULT_PERCENT = "0.0%;(0.0%);-"
+
+
+def _default_number_format_for(value: float, financial_modeling: bool) -> str:
+    """Pick the default number format for a plain numeric cell.
+
+    Whole numbers use the integer format; non-whole numbers preserve two
+    decimals (was a bug: anything >= 1000 was force-rounded). When
+    ``financial_modeling`` is true, the dash/parens variant is returned so
+    zeros render as ``-`` and negatives in parentheses per CFA convention.
+    """
+    is_whole = float(value).is_integer()
+    if financial_modeling:
+        return FINANCIAL_DEFAULT_NUMBER if is_whole else FINANCIAL_DEFAULT_NUMBER_DECIMALS
+    return DEFAULT_NUMBER_FORMAT if is_whole else DEFAULT_NUMBER_FORMAT_DECIMALS
 
 
 def _is_year_string(value: str) -> bool:
@@ -1050,12 +1223,28 @@ def add_table_to_sheet(
                     else:
                         cell.font = header_font
                     cell.fill = header_fill
-                elif isinstance(cell.value, (int, float)) and cell.value >= 1000:
-                    cell.number_format = '#,##0'
+                elif isinstance(cell.value, (int, float)) and not isinstance(cell.value, bool):
+                    # Default number format for plain numeric cells (no `types`
+                    # directive on this column). Whole numbers use the integer
+                    # format; non-whole numbers preserve two decimals (the old
+                    # code force-rounded everything >= 1000 to `#,##0`,
+                    # silently turning 1500.75 into 1,501). When financial
+                    # modeling is active, the dash/parens variant is applied so
+                    # zeros render as `-` and negatives in parentheses per CFA
+                    # convention.
+                    cell.number_format = _default_number_format_for(
+                        cell.value, financial_modeling
+                    )
 
-                # Apply percentage number format
+                # Apply percentage number format. Per CFA convention the default
+                # is one decimal (`0.0%`); in financial mode the dash variant is
+                # used so zero renders as `-`.
                 if resolved.is_percent and isinstance(cell.value, (int, float)):
-                    cell.number_format = '0%'
+                    cell.number_format = (
+                        FINANCIAL_DEFAULT_PERCENT
+                        if financial_modeling
+                        else "0.0%"
+                    )
 
                 # Apply date number format
                 if resolved.is_date and resolved.date_format:
@@ -1066,6 +1255,17 @@ def add_table_to_sheet(
                 if financial_modeling and row_idx > 0:
                     value_for_check = cell.value if isinstance(cell.value, str) else None
                     apply_financial_styling(cell, value_for_check, set(sources_map.keys()))
+                    # Financial models also expect dash/parens number formatting
+                    # on formula results (zero → "-", negative → "(...)"). The
+                    # result value isn't known at render time, so we apply the
+                    # format optimistically — Excel ignores number formats on
+                    # non-numeric (string/error) results, so this is safe.
+                    if (
+                        isinstance(cell.value, str)
+                        and cell.value.startswith('=')
+                        and cell.number_format == 'General'
+                    ):
+                        cell.number_format = FINANCIAL_DEFAULT_NUMBER
 
                 # Source citation comment (data rows only).
                 if row_idx > 0:
