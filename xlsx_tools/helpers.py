@@ -823,17 +823,30 @@ _KNOWN_TYPE_KEYWORDS = frozenset(
 )
 
 
-def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
+def _apply_column_type(
+    cell, raw_text: str, type_spec: str | None, financial_modeling: bool = False
+) -> bool:
     """Apply column type coercion to a cell based on directive.
 
     Returns True if type was applied (caller should skip default processing),
     False if default processing should continue.
+
+    When ``financial_modeling`` is True and the column type is numeric
+    (number/currency/percent) with no explicit dash/parens variant, the
+    dash variant is applied as the default so zeros render as ``-`` and
+    negatives in parentheses — matching the CFA convention the untyped
+    numeric path already follows. An explicit variant always wins.
     """
     if not type_spec:
         return False
 
     clean = raw_text.strip()
     type_lower = type_spec.lower()
+
+    def _fin_variant(variant: str | None) -> str | None:
+        """Promote to the dash variant under financial_modeling unless the
+        caller already specified a section style (dash/parens)."""
+        return _promote_variant_for_financial(variant, financial_modeling)
 
     # Alias: `number:multiple` / `number:multiples` → `multiple`. Users
     # naturally write `number:multiple` expecting "number formatted as a
@@ -865,7 +878,10 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
     if type_lower.startswith('currency'):
         parts = type_spec.split(':')
         symbol = parts[1].strip() if len(parts) > 1 and parts[1].strip() else '$'
-        variant = parts[2].strip().lower() if len(parts) > 2 else None
+        # Capture ALL variant tokens after the symbol (e.g. 'integer:dash'),
+        # not just the first — otherwise the section style ('dash'/'parens')
+        # is silently dropped when combined with a precision keyword.
+        variant = ':'.join(p.strip() for p in parts[2:]).lower() if len(parts) > 2 else None
         # Strip the currency symbol and common thousand separators
         numeric_str = clean.replace(symbol, '').replace(' ', '').strip()
         # Detect accounting-style negative notation: (1234) → -1234.
@@ -897,8 +913,9 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
             if is_negative:
                 value = -abs(value)
             cell.value = value
-            base_format = _currency_base_format(symbol, variant)
-            cell.number_format = _apply_format_variant(base_format, variant)
+            eff_variant = _fin_variant(variant)
+            base_format = _currency_base_format(symbol, eff_variant)
+            cell.number_format = _apply_format_variant(base_format, eff_variant)
         except ValueError:
             cell.value = clean  # Can't parse → keep as text
         return True
@@ -912,11 +929,19 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
             cell.value = float(numeric_str)
             if fmt_or_variant:
                 # If it's a known variant keyword, apply the variant format;
-                # otherwise treat as a literal format string.
+                # otherwise treat as a literal format string (user's explicit
+                # format always wins, even under financial_modeling).
                 if fmt_or_variant.lower() in NUMBER_FORMAT_VARIANTS:
                     cell.number_format = NUMBER_FORMAT_VARIANTS[fmt_or_variant.lower()]
                 else:
                     cell.number_format = fmt_or_variant
+            elif financial_modeling:
+                # No explicit format + financial mode → dash variant so zeros
+                # render as '-' and negatives in parens (CFA convention).
+                cell.number_format = (
+                    FINANCIAL_DEFAULT_NUMBER if cell.value.is_integer()
+                    else FINANCIAL_DEFAULT_NUMBER_DECIMALS
+                )
             else:
                 # No explicit format: pick by magnitude, preserving decimals
                 # (was a bug: everything >= 1000 was force-rounded to #,##0).
@@ -944,7 +969,7 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
         numeric_str = clean.rstrip('%').strip()
         try:
             cell.value = float(numeric_str) / 100
-            cell.number_format = _apply_percent_format_variant(variant)
+            cell.number_format = _apply_percent_format_variant(_fin_variant(variant))
         except ValueError:
             cell.value = clean
         return True
@@ -968,7 +993,25 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
     return False
 
 
-def _number_format_for_type(type_spec: str | None) -> str | None:
+def _promote_variant_for_financial(variant: str | None, financial_modeling: bool) -> str | None:
+    """Promote a numeric variant to the dash style under financial_modeling.
+
+    Returns the variant unchanged when financial_modeling is off or when the
+    caller already specified a section style (dash/parens). Otherwise appends
+    ``dash`` so zeros render as ``-`` and negatives in parentheses — the CFA
+    convention the untyped numeric path already follows.
+    """
+    if not financial_modeling:
+        return variant
+    tokens = {t.strip() for t in (variant or "").split(':')}
+    if "dash" in tokens or "parens" in tokens or "comma_dash" in tokens:
+        return variant
+    return f"{variant}:dash" if variant else "dash"
+
+
+def _number_format_for_type(
+    type_spec: str | None, financial_modeling: bool = False
+) -> str | None:
     """Return the Excel number format a column ``types`` spec implies, or None.
 
     Used to format a *formula* cell that sits in a typed column. Formula
@@ -977,6 +1020,10 @@ def _number_format_for_type(type_spec: str | None) -> str | None:
     intended number format. This mirrors the format-selection logic in
     ``_apply_column_type`` without touching the cell value. Returns None
     for types that have no numeric format (text/bool) or unknown specs.
+
+    Under ``financial_modeling`` the dash variant is applied to
+    number/currency/percent specs that don't already carry an explicit
+    section style, matching the literal-cell path.
     """
     if not type_spec:
         return None
@@ -991,7 +1038,8 @@ def _number_format_for_type(type_spec: str | None) -> str | None:
     if type_lower.startswith('currency'):
         parts = type_spec.split(':')
         symbol = parts[1].strip() if len(parts) > 1 and parts[1].strip() else '$'
-        variant = parts[2].strip().lower() if len(parts) > 2 else None
+        variant = ':'.join(p.strip() for p in parts[2:]).lower() if len(parts) > 2 else None
+        variant = _promote_variant_for_financial(variant, financial_modeling)
         return _apply_format_variant(_currency_base_format(symbol, variant), variant)
 
     if type_lower.startswith('number'):
@@ -1000,7 +1048,9 @@ def _number_format_for_type(type_spec: str | None) -> str | None:
         if fmt_or_variant:
             if fmt_or_variant.lower() in NUMBER_FORMAT_VARIANTS:
                 return NUMBER_FORMAT_VARIANTS[fmt_or_variant.lower()]
-            return fmt_or_variant
+            return fmt_or_variant  # literal format — user's explicit choice
+        if financial_modeling:
+            return FINANCIAL_DEFAULT_NUMBER
         return None  # let the magnitude-based default apply
 
     if type_lower.startswith('date'):
@@ -1009,7 +1059,9 @@ def _number_format_for_type(type_spec: str | None) -> str | None:
     if type_lower.startswith('percent'):
         parts = type_spec.split(':', 1)
         variant = parts[1].strip().lower() if len(parts) > 1 else None
-        return _apply_percent_format_variant(variant)
+        return _apply_percent_format_variant(
+            _promote_variant_for_financial(variant, financial_modeling)
+        )
 
     if type_lower.startswith('multiple'):
         parts = type_spec.split(':', 1)
@@ -1053,20 +1105,26 @@ def _apply_format_variant(base_format: str, variant: str | None) -> str:
     For currency/number formats, the variants control how zeros and
     negatives render. We keep the positive section of ``base_format`` and
     rewrite the negative/zero sections according to the variant.
+
+    The variant may be a single keyword (``dash``) or a colon-joined
+    combination that also carries a precision keyword (``integer:dash``,
+    ``whole:parens``). We look for the section-style keyword as a *token*
+    within the variant so that the precision keyword (already consumed by
+    :func:`_currency_base_format`) doesn't suppress the dash/parens
+    sections — ``currency:$:integer:dash`` must still get the dash sections.
     """
     if not variant or variant == "default":
         return base_format
+    tokens = {t.strip() for t in variant.split(':')}
     # Split on ';' to isolate sections. Excel formats can have up to 4
     # sections (positive;negative;zero;text). Most base formats here have
     # just one section, so we synthesise the rest.
     sections = base_format.split(';')
     positive = sections[0]
-    if variant == "dash":
+    if "dash" in tokens or "comma_dash" in tokens:
         return f"{positive};({positive});-"
-    if variant == "parens":
+    if "parens" in tokens:
         return f"{positive};({positive})"
-    if variant == "comma_dash":
-        return f"{positive};({positive});-"
     return base_format
 
 
@@ -1107,8 +1165,20 @@ def _apply_percent_format_variant(variant: str | None) -> str:
     """
     if not variant:
         return "0.0%"  # CFA convention: one decimal
-    if variant == "integer":
-        return "0%"  # opt-out for users who want no decimals
+    tokens = {t.strip() for t in variant.split(':')}
+    # Section style (dash/parens) may be combined with a precision keyword
+    # (e.g. financial_modeling promotes 'integer' → 'integer:dash').
+    if "integer" in tokens:
+        base = "0%"  # opt-out for users who want no decimals
+        if "dash" in tokens:
+            return f"{base};({base});-"
+        if "parens" in tokens:
+            return f"{base};({base})"
+        return base
+    if "dash" in tokens:
+        return "0.0%;(0.0%);-"
+    if "parens" in tokens:
+        return "0.0%;(0.0%)"
     if variant == "default":
         return PERCENT_FORMAT_VARIANTS["default"]
     return PERCENT_FORMAT_VARIANTS.get(variant, "0.0%")
@@ -1260,7 +1330,7 @@ def add_table_to_sheet(
                 if row_idx > 0 and col_type and not is_formula_cell:
                     # Strip markdown formatting before type coercion
                     clean_text, fmt_info = _strip_markdown_formatting(cell_text)
-                    if _apply_column_type(cell, clean_text, col_type):
+                    if _apply_column_type(cell, clean_text, col_type, financial_modeling):
                         # Type directive handled the cell value — apply formatting, border, alignment
                         apply_cell_formatting(cell, fmt_info)
                         cell.border = border
@@ -1297,7 +1367,7 @@ def add_table_to_sheet(
                     # The format is harmless on non-numeric results (Excel
                     # ignores number formats on strings/errors).
                     if row_idx > 0 and col_type:
-                        type_fmt = _number_format_for_type(col_type)
+                        type_fmt = _number_format_for_type(col_type, financial_modeling)
                         if type_fmt:
                             cell.number_format = type_fmt
                 else:

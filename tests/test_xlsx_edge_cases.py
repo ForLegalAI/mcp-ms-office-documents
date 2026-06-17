@@ -157,11 +157,12 @@ class TestCurrencyIntegerVariant:
         assert _currency_base_format("$", "dash") == "$#,##0.00"
 
     def test_currency_integer_with_dash_variant(self):
-        """integer + dash combines: zero-decimal base, dash applied."""
+        """integer + dash combines: zero-decimal base WITH the dash sections
+        (zeros render as '-', negatives in parens)."""
         from xlsx_tools.helpers import _apply_format_variant
         base = _currency_base_format("$", "integer:dash")
         assert base == "$#,##0"
-        assert _apply_format_variant(base, "integer:dash") == "$#,##0"
+        assert _apply_format_variant(base, "integer:dash") == "$#,##0;($#,##0);-"
 
     def test_currency_integer_euro(self):
         assert _currency_base_format("€", "integer") == "#,##0 €"
@@ -796,4 +797,118 @@ class TestTypesDirectiveCommaInFormat:
         # The `text` column must still be text — leading zero preserved
         # (a column shift would turn '007' into the number 7).
         assert ws["B2"].value == "007"
+
+
+# ── Currency precision + section-style variant combination ───────────────────
+
+
+class TestCurrencyIntegerSectionVariant:
+    """currency:$:integer:dash (and :parens) must apply BOTH the zero-decimal
+    precision AND the dash/parens sections — the section token must not be
+    dropped when combined with the integer precision keyword."""
+
+    def test_integer_dash_combines(self):
+        from xlsx_tools.helpers import _currency_base_format, _apply_format_variant
+        base = _currency_base_format("$", "integer:dash")
+        assert _apply_format_variant(base, "integer:dash") == "$#,##0;($#,##0);-"
+
+    def test_integer_parens_combines(self):
+        from xlsx_tools.helpers import _currency_base_format, _apply_format_variant
+        base = _currency_base_format("$", "integer:parens")
+        assert _apply_format_variant(base, "integer:parens") == "$#,##0;($#,##0)"
+
+    def test_plain_dash_still_two_decimals(self):
+        from xlsx_tools.helpers import _currency_base_format, _apply_format_variant
+        base = _currency_base_format("$", "dash")
+        assert _apply_format_variant(base, "dash") == "$#,##0.00;($#,##0.00);-"
+
+    def test_integer_dash_end_to_end(self):
+        markdown = (
+            "<!-- types: currency:$:integer:dash -->\n"
+            "| Revenue ($mm) |\n|---|\n| $1500 |\n"
+        )
+        data = _intercept_upload(markdown, recalc=False)
+        ws = load_workbook(io.BytesIO(data)).active
+        assert ws["A2"].value == 1500.0
+        assert ws["A2"].number_format == "$#,##0;($#,##0);-"
+
+
+# ── Typed columns honor the financial dash default ───────────────────────────
+
+
+class TestTypedColumnsFinancialDash:
+    """Under financial_modeling, a typed number/currency/percent column with
+    no explicit dash/parens variant must still use the dash convention
+    (zeros as '-', negatives in parens) — matching the untyped numeric
+    path. An explicit variant or literal format always wins."""
+
+    def test_typed_number_gets_dash_in_financial_mode(self):
+        markdown = "<!-- types: number -->\n| X |\n|---|\n| 100000 |\n"
+        data = _intercept_upload(markdown, financial_modeling=True, recalc=False)
+        ws = load_workbook(io.BytesIO(data)).active
+        assert ws["A2"].number_format == "#,##0;(#,##0);-"
+
+    def test_typed_currency_gets_dash_in_financial_mode(self):
+        markdown = "<!-- types: currency:$ -->\n| X |\n|---|\n| 100000 |\n"
+        data = _intercept_upload(markdown, financial_modeling=True, recalc=False)
+        ws = load_workbook(io.BytesIO(data)).active
+        assert ws["A2"].number_format == "$#,##0.00;($#,##0.00);-"
+
+    def test_typed_percent_gets_dash_in_financial_mode(self):
+        markdown = "<!-- types: percent -->\n| X |\n|---|\n| 50 |\n"
+        data = _intercept_upload(markdown, financial_modeling=True, recalc=False)
+        ws = load_workbook(io.BytesIO(data)).active
+        assert ws["A2"].number_format == "0.0%;(0.0%);-"
+
+    def test_typed_number_no_dash_without_financial_mode(self):
+        """Without financial_modeling, typed columns keep the plain format."""
+        markdown = "<!-- types: number -->\n| X |\n|---|\n| 100000 |\n"
+        data = _intercept_upload(markdown, recalc=False)
+        ws = load_workbook(io.BytesIO(data)).active
+        assert ws["A2"].number_format == "#,##0"
+
+    def test_explicit_literal_format_wins_in_financial_mode(self):
+        """A literal number format is the user's explicit choice and is not
+        overridden by the financial dash default."""
+        markdown = "<!-- types: number:#,##0.000 -->\n| X |\n|---|\n| 1.5 |\n"
+        data = _intercept_upload(markdown, financial_modeling=True, recalc=False)
+        ws = load_workbook(io.BytesIO(data)).active
+        assert ws["A2"].number_format == "#,##0.000"
+
+    def test_explicit_percent_integer_keeps_no_decimals_with_dash(self):
+        """percent:integer in financial mode keeps the no-decimals opt-out
+        but still gains the dash sections."""
+        markdown = "<!-- types: percent:integer -->\n| X |\n|---|\n| 50 |\n"
+        data = _intercept_upload(markdown, financial_modeling=True, recalc=False)
+        ws = load_workbook(io.BytesIO(data)).active
+        assert ws["A2"].number_format == "0%;(0%);-"
+
+    def test_explicit_dash_variant_unchanged_in_financial_mode(self):
+        markdown = "<!-- types: number:dash -->\n| X |\n|---|\n| 100000 |\n"
+        data = _intercept_upload(markdown, financial_modeling=True, recalc=False)
+        ws = load_workbook(io.BytesIO(data)).active
+        assert ws["A2"].number_format == "#,##0;(#,##0);-"
+
+    def test_formula_in_typed_percent_column_gets_dash_in_financial_mode(self):
+        """A FORMULA cell in a typed percent column also picks up the dash
+        format under financial_modeling (formula cells use the separate
+        _number_format_for_type path)."""
+        markdown = (
+            "<!-- types: text, percent -->\n"
+            "| Y | Margin |\n|---|---|\n"
+            "| 2024 | =1/2 |\n"
+        )
+        data = _intercept_upload(markdown, financial_modeling=True, recalc=False)
+        ws = load_workbook(io.BytesIO(data)).active
+        assert ws["B2"].number_format == "0.0%;(0.0%);-"
+
+    def test_formula_in_typed_currency_column_gets_dash_in_financial_mode(self):
+        markdown = (
+            "<!-- types: text, currency:$:integer -->\n"
+            "| Item | Amount |\n|---|---|\n"
+            "| A | $100 |\n| Total | =B[-1] |\n"
+        )
+        data = _intercept_upload(markdown, financial_modeling=True, recalc=False)
+        ws = load_workbook(io.BytesIO(data)).active
+        assert ws["B3"].number_format == "$#,##0;($#,##0);-"
 
