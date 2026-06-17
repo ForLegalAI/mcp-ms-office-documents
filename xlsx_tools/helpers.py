@@ -5,6 +5,7 @@ from datetime import datetime
 
 from dateutil import parser as dateutil_parser
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+from openpyxl.comments import Comment
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
@@ -15,6 +16,48 @@ TABLE_BOTTOM_SPACING = 2
 MIN_COLUMN_WIDTH = 12
 MAX_COLUMN_WIDTH = 25
 COLUMN_WIDTH_PADDING = 2
+
+# ── Financial Modeling Color Conventions ─────────────────────────────────────
+# Industry-standard (CFA / Wall Street) color coding for financial models:
+#   blue    — hardcoded inputs (numbers the user will change for scenarios)
+#   black   — formulas / calculations within the same sheet
+#   green   — formulas pulling from a different worksheet in the same workbook
+#   red     — formulas pulling from a different workbook file (external link)
+#   yellow  — key assumptions / cells flagged for review
+# These constants are used only when the caller opts in via financial_modeling=True.
+FINANCIAL_INPUT_COLOR = "0000FF"      # blue
+FINANCIAL_FORMULA_COLOR = "000000"    # black
+FINANCIAL_CROSS_SHEET_COLOR = "008000"  # green
+FINANCIAL_EXTERNAL_COLOR = "FF0000"   # red — external workbook references
+FINANCIAL_ASSUMPTION_FILL = "FFFF00"  # yellow background
+
+# ── Number-Format Variants for the `types:` directive ────────────────────────
+# These Excel number-format strings implement standard financial-modeling
+# conventions: zeros render as "-", negatives in parentheses, etc.
+#   positive ; negative ; zero
+# is the canonical three-section Excel format pattern.
+NUMBER_FORMAT_VARIANTS = {
+    "dash": "#,##0;(#,##0);-",
+    "parens": "#,##0;(#,##0)",
+    "comma_dash": "#,##0;(#,##0);-",
+    "default": "#,##0",
+}
+
+PERCENT_FORMAT_VARIANTS = {
+    "dash": "0.0%;(0.0%);-",
+    "parens": "0.0%;(0.0%)",
+    "default": "0.0%",
+    "legacy": "0%",  # original behaviour when no variant is given
+}
+
+# Valuation multiples (EV/EBITDA, P/E, etc.) are typically rendered as
+# "12.5x" — the value with a trailing lowercase "x" suffix. One decimal
+# place is the CFA convention. Variants follow the same dash/parens logic.
+MULTIPLES_FORMAT_VARIANTS = {
+    "default": '0.0"x"',
+    "dash": '0.0"x";(0.0"x");-',
+    "parens": '0.0"x";(0.0"x")',
+}
 
 # Date formats to try before falling back to dateutil auto-detection.
 # Order matters — more specific/common formats first.
@@ -281,6 +324,167 @@ def apply_cell_formatting(cell, formatting_info: dict[str, bool]) -> None:
         cell.font = Font(italic=True, color=current_font.color, size=current_font.size)
     elif formatting_info['monospace']:
         cell.font = Font(name='Courier New', color=current_font.color, size=current_font.size)
+
+
+def apply_default_font(cell, font_name: str | None) -> None:
+    """Apply a default font family to a cell unless it has a more specific font.
+
+    Used to honour the tool-level ``default_font`` parameter. Skips cells
+    whose current font is already a non-default one (e.g. Courier New
+    from inline ``code`` formatting), so monospace cells are preserved.
+    """
+    if not font_name:
+        return
+    current = cell.font
+    # Don't override monospace or explicitly-named fonts.
+    if current.name and current.name != 'Calibri':
+        return
+    cell.font = Font(
+        name=font_name,
+        size=current.size,
+        bold=current.bold,
+        italic=current.italic,
+        color=current.color,
+    )
+
+
+def apply_financial_styling(
+    cell,
+    cell_value_for_check: str | None,
+    source_cells: set[str] | None = None,
+) -> None:
+    """Apply CFA-standard financial-modeling color coding to a cell.
+
+    Industry conventions:
+    - Hardcoded literal values  → blue font (inputs the user changes)
+    - Local formulas            → black font (calculations on this sheet)
+    - Cross-sheet formulas      → green font (links to other worksheets
+                                  in the same workbook)
+    - External-link formulas    → red font (links to other workbook files)
+    - Source-cited cells        → yellow background (assumptions needing review)
+
+    External-link detection: Excel references another workbook with square
+    brackets around the filename, e.g. ``=[Forecast.xlsx]Sheet1!A1`` or
+    ``='[Forecast.xlsx]Sheet1'!A1``. The presence of ``[`` after the
+    leading ``=`` (ignoring quotes) is a reliable signal.
+
+    Args:
+        cell: The openpyxl cell to style.
+        cell_value_for_check: The string form of the cell's resolved value
+            (e.g. ``"=SUM(B2:B5)"`` or ``"1000"``). Used to detect
+            formulas and cross-sheet references without re-parsing.
+        source_cells: Optional set of ``"Sheet!Cell"`` location keys
+            that should get the yellow assumption fill. If the cell's
+            coordinate is in this set, the fill is applied.
+    """
+    current_font = cell.font
+
+    # Default color for hardcoded values (inputs).
+    color = FINANCIAL_INPUT_COLOR
+
+    is_formula = isinstance(cell_value_for_check, str) and cell_value_for_check.startswith('=')
+    if is_formula:
+        # External workbook reference? Look for '[' after the '=' and any
+        # leading quote. This must be checked BEFORE the cross-sheet '!'.
+        stripped = cell_value_for_check.lstrip("='")
+        if '[' in stripped:
+            color = FINANCIAL_EXTERNAL_COLOR
+        # Cross-sheet references contain a sheet-qualified cell ref like
+        # ``SheetName!A1`` (with optional quotes if the name has spaces).
+        elif '!' in cell_value_for_check:
+            color = FINANCIAL_CROSS_SHEET_COLOR
+        else:
+            color = FINANCIAL_FORMULA_COLOR
+
+    cell.font = Font(
+        name=current_font.name,
+        size=current_font.size,
+        bold=current_font.bold,
+        italic=current_font.italic,
+        color=color,
+    )
+
+    # Yellow background for cells flagged as sourced assumptions.
+    if source_cells:
+        # Build the location key the way the parser stores it: just the
+        # coordinate (e.g. "B5") since we don't know the sheet here.
+        coord = cell.coordinate
+        if coord in source_cells:
+            cell.fill = PatternFill(
+                start_color=FINANCIAL_ASSUMPTION_FILL,
+                end_color=FINANCIAL_ASSUMPTION_FILL,
+                fill_type="solid",
+            )
+
+
+def attach_source_comment(cell, source_text: str) -> None:
+    """Attach a source-citation comment to a cell.
+
+    The comment text typically follows the pattern
+    ``"Source: <document>, <date>, <reference>, <URL>"`` but any string
+    is accepted. The comment author is set to the server name so users
+    can identify programmatically-attached comments.
+    """
+    if not source_text:
+        return
+    try:
+        cell.comment = Comment(source_text, "MCP")
+    except Exception as e:
+        logger.debug("Failed to attach comment to %s: %s", cell.coordinate, e)
+
+
+def parse_sources_directive(value: str) -> dict[str, str]:
+    """Parse a ``<!-- sources: ... -->`` directive into a {coordinate: source} map.
+
+    Supported syntaxes (all produce a mapping of cell coordinate → source text):
+
+    1. Per-cell: ``B2=Source text here, B5=Another source``
+       Commas separate entries; the first ``=`` in each entry divides
+       coordinate from source text.
+
+    2. Range form: ``B2:B5=Source applies to all these cells``
+       Expands the Excel range to individual cells, each getting the
+       same source text.
+
+    The coordinate keys in the returned dict are bare coordinates
+    (e.g. ``"B2"``) without a sheet prefix — the caller knows which
+    sheet it's processing.
+    """
+    if not value:
+        return {}
+    result: dict[str, str] = {}
+    for entry in value.split(','):
+        entry = entry.strip()
+        if not entry or '=' not in entry:
+            continue
+        coord_part, source_text = entry.split('=', 1)
+        coord_part = coord_part.strip()
+        source_text = source_text.strip()
+        if not coord_part or not source_text:
+            continue
+        # Range form: B2:B5
+        if ':' in coord_part:
+            for coord in _expand_coord_range(coord_part):
+                result[coord] = source_text
+        else:
+            result[coord_part] = source_text
+    return result
+
+
+def _expand_coord_range(range_str: str) -> list[str]:
+    """Expand an Excel range like 'B2:B5' into ['B2', 'B3', 'B4', 'B5']."""
+    match = re.fullmatch(r'([A-Z]+)(\d+):([A-Z]+)(\d+)', range_str.strip().upper())
+    if not match:
+        return [range_str.strip().upper()]
+    col_start, row_start, col_end, row_end = match.groups()
+    if col_start != col_end:
+        # Multi-column ranges are rare in source citations; just return
+        # the endpoints rather than expanding the full cartesian product.
+        return [f"{col_start}{row_start}", f"{col_end}{row_end}"]
+    start_row, end_row = int(row_start), int(row_end)
+    if start_row > end_row:
+        start_row, end_row = end_row, start_row
+    return [f"{col_start}{r}" for r in range(start_row, end_row + 1)]
 
 
 # ── Formula Reference Resolution ─────────────────────────────────────────────
@@ -552,13 +756,19 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
             cell.value = clean  # Unrecognized → keep as text
         return True
 
-    # currency:<symbol> — strip symbol and thousands separators, store as number
+    # currency:<symbol> or currency:<symbol>:<variant> — strip symbol and thousands separators
     if type_lower.startswith('currency'):
-        symbol = type_spec.split(':', 1)[1].strip() if ':' in type_spec else '$'
-        if not symbol:
-            symbol = '$'  # Default if directive is 'currency:' with no symbol
+        parts = type_spec.split(':')
+        symbol = parts[1].strip() if len(parts) > 1 and parts[1].strip() else '$'
+        variant = parts[2].strip().lower() if len(parts) > 2 else None
         # Strip the currency symbol and common thousand separators
         numeric_str = clean.replace(symbol, '').replace(' ', '').strip()
+        # Detect accounting-style negative notation: (1234) → -1234.
+        # Strip the parens and remember to negate the final value.
+        is_negative = False
+        if numeric_str.startswith('(') and numeric_str.endswith(')'):
+            numeric_str = numeric_str[1:-1]
+            is_negative = True
         # Handle both comma-as-thousands (1,234.56) and dot-as-thousands (1.234,56)
         if ',' in numeric_str and '.' in numeric_str:
             # Determine which is the decimal separator (last one wins)
@@ -572,26 +782,36 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
                 numeric_str = numeric_str.replace(',', '')
         elif ',' in numeric_str and '.' not in numeric_str:
             # Could be thousands (1,234) or decimal (1,5) — assume thousands if >3 digits after comma
-            parts = numeric_str.split(',')
-            if len(parts[-1]) == 3:
+            parts_n = numeric_str.split(',')
+            if len(parts_n[-1]) == 3:
                 numeric_str = numeric_str.replace(',', '')
             else:
                 numeric_str = numeric_str.replace(',', '.')
         try:
-            cell.value = float(numeric_str)
-            cell.number_format = _CURRENCY_FORMATS.get(symbol, f'#,##0.00 "{symbol}"')
+            value = float(numeric_str)
+            if is_negative:
+                value = -abs(value)
+            cell.value = value
+            base_format = _CURRENCY_FORMATS.get(symbol, f'#,##0.00 "{symbol}"')
+            cell.number_format = _apply_format_variant(base_format, variant)
         except ValueError:
             cell.value = clean  # Can't parse → keep as text
         return True
 
-    # number or number:<format> — parse as number with optional format
+    # number, number:<format>, or number:<variant> — parse as number with optional format
     if type_lower.startswith('number'):
-        fmt = type_spec.split(':', 1)[1].strip() if ':' in type_spec else None
+        parts = type_spec.split(':', 1)
+        fmt_or_variant = parts[1].strip() if len(parts) > 1 else None
         numeric_str = clean.replace(',', '').replace(' ', '')
         try:
             cell.value = float(numeric_str)
-            if fmt:
-                cell.number_format = fmt
+            if fmt_or_variant:
+                # If it's a known variant keyword, apply the variant format;
+                # otherwise treat as a literal format string.
+                if fmt_or_variant.lower() in NUMBER_FORMAT_VARIANTS:
+                    cell.number_format = NUMBER_FORMAT_VARIANTS[fmt_or_variant.lower()]
+                else:
+                    cell.number_format = fmt_or_variant
             elif cell.value >= 1000:
                 cell.number_format = '#,##0'
         except ValueError:
@@ -610,17 +830,90 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
             cell.value = clean
         return True
 
-    # percent — parse as percent
-    if type_lower == 'percent':
+    # percent or percent:<variant> — parse as percent
+    if type_lower.startswith('percent'):
+        parts = type_spec.split(':', 1)
+        variant = parts[1].strip().lower() if len(parts) > 1 else None
         numeric_str = clean.rstrip('%').strip()
         try:
             cell.value = float(numeric_str) / 100
-            cell.number_format = '0%'
+            cell.number_format = _apply_percent_format_variant(variant)
+        except ValueError:
+            cell.value = clean
+        return True
+
+    # multiple, multiple:<variant>, or multiple:<decimals> — valuation
+    # multiples (EV/EBITDA, P/E, etc.) rendered as "12.5x". The stored
+    # value is the raw multiple (NOT divided); the "x" is purely a
+    # display suffix via the number format.
+    if type_lower.startswith('multiple'):
+        parts = type_spec.split(':', 1)
+        variant = parts[1].strip().lower() if len(parts) > 1 else None
+        # Strip a trailing "x" if the user wrote "12.5x" in the data.
+        numeric_str = clean.rstrip('x').rstrip('X').strip()
+        try:
+            cell.value = float(numeric_str)
+            cell.number_format = _apply_multiples_format_variant(variant)
         except ValueError:
             cell.value = clean
         return True
 
     return False
+
+
+def _apply_format_variant(base_format: str, variant: str | None) -> str:
+    """Apply a financial-modeling variant (dash, parens) to a base number format.
+
+    For currency/number formats, the variants control how zeros and
+    negatives render. We keep the positive section of ``base_format`` and
+    rewrite the negative/zero sections according to the variant.
+    """
+    if not variant or variant == "default":
+        return base_format
+    # Split on ';' to isolate sections. Excel formats can have up to 4
+    # sections (positive;negative;zero;text). Most base formats here have
+    # just one section, so we synthesise the rest.
+    sections = base_format.split(';')
+    positive = sections[0]
+    if variant == "dash":
+        return f"{positive};({positive});-"
+    if variant == "parens":
+        return f"{positive};({positive})"
+    if variant == "comma_dash":
+        return f"{positive};({positive});-"
+    return base_format
+
+
+def _apply_percent_format_variant(variant: str | None) -> str:
+    """Return the Excel percent number format for the given variant.
+
+    When ``variant`` is None or "legacy"/"default" with no request for
+    financial conventions, returns the original ``0%`` format to preserve
+    backward compatibility with workbooks generated before the variant
+    feature existed.
+    """
+    if not variant:
+        return "0%"  # original behaviour
+    if variant == "default":
+        return PERCENT_FORMAT_VARIANTS["default"]
+    return PERCENT_FORMAT_VARIANTS.get(variant, "0%")
+
+
+def _apply_multiples_format_variant(variant: str | None) -> str:
+    """Return the Excel valuation-multiple format for the given variant.
+
+    Defaults to ``0.0"x"`` (e.g. ``12.5x``) per CFA convention. The
+    ``dash`` and ``parens`` variants follow the same negative/zero
+    rendering rules as the other format families.
+    """
+    if not variant or variant == "default":
+        return MULTIPLES_FORMAT_VARIANTS["default"]
+    return MULTIPLES_FORMAT_VARIANTS.get(variant, MULTIPLES_FORMAT_VARIANTS["default"])
+
+
+def _is_year_string(value: str) -> bool:
+    """Return True if value is a 4-digit year like '2024' or '2024'."""
+    return bool(re.fullmatch(r"\d{4}", value.strip()))
 
 
 # ── Table Rendering ───────────────────────────────────────────────────────────
@@ -634,6 +927,8 @@ def add_table_to_sheet(
     auto_filter: bool = False,
     table_index: int = 0,
     directives: dict[str, str] | None = None,
+    default_font: str | None = None,
+    financial_modeling: bool = False,
 ) -> int:
     """Add table data to Excel worksheet with proper formatting and formula support."""
     if not table_data:
@@ -643,6 +938,9 @@ def add_table_to_sheet(
 
     # Parse column type hints from <!-- types: text, currency:$, date, bool --> directive
     col_types: list[str | None] = _parse_types_directive(directives.get('types', ''))
+
+    # Parse source-citation directive: <!-- sources: B2=Source text, B5=Another -->
+    sources_map: dict[str, str] = parse_sources_directive(directives.get('sources', ''))
 
     # Extract column alignments if available (from TableData subclass)
     col_alignments: list[str | None] = []
@@ -655,12 +953,20 @@ def add_table_to_sheet(
     formula_fill = PatternFill(start_color="E7F3FF", end_color="E7F3FF", fill_type="solid")
     border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
+    # When financial modeling is active, the formula_fill (light-blue) is
+    # replaced by per-cell color coding via apply_financial_styling().
+
     # Fill cells
     for row_idx, row_data in enumerate(table_data):
         current_excel_row = start_row + row_idx
         for col_idx, cell_text in enumerate(row_data):
             try:
                 cell = worksheet.cell(row=current_excel_row, column=col_idx + 1)
+                # Apply the user-selected default font family first. Subsequent
+                # font operations (header styling, financial color coding,
+                # inline formatting) inherit the family unless they override it.
+                if default_font and row_idx > 0:
+                    apply_default_font(cell, default_font)
 
                 # If column type directive applies (data rows only), use it
                 col_type = col_types[col_idx] if col_idx < len(col_types) else None
@@ -680,6 +986,13 @@ def add_table_to_sheet(
                             cell.alignment = Alignment(horizontal='right')
                         else:
                             cell.alignment = Alignment(horizontal='left')
+                        # Financial color coding for typed cells (treat as input).
+                        if financial_modeling:
+                            apply_financial_styling(cell, None, set(sources_map.keys()))
+                        # Source citation comment.
+                        coord = cell.coordinate
+                        if coord in sources_map:
+                            attach_source_comment(cell, sources_map[coord])
                         continue
 
                 resolved = resolve_cell(cell_text)
@@ -689,7 +1002,8 @@ def add_table_to_sheet(
                         resolved.value, current_excel_row, table_positions, all_sheet_table_positions
                     )
                     cell.value = adjusted_formula
-                    cell.fill = formula_fill
+                    if not financial_modeling:
+                        cell.fill = formula_fill
                 else:
                     # Header row must remain as strings — Excel Tables require
                     # string headers; numeric-looking headers (e.g. "2024") must
@@ -700,7 +1014,16 @@ def add_table_to_sheet(
                         clean_header, _ = _strip_markdown_formatting(cell_text)
                         cell.value = clean_header
                     else:
-                        cell.value = resolved.value
+                        # Financial-modeling convention: 4-digit year strings
+                        # (e.g. "2024") in data rows are treated as text labels
+                        # so they don't get auto-converted to numbers and lose
+                        # their formatting in charts/pivots.
+                        stripped = cell_text.strip()
+                        if financial_modeling and _is_year_string(stripped):
+                            clean_year, _ = _strip_markdown_formatting(cell_text)
+                            cell.value = str(clean_year).strip()
+                        else:
+                            cell.value = resolved.value
 
                 # Apply inline formatting (bold/italic/monospace) — skip for header row
                 # since header styling will override it immediately below
@@ -722,7 +1045,10 @@ def add_table_to_sheet(
 
                 # Header row styling (overrides inline formatting)
                 if row_idx == 0:
-                    cell.font = header_font
+                    if default_font:
+                        cell.font = Font(name=default_font, bold=True, color="FFFFFF")
+                    else:
+                        cell.font = header_font
                     cell.fill = header_fill
                 elif isinstance(cell.value, (int, float)) and cell.value >= 1000:
                     cell.number_format = '#,##0'
@@ -734,6 +1060,18 @@ def add_table_to_sheet(
                 # Apply date number format
                 if resolved.is_date and resolved.date_format:
                     cell.number_format = resolved.date_format
+
+                # Financial-modeling color coding (data rows only, after all
+                # other styling so the font color wins).
+                if financial_modeling and row_idx > 0:
+                    value_for_check = cell.value if isinstance(cell.value, str) else None
+                    apply_financial_styling(cell, value_for_check, set(sources_map.keys()))
+
+                # Source citation comment (data rows only).
+                if row_idx > 0:
+                    coord = cell.coordinate
+                    if coord in sources_map:
+                        attach_source_comment(cell, sources_map[coord])
             except Exception as e:
                 logger.warning("Error processing cell [row=%d, col=%d]: %s", current_excel_row, col_idx + 1, e)
 

@@ -40,7 +40,7 @@ Just ask your AI to _"create a sales presentation"_ or _"draft a welcome email"_
 |:---:|---|---|
 | 📊 **PowerPoint** | `create_powerpoint_presentation` | Title, section & content slides · 4:3 or 16:9 format · Custom templates · Author metadata, footer text & slide numbers · Inline markdown (**bold**, *italic*, ~~strikethrough~~, `code`) · Table column alignment |
 | 📝 **Word** | `create_word_from_markdown` | Write in Markdown, get a `.docx` · Headers, lists, tables, links, formatting · Superscript, subscript & highlighted text · Table column alignment, borderless tables & proportional column widths · Multi-paragraph table cells |
-| 📈 **Excel** | `create_excel_from_markdown` | Markdown tables → `.xlsx` · Formulas & cell references supported |
+| 📈 **Excel** | `create_excel_from_markdown` | Markdown tables → `.xlsx` · Formulas & cell references · Pure-Python formula recalculation (no LibreOffice) so cached values render in previewers · **Circular-reference detection** via graph analysis · Zero-errors-when-recalc-explicit policy with type-grouped error output · Cross-sheet & external-workbook links · Financial-modeling mode (CFA color coding incl. red for external links, source citations, dash/parens/multiples number formats) · Custom default fonts · Configurable recalc timeout |
 | 📧 **Email** | `create_email_draft` | HTML email drafts (`.eml`) · Subject, recipients, priority, language |
 | 🗂️ **XML** | `create_xml_file` | Well-formed XML files · Auto-validates & adds XML declaration if missing |
 
@@ -101,6 +101,9 @@ The server is configured through environment variables in your `.env` file.
 | `SIGNED_URL_EXPIRES_IN` | How long cloud download links stay valid (seconds) | `3600` |
 | `RUN_BLOCKING_BY_ASYNCIO_THREAD_ENABLED` | Offload blocking tool work to a thread pool, keeping the event loop free for health probes & concurrent requests | `true` |
 | `RUN_BLOCKING_MAX_WORKERS` | Maximum concurrent worker threads for blocking tool calls | `4` |
+| `XLSX_RECALC_ENABLED` | When true, evaluate every Excel formula in-process and inject cached values so the file previews correctly without Excel. Uses the pure-Python `formulas` library (no LibreOffice). | `true` |
+| `XLSX_RECALC_TIMEOUT_SECONDS` | Maximum wall-clock seconds for formula recalculation. On timeout the file is delivered without cached values (Excel recalcs on open). | `30` |
+| `XLSX_DEFAULT_FONT` | Optional default font family for every cell in generated workbooks (e.g. `Arial`). Empty = openpyxl default (Calibri). Inline `code` formatting always overrides. | _(unset)_ |
 
 <details>
 <summary><strong>🔐 Authentication</strong></summary>
@@ -359,6 +362,58 @@ For proper formatting, make sure these styles exist in your `.docx` template:
 | Other | Normal, Quote, Table Grid |
 
 > **Tip:** Customize these styles (font, size, color, spacing) in your template — the server will use your styling.
+
+</details>
+
+<details>
+<summary><strong>📊 Excel advanced features (formulas, financial modeling, source citations)</strong></summary>
+
+**Formula recalculation.** By default, every formula is evaluated in-process using the pure-Python [`formulas`](https://github.com/vinci1it2000/formulas) library and the computed values are written back into the file as cached values. This means the file previews correctly in tools that don't recalculate on open — Google Sheets preview, mail clients, `openpyxl` loaded with `data_only=True`. No external binary (LibreOffice, Excel) is required. Disable with the `recalc=false` parameter or the `XLSX_RECALC_ENABLED=false` env var. Recalculation is bounded by `XLSX_RECALC_TIMEOUT_SECONDS` (default 30s); on timeout the file is delivered without cached values (Excel recalcs on open).
+
+**Formula error policy.** Formula errors (`#REF!`, `#DIV/0!`, `#VALUE!`, `#NAME?`, `#NULL!`, `#NUM!`, `#N/A`) **and circular references** (`#CIRC!`) are always detected. **When `recalc=true` is explicitly requested**, the tool call fails with a descriptive error grouping all errors by type with counts and locations, so the model can fix all errors of a given kind at once — enforcing a zero-errors delivery standard. Example error: `3 formula error(s): #DIV/0! (2): Sheet1!B2, Sheet1!B5; #CIRC! (1): Sheet1!A1 — circular references detected (a formula depends on itself, directly or indirectly; fix by breaking the cycle)`. **When recalc runs as a default** (the parameter wasn't passed), errors are logged but the file is still delivered, so a misconfigured environment can never block document generation.
+
+**Circular-reference detection.** Because the `formulas` library silently resolves circular references to nothing (no cached values, no errors) rather than flagging them, this server runs an independent graph-based cycle check: it parses every formula's cell references, builds a dependency graph, and uses DFS to find cycles. Every cell on a cycle is reported as a `#CIRC!` error. This runs even when the recalc engine is unavailable, since it only inspects the formula strings.
+
+**String-result formula limitation.** Formulas whose result is a **string/text** value (e.g. `=A1&" total"`, `=IF(A1>0,"Yes","No")`, `=VLOOKUP(...)` returning text) do **not** have their cached values injected into the file. This is because injecting a string cached value requires updating the XLSX shared-strings table, which is fragile to do safely after the fact. Numeric, boolean, and datetime results are cached correctly. The cell will still display the correct value when opened in Excel or any client that recalculates on open — it just won't pre-populate in static previewers. Workaround: if you need the text to preview, put the final string directly in the cell instead of computing it via a formula.
+
+**Financial-modeling mode** (`financial_modeling=true`) applies CFA-standard conventions:
+
+- **Color coding** — hardcoded inputs in blue, local formulas in black, cross-sheet references in green, **external-workbook links in red** (formulas referencing another `.xlsx` file, e.g. `=[Forecast.xlsx]Sheet1!A1`).
+- **Source-cited cells** get a yellow background when listed in a `sources:` directive.
+- **4-digit-year strings** (e.g. `2024`) in data rows are kept as text labels rather than converted to numbers, so they don't lose their formatting in charts and pivots. (Use an explicit `types: text` directive if you want this behaviour without the rest of financial mode.)
+
+**Source citations.** Add cell comments / notes with a `sources:` directive above the table. A useful citation names where the figure came from, when it was pulled, and a pointer back to the original record, e.g. `Source: 10-K annual report, fiscal year 2024, page 45, line item "Total revenue"` or `Source: internal CRM export, 2025-06-12, row 1843`:
+
+```
+<!-- sources: B2=Source: 10-K filing, FY2024, Page 45, Revenue Note, B5=Source: Internal forecast, Q2 2025 -->
+| Metric  | Value |
+|---------|-------|
+| Revenue | 1000  |
+| Cost    | 400   |
+```
+
+Ranges are supported: `B2:B5=Same source applies`. Combine with `financial_modeling=true` to also get the yellow background.
+
+**Number-format variants.** The `types:` directive supports optional variants that control how zeros and negatives render:
+
+| Variant | Example directive | Zero renders as | Negative renders as |
+|---|---|---|---|
+| (none) | `number` | `0` | `-1,234` |
+| `dash` | `number:dash` | `-` | `(1,234)` |
+| `parens` | `number:parens` | `0` | `(1,234)` |
+| `dash` | `currency:$:dash` | `-` | `($1,234)` |
+| `dash` | `percent:dash` | `-` | `(12.5%)` |
+
+**Valuation multiples** (EV/EBITDA, P/E, etc.) get their own top-level type `multiple`, which renders as `12.5x` — the value is stored raw and the `x` is a display suffix:
+
+| Directive | Input | Stored value | Display |
+|---|---|---|---|
+| `multiple` | `12.5` or `12.5x` | `12.5` | `12.5x` |
+| `multiple:dash` | `12.5` | `12.5` | `12.5x` (zeros as `-`, negatives in parens) |
+
+Accounting-style negative notation in input values is recognised: `($50)` parses to `-50` when the column type is `currency:$`.
+
+**Default font.** Set a font family for every cell with the `default_font` parameter or the `XLSX_DEFAULT_FONT` env var. Inline `` `code` `` formatting (Courier New) always overrides.
 
 </details>
 

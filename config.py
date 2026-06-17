@@ -290,6 +290,44 @@ class Config(BaseModel):
             "RUN_BLOCKING_MAX_WORKERS environment variable."
         ),
     )
+    xlsx_recalc_enabled: bool = Field(
+        default=True,
+        description=(
+            "When True (default), the Excel tool evaluates every formula "
+            "in-process via the pure-Python `formulas` library and writes "
+            "the computed values back into the file as cached <v> tags. "
+            "This makes the file display correctly in previewers (Google "
+            "Sheets, mail clients, openpyxl data_only=True) that don't "
+            "recalculate on open. When False, formulas are written as "
+            "strings with no cached values (openpyxl default behaviour) "
+            "and the file relies on Excel/LibreOffice to recalc on open. "
+            "Toggled via the XLSX_RECALC_ENABLED environment variable."
+        ),
+    )
+    xlsx_default_font: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional default font family applied to every cell in "
+            "generated workbooks (e.g. 'Arial', 'Calibri', 'Times New "
+            "Roman'). When None, openpyxl's default (Calibri) is used. "
+            "Per-cell monospace formatting from inline markdown `code` "
+            "markup always overrides this. Set via the "
+            "XLSX_DEFAULT_FONT environment variable."
+        ),
+    )
+    xlsx_recalc_timeout_seconds: int = Field(
+        default=30,
+        gt=0,
+        description=(
+            "Maximum wall-clock seconds allowed for in-process Excel "
+            "formula recalculation. If the `formulas` library exceeds "
+            "this duration on a pathological workbook, recalculation is "
+            "aborted and the file is delivered without cached values "
+            "(Excel will recalc on open via the fullCalcOnLoad flag "
+            "openpyxl writes). 30s is enough for typical workbooks; "
+            "tune via the XLSX_RECALC_TIMEOUT_SECONDS env var."
+        ),
+    )
 
     @staticmethod
     def _parse_bool(value: Optional[str]) -> bool:
@@ -388,6 +426,35 @@ class Config(BaseModel):
         except (ValueError, TypeError):
             run_blocking_max_workers = 4
 
+        # XLSX recalculation toggle (default on). Allows operators to
+        # disable in-process formula evaluation if the `formulas` library
+        # causes issues in their environment.
+        raw_recalc = os.environ.get("XLSX_RECALC_ENABLED")
+        if raw_recalc is None or not raw_recalc.strip():
+            xlsx_recalc_enabled = True  # default-on
+        else:
+            xlsx_recalc_enabled = cls._parse_bool(raw_recalc)
+
+        # Optional default font for generated workbooks. Empty/whitespace
+        # → None (use openpyxl's default Calibri).
+        xlsx_default_font = os.environ.get("XLSX_DEFAULT_FONT")
+        if xlsx_default_font is not None:
+            xlsx_default_font = xlsx_default_font.strip() or None
+
+        # Recalc timeout (seconds, default 30). Invalid / non-positive
+        # values fall back to 30.
+        raw_recalc_timeout = os.environ.get("XLSX_RECALC_TIMEOUT_SECONDS")
+        try:
+            xlsx_recalc_timeout_seconds = (
+                int(raw_recalc_timeout)
+                if raw_recalc_timeout is not None and raw_recalc_timeout.strip()
+                else 30
+            )
+            if xlsx_recalc_timeout_seconds < 1:
+                xlsx_recalc_timeout_seconds = 30
+        except (ValueError, TypeError):
+            xlsx_recalc_timeout_seconds = 30
+
         try:
             return cls(
                 logging=logging_settings,
@@ -395,6 +462,9 @@ class Config(BaseModel):
                 api_key=raw_api_key,
                 run_blocking_by_asyncio_thread_enabled=run_blocking_by_asyncio_thread_enabled,
                 run_blocking_max_workers=run_blocking_max_workers,
+                xlsx_recalc_enabled=xlsx_recalc_enabled,
+                xlsx_default_font=xlsx_default_font,
+                xlsx_recalc_timeout_seconds=xlsx_recalc_timeout_seconds,
             )
         except ValidationError as e:
             # Wrap Pydantic validation errors in a simpler exception for callers
