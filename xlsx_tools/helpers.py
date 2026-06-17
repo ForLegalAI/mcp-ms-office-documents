@@ -787,10 +787,40 @@ def _parse_types_directive(value: str) -> list[str | None]:
     """Parse a types directive value like 'text, currency:$, date, bool, number'.
 
     Returns a list of type specs (or None for unspecified columns).
+
+    Commas separate columns, but Excel number formats themselves contain
+    commas (``#,##0``), so a naive ``split(',')`` shreds a literal format
+    like ``number:#,##0.00`` into ``number:#`` + ``##0.00`` and shifts every
+    later column by one (silent data corruption). We split on commas but
+    re-join any fragment that does NOT start a new column spec back onto the
+    previous one. A new column spec is either empty (unspecified column) or
+    begins with one of the known type keywords; anything else is a
+    continuation of the preceding fragment's format string.
     """
     if not value:
         return []
-    return [t.strip() or None for t in value.split(',')]
+    fragments = value.split(',')
+    specs: list[str | None] = []
+    for frag in fragments:
+        stripped = frag.strip()
+        token = stripped.split(':', 1)[0].strip().lower()
+        is_new_spec = (stripped == "") or (token in _KNOWN_TYPE_KEYWORDS)
+        if is_new_spec or not specs:
+            specs.append(stripped or None)
+        else:
+            # Continuation of a literal format that contained a comma —
+            # re-join with the comma that split() consumed.
+            prev = specs[-1] or ""
+            specs[-1] = f"{prev},{frag}".strip() or None
+    return specs
+
+
+# Type keywords that legitimately start a new column spec. Used by
+# _parse_types_directive to tell a real new column from a comma that lives
+# inside a number format (e.g. the ',' in number:#,##0).
+_KNOWN_TYPE_KEYWORDS = frozenset(
+    {"text", "bool", "currency", "number", "date", "percent", "multiple"}
+)
 
 
 def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
@@ -938,6 +968,57 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
     return False
 
 
+def _number_format_for_type(type_spec: str | None) -> str | None:
+    """Return the Excel number format a column ``types`` spec implies, or None.
+
+    Used to format a *formula* cell that sits in a typed column. Formula
+    cells bypass ``_apply_column_type`` (their value is a formula string,
+    not a literal to coerce), so they'd otherwise lose the column's
+    intended number format. This mirrors the format-selection logic in
+    ``_apply_column_type`` without touching the cell value. Returns None
+    for types that have no numeric format (text/bool) or unknown specs.
+    """
+    if not type_spec:
+        return None
+    type_lower = type_spec.lower()
+    if type_lower in ('number:multiple', 'number:multiples'):
+        type_lower = 'multiple'
+        type_spec = 'multiple'
+
+    if type_lower in ('text', 'bool'):
+        return None
+
+    if type_lower.startswith('currency'):
+        parts = type_spec.split(':')
+        symbol = parts[1].strip() if len(parts) > 1 and parts[1].strip() else '$'
+        variant = parts[2].strip().lower() if len(parts) > 2 else None
+        return _apply_format_variant(_currency_base_format(symbol, variant), variant)
+
+    if type_lower.startswith('number'):
+        parts = type_spec.split(':', 1)
+        fmt_or_variant = parts[1].strip() if len(parts) > 1 else None
+        if fmt_or_variant:
+            if fmt_or_variant.lower() in NUMBER_FORMAT_VARIANTS:
+                return NUMBER_FORMAT_VARIANTS[fmt_or_variant.lower()]
+            return fmt_or_variant
+        return None  # let the magnitude-based default apply
+
+    if type_lower.startswith('date'):
+        return type_spec.split(':', 1)[1].strip() if ':' in type_spec else None
+
+    if type_lower.startswith('percent'):
+        parts = type_spec.split(':', 1)
+        variant = parts[1].strip().lower() if len(parts) > 1 else None
+        return _apply_percent_format_variant(variant)
+
+    if type_lower.startswith('multiple'):
+        parts = type_spec.split(':', 1)
+        variant = parts[1].strip().lower() if len(parts) > 1 else None
+        return _apply_multiples_format_variant(variant)
+
+    return None
+
+
 def _strip_thousands_separators(s: str) -> str:
     """Normalize a numeric string that may contain thousands separators.
 
@@ -1059,7 +1140,7 @@ def _apply_multiples_format_variant(variant: str | None) -> str:
 #
 # When financial_modeling is active, the same defaults are promoted to the
 # dash variant so zeros render as `-` and negatives in parentheses — the
-# CFA convention the skill's financial-modeling standard requires.
+# standard financial-modeling convention.
 DEFAULT_NUMBER_FORMAT = "#,##0"
 DEFAULT_NUMBER_FORMAT_DECIMALS = "#,##0.00"
 
@@ -1167,7 +1248,16 @@ def add_table_to_sheet(
 
                 # If column type directive applies (data rows only), use it
                 col_type = col_types[col_idx] if col_idx < len(col_types) else None
-                if row_idx > 0 and col_type:
+                # A formula cell (leading '=' after stripping markdown) must
+                # NOT go through type coercion — its references still need
+                # resolving via adjust_formula_references, and float() on
+                # '=SUM(B[-1])' raises and leaves the unresolved literal in
+                # place (which is #NAME? in Excel and aborts the recalc
+                # engine). Fall through to the normal formula path; the
+                # column's number format is re-applied to the result below.
+                clean_for_formula_check, _ = _strip_markdown_formatting(cell_text)
+                is_formula_cell = clean_for_formula_check.startswith('=')
+                if row_idx > 0 and col_type and not is_formula_cell:
                     # Strip markdown formatting before type coercion
                     clean_text, fmt_info = _strip_markdown_formatting(cell_text)
                     if _apply_column_type(cell, clean_text, col_type):
@@ -1201,6 +1291,15 @@ def add_table_to_sheet(
                     cell.value = adjusted_formula
                     if not financial_modeling:
                         cell.fill = formula_fill
+                    # A formula in a typed column gets the column's intended
+                    # number format applied to its (numeric) result — e.g. a
+                    # =SUM(...) in a `currency:$` column displays as currency.
+                    # The format is harmless on non-numeric results (Excel
+                    # ignores number formats on strings/errors).
+                    if row_idx > 0 and col_type:
+                        type_fmt = _number_format_for_type(col_type)
+                        if type_fmt:
+                            cell.number_format = type_fmt
                 else:
                     # Header row must remain as strings — Excel Tables require
                     # string headers; numeric-looking headers (e.g. "2024") must

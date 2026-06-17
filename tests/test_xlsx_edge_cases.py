@@ -1,10 +1,11 @@
-"""Tests for the gap-fix rounds: number-format defaults, currency integer
-variant, thousands-separator parsing, unconditional circular detection,
-recalc skip-reason surfacing, unresolved-reference warnings, sheet-name
-collision warnings (Round 7), and three reference-pipeline bug fixes
-(Round 8).
+"""Edge-case and regression tests for the xlsx tool.
 
-Each test class maps 1:1 to a gap identified in the review pass.
+Covers number-format defaults, the currency integer variant, thousands-separator
+parsing, circular-reference detection without recalc, recalc skip-reason
+surfacing, unresolved-reference warnings, sheet-name collision warnings,
+the formula-reference pipeline (cross-sheet ranges, current-row vs
+table-relative refs, year-as-text scope), formula references inside typed
+columns, and comma-safe parsing of the types directive.
 """
 
 from __future__ import annotations
@@ -55,12 +56,12 @@ def _intercept_upload(markdown: str, **kwargs) -> bytes:
     return captured["data"]
 
 
-# ── Gap 1+2: number-format defaults (dash/parens in financial mode,
-#    and large numbers preserve decimals) ──────────────────────────────────────
+# ── Number-format defaults (dash/parens in financial mode, and large
+#    numbers preserve decimals) ─────────────────────────────────────────────
 
 
 class TestNumberFormatDefaults:
-    """Gap 2: plain numeric cells preserve decimals instead of force-rounding."""
+    """Plain numeric cells preserve decimals instead of force-rounding."""
 
     def test_large_whole_number_uses_integer_format(self):
         data = _intercept_upload(
@@ -71,7 +72,8 @@ class TestNumberFormatDefaults:
         assert ws["A2"].number_format == DEFAULT_NUMBER_FORMAT  # "#,##0"
 
     def test_large_non_whole_number_preserves_decimals(self):
-        """Was a bug: 1500.75 was force-rounded to display 1,501."""
+        """A large non-whole value keeps its decimals (1500.75 must not
+        display as 1,501)."""
         data = _intercept_upload(
             "| Price |\n|---|\n| 1500.75 |\n", recalc=False
         )
@@ -80,7 +82,7 @@ class TestNumberFormatDefaults:
         assert ws["A2"].number_format == DEFAULT_NUMBER_FORMAT_DECIMALS  # "#,##0.00"
 
     def test_small_whole_number_no_force_format(self):
-        """Small whole numbers still get the integer default (unchanged)."""
+        """Small whole numbers still get the integer default."""
         data = _intercept_upload("| Count |\n|---|\n| 5 |\n", recalc=False)
         ws = load_workbook(io.BytesIO(data)).active
         assert ws["A2"].value == 5
@@ -88,7 +90,7 @@ class TestNumberFormatDefaults:
 
 
 class TestFinancialDefaultFormats:
-    """Gap 1: financial_modeling applies dash/parens as the default format."""
+    """financial_modeling applies dash/parens as the default format."""
 
     def test_financial_mode_whole_number_uses_dash_variant(self):
         # Use a 5-digit value so it isn't treated as a 4-digit year label.
@@ -141,7 +143,7 @@ class TestFinancialDefaultFormats:
         assert _default_number_format_for(1000.5, True) == FINANCIAL_DEFAULT_NUMBER_DECIMALS
 
 
-# ── Gap 5: zero-decimal (integer) currency variant ───────────────────────────
+# ── Zero-decimal (integer) currency variant ──────────────────────────────────
 
 
 class TestCurrencyIntegerVariant:
@@ -179,7 +181,7 @@ class TestCurrencyIntegerVariant:
         assert ws["A2"].number_format == "$#,##0"
 
 
-# ── Gap 6: thousands separators in default numeric path ─────────────────────
+# ── Thousands separators in default numeric path ─────────────────────────────
 
 
 class TestThousandsSeparatorParsing:
@@ -197,7 +199,7 @@ class TestThousandsSeparatorParsing:
         assert _strip_thousands_separators("1234") == "1234"
 
     def test_plain_cell_with_commas_parses_as_number(self):
-        """Was a bug: '1,234' stayed a string because float() raised."""
+        """'1,234' parses as a number rather than staying a string."""
         data = _intercept_upload(
             "| Population |\n|---|\n| 1,234 |\n", recalc=False
         )
@@ -214,14 +216,14 @@ class TestThousandsSeparatorParsing:
         assert ws["A2"].number_format == DEFAULT_NUMBER_FORMAT_DECIMALS
 
 
-# ── Gap 3: circular detection runs even when recalc=False ────────────────────
+# ── Circular detection runs even when recalc=False ───────────────────────────
 
 
 class TestCircularDetectionWithoutRecalc:
     def test_circular_ref_detected_when_recalc_false(self):
-        """The tool description promises cycle detection runs without the
-        recalc engine. Verify the standalone detection path executes when
-        recalc=False by checking the warning log."""
+        """Cycle detection runs without the recalc engine. Verify the
+        standalone detection path executes when recalc=False by checking
+        the warning log."""
         markdown = (
             "| A | B |\n"
             "|---|---|\n"
@@ -285,7 +287,7 @@ class TestCircularDetectionWithoutRecalc:
         return _cm()
 
 
-# ── Gap 7: recalc skip reason surfaced ───────────────────────────────────────
+# ── Recalc skip reason surfaced ──────────────────────────────────────────────
 
 
 class TestRecalcSkipReasonSurfaced:
@@ -340,7 +342,7 @@ class TestRecalcSkipReasonSurfaced:
         assert result == "fake://skip-delivered.xlsx"
 
 
-# ── Gap 4: unresolved reference warnings ─────────────────────────────────────
+# ── Unresolved reference warnings ────────────────────────────────────────────
 
 
 class TestUnresolvedReferenceWarnings:
@@ -393,7 +395,7 @@ class TestUnresolvedReferenceWarnings:
         assert not warnings
 
 
-# ── Gap 8: sheet-name collision detection ────────────────────────────────────
+# ── Sheet-name collision detection ───────────────────────────────────────────
 
 
 class TestSheetNameCollisionWarning:
@@ -430,14 +432,12 @@ class TestSheetNameCollisionWarning:
         assert not collisions
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# ROUND 8 — three real bugs reproduced and fixed.
-# ════════════════════════════════════════════════════════════════════════════
+# ── Formula-reference pipeline ───────────────────────────────────────────────
 
 
 class TestCrossSheetFunctionRangePrefix:
-    """Bug 1: =SheetName!T1.SUM(B[0]:B[2]) must emit =SUM(Sheet!B2:B4),
-    not the invalid =SUM(Sheet!B2:Sheet!B4) (which yields #VALUE!)."""
+    """=SheetName!T1.SUM(B[0]:B[2]) must emit =SUM(Sheet!B2:B4), not the
+    invalid =SUM(Sheet!B2:Sheet!B4) (which yields #VALUE!)."""
 
     def test_cross_sheet_sum_single_prefix(self):
         from xlsx_tools.helpers import adjust_formula_references
@@ -456,7 +456,7 @@ class TestCrossSheetFunctionRangePrefix:
         assert result == "=AVERAGE(Data!B2:B4)"
 
     def test_cross_sheet_sum_end_to_end_recalcs(self):
-        """End-to-end: the corrected formula must recalc without #VALUE!."""
+        """End-to-end: the formula must recalc without #VALUE!."""
         markdown = (
             "## Sheet: Data\n\n"
             "| V |\n|---|\n| 10 |\n| 20 |\n| 30 |\n\n"
@@ -468,8 +468,8 @@ class TestCrossSheetFunctionRangePrefix:
         assert wb["Summary"]["A2"].value == 60
 
     def test_cross_sheet_range_still_correct(self):
-        """The sibling cs_range pattern was already correct — guard against
-        a regression when fixing the function pattern."""
+        """The sibling cross-sheet range pattern stays correct — guard
+        against a regression in the function pattern."""
         from xlsx_tools.helpers import adjust_formula_references
         all_pos = {"Data": {"T1": 1}}
         result = adjust_formula_references(
@@ -479,8 +479,8 @@ class TestCrossSheetFunctionRangePrefix:
 
 
 class TestCurrentRowRelativeRefs:
-    """Bug 2: B[0]/A[0] is documented as CURRENT-row-relative but resolved
-    table-relative, silently corrupting every row past the first data row."""
+    """B[0]/A[0] is current-row-relative (not table-relative); it must
+    resolve to the row the formula lives on, for every data row."""
 
     def test_unit_current_row_offset_zero(self):
         from xlsx_tools.helpers import adjust_formula_references
@@ -516,7 +516,7 @@ class TestCurrentRowRelativeRefs:
 
     def test_table_relative_T1_still_correct(self):
         """The T1.B[n] form is table-relative (offset from first data row)
-        and must be unaffected by the current-row fix."""
+        and must be unaffected by the current-row resolution."""
         from xlsx_tools.helpers import adjust_formula_references
         tp = {"T1": 1}
         for n, expected_row in [(0, 2), (1, 3), (2, 4)]:
@@ -557,8 +557,8 @@ class TestCurrentRowRelativeRefs:
 
 
 class TestYearAsStringRestriction:
-    """Bug 3: financial mode forced ALL 4-digit numbers to text, not just
-    plausible years. Revenue of 1500 became text '1500'."""
+    """Financial mode treats only plausible 4-digit years as text, not all
+    4-digit numbers (a revenue of 1500 must stay numeric)."""
 
     def test_year_string_in_range(self):
         from xlsx_tools.helpers import _is_year_string
@@ -609,3 +609,191 @@ class TestYearAsStringRestriction:
         assert isinstance(ws["A3"].value, (int, float))
         assert isinstance(ws["A4"].value, (int, float))
         assert ws["A5"].value == 7500
+
+
+# ── Formula references inside typed columns ──────────────────────────────────
+
+
+class TestFormulaRefsInTypedColumns:
+    """A formula using the relative/table-reference syntax (B[0], T1.B[0],
+    Sheet!T1.B[0]) inside a `types`-directive column must have its
+    references resolved, so the typed-column path matches the non-typed
+    path (an unresolved B[-1] literal is #NAME? in Excel)."""
+
+    def test_relative_ref_resolved_in_number_column(self):
+        markdown = (
+            "<!-- types: text, number -->\n"
+            "| Item | Qty |\n|---|---|\n"
+            "| A | 10 |\n| B | 20 |\n| Total | =SUM(B[-2]:B[-1]) |\n"
+        )
+        data = _intercept_upload(markdown, recalc=True)
+        wbf = load_workbook(io.BytesIO(data))
+        wbv = load_workbook(io.BytesIO(data), data_only=True)
+        # Reference must be resolved, not left as the literal B[-2]:B[-1].
+        assert wbf.active["B4"].value == "=SUM(B2:B3)"
+        assert wbv.active["B4"].value == 30
+
+    def test_table_ref_resolved_in_typed_column(self):
+        markdown = (
+            "<!-- types: text, number -->\n"
+            "| Item | Qty |\n|---|---|\n"
+            "| A | 10 |\n| Total | =T1.B[0] |\n"
+        )
+        data = _intercept_upload(markdown, recalc=False)
+        wbf = load_workbook(io.BytesIO(data))
+        # T1.B[0] → first data row of T1 = B2.
+        assert wbf.active["B3"].value == "=B2"
+
+    def test_cross_sheet_relative_ref_resolved_in_typed_column(self):
+        markdown = (
+            "## Sheet: Data\n\n"
+            "| V |\n|---|\n| 10 |\n| 20 |\n\n"
+            "## Sheet: Sum\n\n"
+            "<!-- types: currency:$ -->\n"
+            "| Total |\n|---|\n| =Data!T1.A[0] |\n"
+        )
+        data = _intercept_upload(markdown, recalc=True)
+        wbf = load_workbook(io.BytesIO(data))
+        wbv = load_workbook(io.BytesIO(data), data_only=True)
+        assert wbf["Sum"]["A2"].value == "=Data!A2"
+        assert wbv["Sum"]["A2"].value == 10
+        # The column's currency format is applied to the formula result.
+        assert wbf["Sum"]["A2"].number_format == "$#,##0.00"
+
+    def test_absolute_ref_in_typed_column_still_works(self):
+        """Guard against regression — absolute refs already worked."""
+        markdown = (
+            "<!-- types: text, number -->\n"
+            "| Item | Qty |\n|---|---|\n"
+            "| A | 10 |\n| Total | =SUM(B2:B2) |\n"
+        )
+        data = _intercept_upload(markdown, recalc=True)
+        wbv = load_workbook(io.BytesIO(data), data_only=True)
+        assert wbv.active["B3"].value == 10
+
+    def test_typed_relative_formula_does_not_abort_recalc(self):
+        """recalc=True must NOT fail the whole call on a typed-column
+        relative formula (an unresolved '=SUM(B[-1])' would otherwise raise
+        in the engine)."""
+        markdown = (
+            "<!-- types: text, currency:$ -->\n"
+            "| Item | Amount |\n|---|---|\n"
+            "| A | $100 |\n| B | $200 |\n| Total | =SUM(B[-2]:B[-1]) |\n"
+        )
+        with patch("xlsx_tools.base_xlsx_tool.upload_file") as mock_upload:
+            mock_upload.return_value = "fake://typed.xlsx"
+            # Must not raise.
+            result = markdown_to_excel(markdown, recalc=True)
+        assert result == "fake://typed.xlsx"
+
+    def test_relative_ref_resolved_in_percent_column(self):
+        """A formula in a `percent` column: refs resolved, percent format
+        applied to the result."""
+        markdown = (
+            "<!-- types: text, percent -->\n"
+            "| Metric | Rate |\n|---|---|\n"
+            "| Y1 | 10% |\n| Y2 | 30% |\n| Avg | =AVERAGE(B[-2]:B[-1]) |\n"
+        )
+        data = _intercept_upload(markdown, recalc=True)
+        wbf = load_workbook(io.BytesIO(data))
+        wbv = load_workbook(io.BytesIO(data), data_only=True)
+        assert wbf.active["B4"].value == "=AVERAGE(B2:B3)"
+        # 10% and 30% stored as 0.1 / 0.3 → average 0.2.
+        assert abs(wbv.active["B4"].value - 0.2) < 1e-9
+        assert wbf.active["B4"].number_format == "0.0%"
+
+    def test_relative_ref_resolved_in_multiple_column(self):
+        """A formula in a `multiple` column: refs resolved, 0.0x format."""
+        markdown = (
+            "<!-- types: text, multiple -->\n"
+            "| Comp | EV/EBITDA |\n|---|---|\n"
+            "| A | 12.0x |\n| B | 10.0x |\n| Mean | =AVERAGE(B[-2]:B[-1]) |\n"
+        )
+        data = _intercept_upload(markdown, recalc=True)
+        wbf = load_workbook(io.BytesIO(data))
+        wbv = load_workbook(io.BytesIO(data), data_only=True)
+        assert wbf.active["B4"].value == "=AVERAGE(B2:B3)"
+        assert wbv.active["B4"].value == 11
+        assert wbf.active["B4"].number_format == '0.0"x"'
+
+    def test_relative_ref_resolved_in_bool_column(self):
+        """A formula in a `bool` column must still resolve refs (bool type
+        has no number format, so none is forced on the result)."""
+        markdown = (
+            "<!-- types: text, bool -->\n"
+            "| Check | Flag |\n|---|---|\n"
+            "| A | yes |\n| B | =NOT(B[-1]) |\n"
+        )
+        data = _intercept_upload(markdown, recalc=True)
+        wbf = load_workbook(io.BytesIO(data))
+        wbv = load_workbook(io.BytesIO(data), data_only=True)
+        assert wbf.active["B3"].value == "=NOT(B2)"
+        # B2 is TRUE → NOT(TRUE) = FALSE.
+        assert wbv.active["B3"].value is False
+
+    def test_relative_ref_resolved_in_date_column(self):
+        """A formula in a `date` column must resolve refs; date format may
+        be applied to the (serial) result."""
+        markdown = (
+            "<!-- types: text, date -->\n"
+            "| Event | When |\n|---|---|\n"
+            "| Start | 2024-01-01 |\n| NextDay | =B[-1]+1 |\n"
+        )
+        data = _intercept_upload(markdown, recalc=True)
+        wbf = load_workbook(io.BytesIO(data))
+        wbv = load_workbook(io.BytesIO(data), data_only=True)
+        assert wbf.active["B3"].value == "=B2+1"
+        # 2024-01-01 + 1 day → 2024-01-02 (read back as datetime via format).
+        assert wbv.active["B3"].value is not None
+
+
+# ── Comma-safe parsing of the types directive ────────────────────────────────
+
+
+class TestTypesDirectiveCommaInFormat:
+    """A comma inside a number/currency format (e.g. number:#,##0) must not
+    be treated as a column separator — that would truncate the format and
+    shift every later column by one, silently corrupting data."""
+
+    def test_literal_comma_format_not_split(self):
+        from xlsx_tools.helpers import _parse_types_directive
+        assert _parse_types_directive("number:#,##0, text") == [
+            "number:#,##0",
+            "text",
+        ]
+
+    def test_multi_column_comma_format(self):
+        from xlsx_tools.helpers import _parse_types_directive
+        assert _parse_types_directive(
+            "text, currency:$, number:#,##0.00, percent"
+        ) == ["text", "currency:$", "number:#,##0.00", "percent"]
+
+    def test_multi_section_comma_format(self):
+        from xlsx_tools.helpers import _parse_types_directive
+        assert _parse_types_directive("number:#,##0;(#,##0);-, text") == [
+            "number:#,##0;(#,##0);-",
+            "text",
+        ]
+
+    def test_variant_specs_unaffected(self):
+        """Comma-free variant specs must keep working unchanged."""
+        from xlsx_tools.helpers import _parse_types_directive
+        assert _parse_types_directive(
+            "text, currency:$:integer:dash, multiple, percent:integer"
+        ) == ["text", "currency:$:integer:dash", "multiple", "percent:integer"]
+
+    def test_comma_format_end_to_end_preserves_format_and_columns(self):
+        markdown = (
+            "<!-- types: number:#,##0, text -->\n"
+            "| Amount | Code |\n|---|---|\n"
+            "| 1234 | 007 |\n"
+        )
+        data = _intercept_upload(markdown, recalc=False)
+        ws = load_workbook(io.BytesIO(data)).active
+        # Format must survive intact (must not be truncated to '#').
+        assert ws["A2"].number_format == "#,##0"
+        assert ws["A2"].value == 1234
+        # The `text` column must still be text — leading zero preserved
+        # (a column shift would turn '007' into the number 7).
+        assert ws["B2"].value == "007"
+

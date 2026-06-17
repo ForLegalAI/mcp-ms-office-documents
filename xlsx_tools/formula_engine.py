@@ -481,8 +481,8 @@ def _format_location(sheet: str, coordinate: str) -> str:
 # The `formulas` library silently resolves circular references to nothing
 # (0 cached values, 0 errors) rather than flagging them. Excel itself
 # shows a warning dialog and a 0 result. To catch this class of bug at
-# generation time — the skill explicitly requires "verify no unintended
-# circular references" — we build a dependency graph from the formula
+# generation time — financial models must contain no unintended circular
+# references — we build a dependency graph from the formula
 # strings and run a DFS cycle detection. Any cell on a cycle is reported
 # as a synthetic "#CIRC!" error (not an OOXML sentinel; our own marker)
 # so it surfaces through the existing error-reporting policy.
