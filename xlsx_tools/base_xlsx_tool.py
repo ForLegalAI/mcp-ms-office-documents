@@ -34,8 +34,6 @@ def markdown_to_excel(
     file_name: str | None = None,
     auto_filter: bool = False,
     default_font: str | None = None,
-    financial_modeling: bool = False,
-    recalc: bool | None = None,
 ) -> str:
     """Convert Markdown to Excel workbook (focused on tables and headers).
 
@@ -50,47 +48,23 @@ def markdown_to_excel(
         default_font: Optional font family applied to every cell
             (e.g. 'Arial'). When None, falls back to the server's
             ``XLSX_DEFAULT_FONT`` config value, then openpyxl's default.
-        financial_modeling: When True, apply CFA-standard color coding
-            (blue inputs, black formulas, green cross-sheet refs, yellow
-            sourced cells) and treat 4-digit-year data cells as text.
-        recalc: When True, evaluate every formula in-process via the
-            pure-Python ``formulas`` library and write the computed
-            values back as cached <v> tags so the file previews
-            correctly without Excel. When None (default), falls back to
-            the server's ``XLSX_RECALC_ENABLED`` config value.
-            If the caller explicitly passes recalc=True and recalculation
-            detects formula errors (#REF!, #DIV/0!, etc.), the call
-            fails with a descriptive RuntimeError so the model can fix
-            the formulas and retry. When recalc runs as a defaulted
-            behaviour, errors are logged but the file is still delivered.
 
     Raises:
-        RuntimeError: If the markdown contains no tables, conversion
-            fails, or (only when ``recalc`` is explicitly True) formula
-            evaluation detects errors like #REF! or #DIV/0!.
+        RuntimeError: If the markdown contains no tables or conversion
+            fails. When ``XLSX_RECALC_STRICT=true``, also raises when
+            formula evaluation detects errors like #REF! or #DIV/0!.
     """
     logger.info("Starting markdown_to_excel conversion")
 
-    # Track whether the caller explicitly requested recalculation. When
-    # explicit, formula errors (#REF!, #DIV/0!, ...) cause the tool call
-    # to fail with a descriptive message so the model can fix the formulas
-    # and retry — matching the "zero formula errors" delivery standard.
-    # When recalc runs as a defaulted behaviour (the caller didn't pass
-    # the parameter), errors are logged but the file is still delivered,
-    # so that a misconfigured environment can never break document delivery.
-    recalc_explicitly_requested = recalc is not None
-
-    # Resolve config-driven defaults for optional behaviour.
+    # Resolve config-driven settings.
     try:
         cfg = get_config()
     except Exception:
         cfg = None
-    if default_font is None and cfg is not None:
-        default_font = cfg.xlsx_default_font
-    if recalc is None and cfg is not None:
-        recalc = cfg.xlsx_recalc_enabled
-    elif recalc is None:
-        recalc = True
+
+    default_font = cfg.xlsx_default_font if (default_font is None and cfg is not None) else default_font
+    recalc: bool = cfg.xlsx_recalc_enabled if cfg is not None else True
+    recalc_strict: bool = cfg.xlsx_recalc_strict if cfg is not None else False
 
     # Recalc timeout (seconds). Falls back to config, then 30s.
     recalc_timeout_seconds = 30
@@ -196,7 +170,6 @@ def markdown_to_excel(
                     table_index=tables_count,
                     directives=event.directives,
                     default_font=default_font,
-                    financial_modeling=financial_modeling,
                 )
 
                 # Handle freeze directive — freeze below header row of this table
@@ -225,8 +198,8 @@ def markdown_to_excel(
     file_object = io.BytesIO()
     try:
         logger.info(
-            "Saving Excel workbook to memory buffer (headers=%d, tables=%d, recalc=%s, financial=%s)",
-            headers_count, tables_count, recalc, financial_modeling,
+            "Saving Excel workbook to memory buffer (headers=%d, tables=%d, recalc=%s)",
+            headers_count, tables_count, recalc,
         )
         wb.save(file_object)
         original_bytes = file_object.getvalue()
@@ -261,20 +234,11 @@ def markdown_to_excel(
         # recalc-disabled branch above. We do NOT re-run it here to avoid
         # double-counting circular cells in the summary.
 
-        # If formula errors surfaced AND the caller explicitly opted INTO
-        # recalculation, fail the tool call with a clear message. This
-        # enforces the "zero formula errors" delivery standard. When recalc
-        # ran as a defaulted behaviour (parameter not passed), we still
-        # deliver the file (errors are logged) so misconfiguration can't
-        # break delivery.
-        #
-        # Note: when the caller explicitly passes recalc=False, circular
-        # references are still detected and logged (the tool promises
-        # independent cycle analysis), but they are NOT fatal — the user
-        # explicitly opted out of validation, and surprising them with a
-        # hard failure would be inconsistent with their choice.
-        recalc_explicitly_enabled = recalc_explicitly_requested and bool(recalc)
-        if formula_error_summary and recalc_explicitly_enabled:
+        # If formula errors surfaced AND XLSX_RECALC_STRICT=true, fail the
+        # tool call so the caller can fix formulas and retry. When strict
+        # mode is off (the default), errors are logged but the file is still
+        # delivered — misconfiguration must never block document generation.
+        if formula_error_summary and recalc_strict:
             raise RuntimeError(
                 f"Excel workbook contains formula errors. "
                 f"Fix the formulas and retry. {formula_error_summary}"

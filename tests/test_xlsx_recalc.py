@@ -371,7 +371,27 @@ def _intercept_upload(markdown: str, **kwargs) -> bytes:
 
 
 class TestEndToEndRecalc:
-    """markdown_to_excel integrates recalc + inject when recalc=True."""
+    """markdown_to_excel integrates recalc + inject (driven by config)."""
+
+    def _make_strict_cfg(self):
+        from unittest.mock import MagicMock
+        from config import Config
+        cfg = MagicMock(spec=Config)
+        cfg.xlsx_recalc_enabled = True
+        cfg.xlsx_recalc_strict = True
+        cfg.xlsx_default_font = None
+        cfg.xlsx_recalc_timeout_seconds = 30
+        return cfg
+
+    def _make_recalc_disabled_cfg(self):
+        from unittest.mock import MagicMock
+        from config import Config
+        cfg = MagicMock(spec=Config)
+        cfg.xlsx_recalc_enabled = False
+        cfg.xlsx_recalc_strict = False
+        cfg.xlsx_default_font = None
+        cfg.xlsx_recalc_timeout_seconds = 30
+        return cfg
 
     def test_recalc_on_produces_cached_values(self):
         markdown = """| A | B | Total |
@@ -379,7 +399,7 @@ class TestEndToEndRecalc:
 | 1 | 2 | =A2+B2 |
 | 3 | 4 | =A3+B3 |
 """
-        data = _intercept_upload(markdown, recalc=True)
+        data = _intercept_upload(markdown)
 
         wb = load_workbook(io.BytesIO(data), data_only=True)
         ws = wb.active
@@ -388,11 +408,13 @@ class TestEndToEndRecalc:
         assert ws["C3"].value == 7
 
     def test_recalc_off_leaves_formulas_without_cached_values(self):
+        """When XLSX_RECALC_ENABLED=false, no cached values are written."""
         markdown = """| A | Total |
 |---|-------|
 | 1 | =A2*2 |
 """
-        data = _intercept_upload(markdown, recalc=False)
+        with patch("xlsx_tools.base_xlsx_tool.get_config", return_value=self._make_recalc_disabled_cfg()):
+            data = _intercept_upload(markdown)
 
         wb = load_workbook(io.BytesIO(data), data_only=True)
         ws = wb.active
@@ -403,8 +425,8 @@ class TestEndToEndRecalc:
         wb2 = load_workbook(io.BytesIO(data))
         assert wb2.active["B2"].value == "=A2*2"
 
-    def test_recalc_explicit_fails_on_formula_errors(self):
-        """When recalc is explicitly True, formula errors fail the call.
+    def test_recalc_strict_fails_on_formula_errors(self):
+        """When XLSX_RECALC_STRICT=true, formula errors fail the call.
 
         This enforces the "zero formula errors" delivery standard: the
         model is told about the errors so it can fix the formulas and
@@ -414,11 +436,12 @@ class TestEndToEndRecalc:
 |---|---|
 | 5 | =A2/0 |
 """
-        with pytest.raises(RuntimeError, match="formula error"):
-            _intercept_upload(markdown, recalc=True)
+        with patch("xlsx_tools.base_xlsx_tool.get_config", return_value=self._make_strict_cfg()):
+            with pytest.raises(RuntimeError, match="formula error"):
+                _intercept_upload(markdown)
 
-    def test_recalc_default_delivers_file_with_errors(self):
-        """When recalc runs as a default (None), errors are logged but
+    def test_recalc_non_strict_delivers_file_with_errors(self):
+        """When XLSX_RECALC_STRICT=false (default), errors are logged but
         the file is still delivered — misconfiguration must never break
         document generation.
         """
@@ -426,8 +449,7 @@ class TestEndToEndRecalc:
 |---|---|
 | 5 | =A2/0 |
 """
-        # recalc=None (default) — env config has XLSX_RECALC_ENABLED true,
-        # so recalc runs, finds the error, but still delivers.
+        # strict=False (default) — recalc runs, finds the error, but still delivers.
         data = _intercept_upload(markdown)
 
         wb = load_workbook(io.BytesIO(data))
@@ -444,6 +466,45 @@ class TestRecalcTimeout:
         from config import Config
         cfg = Config.from_env()
         assert cfg.xlsx_recalc_timeout_seconds == 30
+
+    def test_config_has_recalc_strict_field_with_default_false(self):
+        """XLSX_RECALC_STRICT defaults to False (non-strict delivery)."""
+        from config import Config
+        cfg = Config.from_env()
+        assert cfg.xlsx_recalc_strict is False
+
+    def test_config_recalc_strict_parsed_from_env_true(self):
+        """XLSX_RECALC_STRICT=true → xlsx_recalc_strict=True."""
+        import os
+        from config import Config
+        with patch.dict(os.environ, {"XLSX_RECALC_STRICT": "true"}):
+            cfg = Config.from_env()
+        assert cfg.xlsx_recalc_strict is True
+
+    def test_config_recalc_strict_parsed_from_env_1(self):
+        """XLSX_RECALC_STRICT=1 is also accepted as truthy."""
+        import os
+        from config import Config
+        with patch.dict(os.environ, {"XLSX_RECALC_STRICT": "1"}):
+            cfg = Config.from_env()
+        assert cfg.xlsx_recalc_strict is True
+
+    def test_config_recalc_strict_parsed_from_env_false(self):
+        """XLSX_RECALC_STRICT=false → xlsx_recalc_strict=False."""
+        import os
+        from config import Config
+        with patch.dict(os.environ, {"XLSX_RECALC_STRICT": "false"}):
+            cfg = Config.from_env()
+        assert cfg.xlsx_recalc_strict is False
+
+    def test_config_recalc_strict_unset_is_false(self):
+        """Unset XLSX_RECALC_STRICT → defaults to False."""
+        import os
+        from config import Config
+        env = {k: v for k, v in os.environ.items() if k != "XLSX_RECALC_STRICT"}
+        with patch.dict(os.environ, env, clear=True):
+            cfg = Config.from_env()
+        assert cfg.xlsx_recalc_strict is False
 
     def test_recalc_and_inject_accepts_timeout_arg(self):
         """_recalc_and_inject signature accepts a timeout_seconds parameter."""
@@ -757,10 +818,20 @@ class TestExtractFormulaReferences:
 
 
 class TestCircularRefErrorPolicy:
-    """Integration: explicit recalc=True with circular refs fails."""
+    """Integration: XLSX_RECALC_STRICT=true with circular refs fails."""
 
-    def test_explicit_recalc_fails_on_circular_ref(self):
-        """When recalc=True is explicit and a circular ref is present,
+    def _make_strict_cfg(self):
+        from unittest.mock import MagicMock
+        from config import Config
+        cfg = MagicMock(spec=Config)
+        cfg.xlsx_recalc_enabled = True
+        cfg.xlsx_recalc_strict = True
+        cfg.xlsx_default_font = None
+        cfg.xlsx_recalc_timeout_seconds = 30
+        return cfg
+
+    def test_strict_recalc_fails_on_circular_ref(self):
+        """When XLSX_RECALC_STRICT=true and a circular ref is present,
         the call must fail (zero-errors policy)."""
         markdown = (
             "| A | B |\n"
@@ -768,10 +839,11 @@ class TestCircularRefErrorPolicy:
             "| =B2 | =A2 |\n"
         )
 
-        with patch("xlsx_tools.base_xlsx_tool.upload_file") as mock_upload:
+        with patch("xlsx_tools.base_xlsx_tool.upload_file") as mock_upload, \
+             patch("xlsx_tools.base_xlsx_tool.get_config", return_value=self._make_strict_cfg()):
             mock_upload.return_value = "fake://circ.xlsx"
             with pytest.raises(RuntimeError) as exc_info:
-                markdown_to_excel(markdown, recalc=True)
+                markdown_to_excel(markdown)
 
         msg = str(exc_info.value)
         assert "#CIRC!" in msg
@@ -780,7 +852,7 @@ class TestCircularRefErrorPolicy:
         mock_upload.assert_not_called()
 
     def test_default_recalc_delivers_file_with_circular_ref(self):
-        """When recalc is default (None) and a circular ref is present,
+        """When XLSX_RECALC_STRICT=false (default) and a circular ref is present,
         the file is still delivered (errors logged only)."""
         markdown = (
             "| A | B |\n"
@@ -790,7 +862,7 @@ class TestCircularRefErrorPolicy:
 
         with patch("xlsx_tools.base_xlsx_tool.upload_file") as mock_upload:
             mock_upload.return_value = "fake://circ-delivered.xlsx"
-            result = markdown_to_excel(markdown)  # no recalc param
+            result = markdown_to_excel(markdown)
 
         assert result == "fake://circ-delivered.xlsx"
         mock_upload.assert_called_once()
@@ -1007,7 +1079,7 @@ class TestStringFormulaInjection:
                 captured["data"] = file_obj.read()
                 return "fake://str.xlsx"
             mock_upload.side_effect = capture
-            markdown_to_excel(markdown, recalc=True)
+            markdown_to_excel(markdown)
 
         wb = load_workbook(io.BytesIO(captured["data"]), data_only=True)
         ws = wb.active
@@ -1061,6 +1133,9 @@ class TestTotalFormulasInErrorSummary:
 
     def test_end_to_end_error_summary_has_total_formulas(self):
         """An actual recalc that finds errors should surface total_formulas."""
+        from unittest.mock import MagicMock
+        from config import Config
+
         # Division by zero — guaranteed error.
         markdown = (
             "| A | B |\n"
@@ -1068,10 +1143,17 @@ class TestTotalFormulasInErrorSummary:
             "| 0 | =5/A2 |\n"
             "| 10 | =10/A3 |\n"
         )
-        with patch("xlsx_tools.base_xlsx_tool.upload_file") as mock_upload:
+        fake_cfg = MagicMock(spec=Config)
+        fake_cfg.xlsx_recalc_enabled = True
+        fake_cfg.xlsx_recalc_strict = True
+        fake_cfg.xlsx_default_font = None
+        fake_cfg.xlsx_recalc_timeout_seconds = 30
+
+        with patch("xlsx_tools.base_xlsx_tool.upload_file") as mock_upload, \
+             patch("xlsx_tools.base_xlsx_tool.get_config", return_value=fake_cfg):
             mock_upload.return_value = "fake.xlsx"
             with pytest.raises(RuntimeError) as exc_info:
-                markdown_to_excel(markdown, recalc=True)
+                markdown_to_excel(markdown)
 
         msg = str(exc_info.value)
         # The error count should appear as "N/total" since we know the total.
@@ -1182,7 +1264,7 @@ class TestNoFalsePositiveCircularRefs:
         with patch("xlsx_tools.base_xlsx_tool.upload_file") as mock_upload:
             mock_upload.return_value = "fake://model.xlsx"
             # This must NOT raise — the label formula is legitimate.
-            result = markdown_to_excel(markdown, recalc=True)
+            result = markdown_to_excel(markdown)
         assert result == "fake://model.xlsx"
 
 
@@ -1322,7 +1404,7 @@ class TestExternalLinkIsolation:
 | Ext   | =[Other.xlsx]Sheet1!A1 |
 | C     | =B2+B3 |
 """
-        data = _intercept_upload(markdown, recalc=True)
+        data = _intercept_upload(markdown)
 
         wb_cached = load_workbook(io.BytesIO(data), data_only=True)
         ws = wb_cached.active
@@ -1340,7 +1422,7 @@ class TestExternalLinkIsolation:
 | Ext   | =[Other.xlsx]Sheet1!A1 |
 | B     | =B2*2 |
 """
-        data = _intercept_upload(markdown, recalc=True)
+        data = _intercept_upload(markdown)
 
         wb = load_workbook(io.BytesIO(data))
         ws = wb.active
@@ -1355,7 +1437,7 @@ class TestExternalLinkIsolation:
 | Ext   | ='[Other.xlsx]Sheet 1'!A1 |
 | B     | =B2*2 |
 """
-        data = _intercept_upload(markdown, recalc=True)
+        data = _intercept_upload(markdown)
 
         wb_cached = load_workbook(io.BytesIO(data), data_only=True)
         ws = wb_cached.active
@@ -1370,7 +1452,7 @@ class TestExternalLinkIsolation:
 | 1 | =A2*2 |
 | 2 | =A3*2 |
 """
-        data = _intercept_upload(markdown, recalc=True)
+        data = _intercept_upload(markdown)
 
         wb = load_workbook(io.BytesIO(data), data_only=True)
         ws = wb.active
@@ -1400,7 +1482,7 @@ class TestDirectiveCarryForward:
 |------|---------|
 | 2024 | $1,000  |
 """
-        data = _intercept_upload(markdown, recalc=False)
+        data = _intercept_upload(markdown)
         wb = load_workbook(io.BytesIO(data))
         ws = wb["Model"]
         # B2 should be the number 1000 with currency format, not the text '$1,000'.
@@ -1415,7 +1497,7 @@ class TestDirectiveCarryForward:
 |---|---|
 | 1 | 2 |
 """
-        data = _intercept_upload(markdown, recalc=False)
+        data = _intercept_upload(markdown)
         wb = load_workbook(io.BytesIO(data))
         ws = wb["Model"]
         assert ws.freeze_panes == "A2"
@@ -1436,7 +1518,7 @@ class TestDirectiveCarryForward:
 |--------|-------|
 | Count  | 42    |
 """
-        data = _intercept_upload(markdown, recalc=False)
+        data = _intercept_upload(markdown)
         wb = load_workbook(io.BytesIO(data))
         # Sheet 1: currency format applied.
         first = wb["First"]

@@ -17,23 +17,9 @@ MIN_COLUMN_WIDTH = 12
 MAX_COLUMN_WIDTH = 25
 COLUMN_WIDTH_PADDING = 2
 
-# ── Financial Modeling Color Conventions ─────────────────────────────────────
-# Industry-standard (CFA / Wall Street) color coding for financial models:
-#   blue    — hardcoded inputs (numbers the user will change for scenarios)
-#   black   — formulas / calculations within the same sheet
-#   green   — formulas pulling from a different worksheet in the same workbook
-#   red     — formulas pulling from a different workbook file (external link)
-#   yellow  — key assumptions / cells flagged for review
-# These constants are used only when the caller opts in via financial_modeling=True.
-FINANCIAL_INPUT_COLOR = "0000FF"      # blue
-FINANCIAL_FORMULA_COLOR = "000000"    # black
-FINANCIAL_CROSS_SHEET_COLOR = "008000"  # green
-FINANCIAL_EXTERNAL_COLOR = "FF0000"   # red — external workbook references
-FINANCIAL_ASSUMPTION_FILL = "FFFF00"  # yellow background
-
 # ── Number-Format Variants for the `types:` directive ────────────────────────
-# These Excel number-format strings implement standard financial-modeling
-# conventions: zeros render as "-", negatives in parentheses, etc.
+# These Excel number-format strings implement standard rendering conventions:
+# zeros render as "-", negatives in parentheses, etc.
 #   positive ; negative ; zero
 # is the canonical three-section Excel format pattern.
 NUMBER_FORMAT_VARIANTS = {
@@ -52,7 +38,7 @@ PERCENT_FORMAT_VARIANTS = {
 
 # Valuation multiples (EV/EBITDA, P/E, etc.) are typically rendered as
 # "12.5x" — the value with a trailing lowercase "x" suffix. One decimal
-# place is the CFA convention. Variants follow the same dash/parens logic.
+# place is standard. Variants follow the same dash/parens logic.
 MULTIPLES_FORMAT_VARIANTS = {
     "default": '0.0"x"',
     "dash": '0.0"x";(0.0"x");-',
@@ -346,75 +332,6 @@ def apply_default_font(cell, font_name: str | None) -> None:
         italic=current.italic,
         color=current.color,
     )
-
-
-def apply_financial_styling(
-    cell,
-    cell_value_for_check: str | None,
-    source_cells: set[str] | None = None,
-) -> None:
-    """Apply CFA-standard financial-modeling color coding to a cell.
-
-    Industry conventions:
-    - Hardcoded literal values  → blue font (inputs the user changes)
-    - Local formulas            → black font (calculations on this sheet)
-    - Cross-sheet formulas      → green font (links to other worksheets
-                                  in the same workbook)
-    - External-link formulas    → red font (links to other workbook files)
-    - Source-cited cells        → yellow background (assumptions needing review)
-
-    External-link detection: Excel references another workbook with square
-    brackets around the filename, e.g. ``=[Forecast.xlsx]Sheet1!A1`` or
-    ``='[Forecast.xlsx]Sheet1'!A1``. The presence of ``[`` after the
-    leading ``=`` (ignoring quotes) is a reliable signal.
-
-    Args:
-        cell: The openpyxl cell to style.
-        cell_value_for_check: The string form of the cell's resolved value
-            (e.g. ``"=SUM(B2:B5)"`` or ``"1000"``). Used to detect
-            formulas and cross-sheet references without re-parsing.
-        source_cells: Optional set of ``"Sheet!Cell"`` location keys
-            that should get the yellow assumption fill. If the cell's
-            coordinate is in this set, the fill is applied.
-    """
-    current_font = cell.font
-
-    # Default color for hardcoded values (inputs).
-    color = FINANCIAL_INPUT_COLOR
-
-    is_formula = isinstance(cell_value_for_check, str) and cell_value_for_check.startswith('=')
-    if is_formula:
-        # External workbook reference? Look for '[' after the '=' and any
-        # leading quote. This must be checked BEFORE the cross-sheet '!'.
-        stripped = cell_value_for_check.lstrip("='")
-        if '[' in stripped:
-            color = FINANCIAL_EXTERNAL_COLOR
-        # Cross-sheet references contain a sheet-qualified cell ref like
-        # ``SheetName!A1`` (with optional quotes if the name has spaces).
-        elif '!' in cell_value_for_check:
-            color = FINANCIAL_CROSS_SHEET_COLOR
-        else:
-            color = FINANCIAL_FORMULA_COLOR
-
-    cell.font = Font(
-        name=current_font.name,
-        size=current_font.size,
-        bold=current_font.bold,
-        italic=current_font.italic,
-        color=color,
-    )
-
-    # Yellow background for cells flagged as sourced assumptions.
-    if source_cells:
-        # Build the location key the way the parser stores it: just the
-        # coordinate (e.g. "B5") since we don't know the sheet here.
-        coord = cell.coordinate
-        if coord in source_cells:
-            cell.fill = PatternFill(
-                start_color=FINANCIAL_ASSUMPTION_FILL,
-                end_color=FINANCIAL_ASSUMPTION_FILL,
-                fill_type="solid",
-            )
 
 
 def attach_source_comment(cell, source_text: str) -> None:
@@ -824,29 +741,18 @@ _KNOWN_TYPE_KEYWORDS = frozenset(
 
 
 def _apply_column_type(
-    cell, raw_text: str, type_spec: str | None, financial_modeling: bool = False
+    cell, raw_text: str, type_spec: str | None
 ) -> bool:
     """Apply column type coercion to a cell based on directive.
 
     Returns True if type was applied (caller should skip default processing),
     False if default processing should continue.
-
-    When ``financial_modeling`` is True and the column type is numeric
-    (number/currency/percent) with no explicit dash/parens variant, the
-    dash variant is applied as the default so zeros render as ``-`` and
-    negatives in parentheses — matching the CFA convention the untyped
-    numeric path already follows. An explicit variant always wins.
     """
     if not type_spec:
         return False
 
     clean = raw_text.strip()
     type_lower = type_spec.lower()
-
-    def _fin_variant(variant: str | None) -> str | None:
-        """Promote to the dash variant under financial_modeling unless the
-        caller already specified a section style (dash/parens)."""
-        return _promote_variant_for_financial(variant, financial_modeling)
 
     # Alias: `number:multiple` / `number:multiples` → `multiple`. Users
     # naturally write `number:multiple` expecting "number formatted as a
@@ -913,9 +819,8 @@ def _apply_column_type(
             if is_negative:
                 value = -abs(value)
             cell.value = value
-            eff_variant = _fin_variant(variant)
-            base_format = _currency_base_format(symbol, eff_variant)
-            cell.number_format = _apply_format_variant(base_format, eff_variant)
+            base_format = _currency_base_format(symbol, variant)
+            cell.number_format = _apply_format_variant(base_format, variant)
         except ValueError:
             cell.value = clean  # Can't parse → keep as text
         return True
@@ -929,19 +834,11 @@ def _apply_column_type(
             cell.value = float(numeric_str)
             if fmt_or_variant:
                 # If it's a known variant keyword, apply the variant format;
-                # otherwise treat as a literal format string (user's explicit
-                # format always wins, even under financial_modeling).
+                # otherwise treat as a literal format string.
                 if fmt_or_variant.lower() in NUMBER_FORMAT_VARIANTS:
                     cell.number_format = NUMBER_FORMAT_VARIANTS[fmt_or_variant.lower()]
                 else:
                     cell.number_format = fmt_or_variant
-            elif financial_modeling:
-                # No explicit format + financial mode → dash variant so zeros
-                # render as '-' and negatives in parens (CFA convention).
-                cell.number_format = (
-                    FINANCIAL_DEFAULT_NUMBER if cell.value.is_integer()
-                    else FINANCIAL_DEFAULT_NUMBER_DECIMALS
-                )
             else:
                 # No explicit format: pick by magnitude, preserving decimals
                 # (was a bug: everything >= 1000 was force-rounded to #,##0).
@@ -969,7 +866,7 @@ def _apply_column_type(
         numeric_str = clean.rstrip('%').strip()
         try:
             cell.value = float(numeric_str) / 100
-            cell.number_format = _apply_percent_format_variant(_fin_variant(variant))
+            cell.number_format = _apply_percent_format_variant(variant)
         except ValueError:
             cell.value = clean
         return True
@@ -993,24 +890,8 @@ def _apply_column_type(
     return False
 
 
-def _promote_variant_for_financial(variant: str | None, financial_modeling: bool) -> str | None:
-    """Promote a numeric variant to the dash style under financial_modeling.
-
-    Returns the variant unchanged when financial_modeling is off or when the
-    caller already specified a section style (dash/parens). Otherwise appends
-    ``dash`` so zeros render as ``-`` and negatives in parentheses — the CFA
-    convention the untyped numeric path already follows.
-    """
-    if not financial_modeling:
-        return variant
-    tokens = {t.strip() for t in (variant or "").split(':')}
-    if "dash" in tokens or "parens" in tokens or "comma_dash" in tokens:
-        return variant
-    return f"{variant}:dash" if variant else "dash"
-
-
 def _number_format_for_type(
-    type_spec: str | None, financial_modeling: bool = False
+    type_spec: str | None,
 ) -> str | None:
     """Return the Excel number format a column ``types`` spec implies, or None.
 
@@ -1020,10 +901,6 @@ def _number_format_for_type(
     intended number format. This mirrors the format-selection logic in
     ``_apply_column_type`` without touching the cell value. Returns None
     for types that have no numeric format (text/bool) or unknown specs.
-
-    Under ``financial_modeling`` the dash variant is applied to
-    number/currency/percent specs that don't already carry an explicit
-    section style, matching the literal-cell path.
     """
     if not type_spec:
         return None
@@ -1039,7 +916,6 @@ def _number_format_for_type(
         parts = type_spec.split(':')
         symbol = parts[1].strip() if len(parts) > 1 and parts[1].strip() else '$'
         variant = ':'.join(p.strip() for p in parts[2:]).lower() if len(parts) > 2 else None
-        variant = _promote_variant_for_financial(variant, financial_modeling)
         return _apply_format_variant(_currency_base_format(symbol, variant), variant)
 
     if type_lower.startswith('number'):
@@ -1049,8 +925,6 @@ def _number_format_for_type(
             if fmt_or_variant.lower() in NUMBER_FORMAT_VARIANTS:
                 return NUMBER_FORMAT_VARIANTS[fmt_or_variant.lower()]
             return fmt_or_variant  # literal format — user's explicit choice
-        if financial_modeling:
-            return FINANCIAL_DEFAULT_NUMBER
         return None  # let the magnitude-based default apply
 
     if type_lower.startswith('date'):
@@ -1059,9 +933,7 @@ def _number_format_for_type(
     if type_lower.startswith('percent'):
         parts = type_spec.split(':', 1)
         variant = parts[1].strip().lower() if len(parts) > 1 else None
-        return _apply_percent_format_variant(
-            _promote_variant_for_financial(variant, financial_modeling)
-        )
+        return _apply_percent_format_variant(variant)
 
     if type_lower.startswith('multiple'):
         parts = type_spec.split(':', 1)
@@ -1187,9 +1059,9 @@ def _apply_percent_format_variant(variant: str | None) -> str:
 def _apply_multiples_format_variant(variant: str | None) -> str:
     """Return the Excel valuation-multiple format for the given variant.
 
-    Defaults to ``0.0"x"`` (e.g. ``12.5x``) per CFA convention. The
-    ``dash`` and ``parens`` variants follow the same negative/zero
-    rendering rules as the other format families.
+    Defaults to ``0.0"x"`` (e.g. ``12.5x``). The ``dash`` and ``parens``
+    variants follow the same negative/zero rendering rules as the other
+    format families.
     """
     if not variant or variant == "default":
         return MULTIPLES_FORMAT_VARIANTS["default"]
@@ -1207,61 +1079,18 @@ def _apply_multiples_format_variant(variant: str | None) -> str:
 #   - Non-whole numbers → `#,##0.00` (preserves decimals; the old code
 #     unconditionally used `#,##0` for values >= 1000, silently rounding
 #     `1500.75` to `1,501`).
-#
-# When financial_modeling is active, the same defaults are promoted to the
-# dash variant so zeros render as `-` and negatives in parentheses — the
-# standard financial-modeling convention.
 DEFAULT_NUMBER_FORMAT = "#,##0"
 DEFAULT_NUMBER_FORMAT_DECIMALS = "#,##0.00"
 
-# Financial dash/parens variants applied as the default number format when
-# `financial_modeling=True` and the cell has no explicit format from a
-# `types` directive. These are the same strings used by the corresponding
-# variants in NUMBER_FORMAT_VARIANTS / PERCENT_FORMAT_VARIANTS, inlined
-# here for the "no directive" default path.
-FINANCIAL_DEFAULT_NUMBER = "#,##0;(#,##0);-"
-FINANCIAL_DEFAULT_NUMBER_DECIMALS = "#,##0.00;(#,##0.00);-"
-FINANCIAL_DEFAULT_PERCENT = "0.0%;(0.0%);-"
 
-
-def _default_number_format_for(value: float, financial_modeling: bool) -> str:
+def _default_number_format_for(value: float) -> str:
     """Pick the default number format for a plain numeric cell.
 
     Whole numbers use the integer format; non-whole numbers preserve two
-    decimals (was a bug: anything >= 1000 was force-rounded). When
-    ``financial_modeling`` is true, the dash/parens variant is returned so
-    zeros render as ``-`` and negatives in parentheses per CFA convention.
+    decimals (was a bug: anything >= 1000 was force-rounded to #,##0).
     """
     is_whole = float(value).is_integer()
-    if financial_modeling:
-        return FINANCIAL_DEFAULT_NUMBER if is_whole else FINANCIAL_DEFAULT_NUMBER_DECIMALS
     return DEFAULT_NUMBER_FORMAT if is_whole else DEFAULT_NUMBER_FORMAT_DECIMALS
-
-
-# Plausible year window for the financial-modeling "years as text" convention.
-# Excel's own date system starts at 1900, and forward-looking models rarely
-# project past 2100. Restricting to this window keeps the convention (so a
-# column of period headers like 2024, 2025, 2026E stays as text labels and
-# doesn't get summed/formatted as the number 2,024) while NOT coercing
-# legitimate 4-digit magnitudes — revenue of $1,500mm, a count of 5000, an
-# ID of 1234 — to text, which would silently break SUM in real Excel and
-# drop their number formatting.
-_YEAR_MIN = 1900
-_YEAR_MAX = 2100
-
-
-def _is_year_string(value: str) -> bool:
-    """Return True if value is a 4-digit year like '2024' within a plausible range.
-
-    Restricted to ``_YEAR_MIN``–``_YEAR_MAX`` so that non-year 4-digit numbers
-    (revenue, counts, IDs) are not mistakenly forced to text. See the
-    ``_YEAR_MIN`` / ``_YEAR_MAX`` constants for the rationale.
-    """
-    stripped = value.strip()
-    if not re.fullmatch(r"\d{4}", stripped):
-        return False
-    n = int(stripped)
-    return _YEAR_MIN <= n <= _YEAR_MAX
 
 
 # ── Table Rendering ───────────────────────────────────────────────────────────
@@ -1276,7 +1105,6 @@ def add_table_to_sheet(
     table_index: int = 0,
     directives: dict[str, str] | None = None,
     default_font: str | None = None,
-    financial_modeling: bool = False,
 ) -> int:
     """Add table data to Excel worksheet with proper formatting and formula support."""
     if not table_data:
@@ -1301,9 +1129,6 @@ def add_table_to_sheet(
     formula_fill = PatternFill(start_color="E7F3FF", end_color="E7F3FF", fill_type="solid")
     border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
 
-    # When financial modeling is active, the formula_fill (light-blue) is
-    # replaced by per-cell color coding via apply_financial_styling().
-
     # Fill cells
     for row_idx, row_data in enumerate(table_data):
         current_excel_row = start_row + row_idx
@@ -1311,8 +1136,8 @@ def add_table_to_sheet(
             try:
                 cell = worksheet.cell(row=current_excel_row, column=col_idx + 1)
                 # Apply the user-selected default font family first. Subsequent
-                # font operations (header styling, financial color coding,
-                # inline formatting) inherit the family unless they override it.
+                # font operations (header styling, inline formatting) inherit
+                # the family unless they override it.
                 if default_font and row_idx > 0:
                     apply_default_font(cell, default_font)
 
@@ -1330,7 +1155,7 @@ def add_table_to_sheet(
                 if row_idx > 0 and col_type and not is_formula_cell:
                     # Strip markdown formatting before type coercion
                     clean_text, fmt_info = _strip_markdown_formatting(cell_text)
-                    if _apply_column_type(cell, clean_text, col_type, financial_modeling):
+                    if _apply_column_type(cell, clean_text, col_type):
                         # Type directive handled the cell value — apply formatting, border, alignment
                         apply_cell_formatting(cell, fmt_info)
                         cell.border = border
@@ -1343,9 +1168,6 @@ def add_table_to_sheet(
                             cell.alignment = Alignment(horizontal='right')
                         else:
                             cell.alignment = Alignment(horizontal='left')
-                        # Financial color coding for typed cells (treat as input).
-                        if financial_modeling:
-                            apply_financial_styling(cell, None, set(sources_map.keys()))
                         # Source citation comment.
                         coord = cell.coordinate
                         if coord in sources_map:
@@ -1359,15 +1181,14 @@ def add_table_to_sheet(
                         resolved.value, current_excel_row, table_positions, all_sheet_table_positions
                     )
                     cell.value = adjusted_formula
-                    if not financial_modeling:
-                        cell.fill = formula_fill
+                    cell.fill = formula_fill
                     # A formula in a typed column gets the column's intended
                     # number format applied to its (numeric) result — e.g. a
                     # =SUM(...) in a `currency:$` column displays as currency.
                     # The format is harmless on non-numeric results (Excel
                     # ignores number formats on strings/errors).
                     if row_idx > 0 and col_type:
-                        type_fmt = _number_format_for_type(col_type, financial_modeling)
+                        type_fmt = _number_format_for_type(col_type)
                         if type_fmt:
                             cell.number_format = type_fmt
                 else:
@@ -1380,16 +1201,7 @@ def add_table_to_sheet(
                         clean_header, _ = _strip_markdown_formatting(cell_text)
                         cell.value = clean_header
                     else:
-                        # Financial-modeling convention: 4-digit year strings
-                        # (e.g. "2024") in data rows are treated as text labels
-                        # so they don't get auto-converted to numbers and lose
-                        # their formatting in charts/pivots.
-                        stripped = cell_text.strip()
-                        if financial_modeling and _is_year_string(stripped):
-                            clean_year, _ = _strip_markdown_formatting(cell_text)
-                            cell.value = str(clean_year).strip()
-                        else:
-                            cell.value = resolved.value
+                        cell.value = resolved.value
 
                 # Apply inline formatting (bold/italic/monospace) — skip for header row
                 # since header styling will override it immediately below
@@ -1421,44 +1233,16 @@ def add_table_to_sheet(
                     # directive on this column). Whole numbers use the integer
                     # format; non-whole numbers preserve two decimals (the old
                     # code force-rounded everything >= 1000 to `#,##0`,
-                    # silently turning 1500.75 into 1,501). When financial
-                    # modeling is active, the dash/parens variant is applied so
-                    # zeros render as `-` and negatives in parentheses per CFA
-                    # convention.
-                    cell.number_format = _default_number_format_for(
-                        cell.value, financial_modeling
-                    )
+                    # silently turning 1500.75 into 1,501).
+                    cell.number_format = _default_number_format_for(cell.value)
 
-                # Apply percentage number format. Per CFA convention the default
-                # is one decimal (`0.0%`); in financial mode the dash variant is
-                # used so zero renders as `-`.
+                # Apply percentage number format (default one decimal: 0.0%).
                 if resolved.is_percent and isinstance(cell.value, (int, float)):
-                    cell.number_format = (
-                        FINANCIAL_DEFAULT_PERCENT
-                        if financial_modeling
-                        else "0.0%"
-                    )
+                    cell.number_format = "0.0%"
 
                 # Apply date number format
                 if resolved.is_date and resolved.date_format:
                     cell.number_format = resolved.date_format
-
-                # Financial-modeling color coding (data rows only, after all
-                # other styling so the font color wins).
-                if financial_modeling and row_idx > 0:
-                    value_for_check = cell.value if isinstance(cell.value, str) else None
-                    apply_financial_styling(cell, value_for_check, set(sources_map.keys()))
-                    # Financial models also expect dash/parens number formatting
-                    # on formula results (zero → "-", negative → "(...)"). The
-                    # result value isn't known at render time, so we apply the
-                    # format optimistically — Excel ignores number formats on
-                    # non-numeric (string/error) results, so this is safe.
-                    if (
-                        isinstance(cell.value, str)
-                        and cell.value.startswith('=')
-                        and cell.number_format == 'General'
-                    ):
-                        cell.number_format = FINANCIAL_DEFAULT_NUMBER
 
                 # Source citation comment (data rows only).
                 if row_idx > 0:

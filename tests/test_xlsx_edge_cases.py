@@ -4,8 +4,8 @@ Covers number-format defaults, the currency integer variant, thousands-separator
 parsing, circular-reference detection without recalc, recalc skip-reason
 surfacing, unresolved-reference warnings, sheet-name collision warnings,
 the formula-reference pipeline (cross-sheet ranges, current-row vs
-table-relative refs, year-as-text scope), formula references inside typed
-columns, and comma-safe parsing of the types directive.
+table-relative refs), formula references inside typed columns, and
+comma-safe parsing of the types directive.
 """
 
 from __future__ import annotations
@@ -26,9 +26,6 @@ from xlsx_tools.base_xlsx_tool import markdown_to_excel  # noqa: E402
 from xlsx_tools.helpers import (  # noqa: E402
     DEFAULT_NUMBER_FORMAT,
     DEFAULT_NUMBER_FORMAT_DECIMALS,
-    FINANCIAL_DEFAULT_NUMBER,
-    FINANCIAL_DEFAULT_NUMBER_DECIMALS,
-    FINANCIAL_DEFAULT_PERCENT,
     _currency_base_format,
     _strip_thousands_separators,
     _default_number_format_for,
@@ -65,7 +62,7 @@ class TestNumberFormatDefaults:
 
     def test_large_whole_number_uses_integer_format(self):
         data = _intercept_upload(
-            "| Revenue |\n|---|\n| 1000000 |\n", recalc=False
+            "| Revenue |\n|---|\n| 1000000 |\n"
         )
         ws = load_workbook(io.BytesIO(data)).active
         assert ws["A2"].value == 1000000
@@ -75,7 +72,7 @@ class TestNumberFormatDefaults:
         """A large non-whole value keeps its decimals (1500.75 must not
         display as 1,501)."""
         data = _intercept_upload(
-            "| Price |\n|---|\n| 1500.75 |\n", recalc=False
+            "| Price |\n|---|\n| 1500.75 |\n"
         )
         ws = load_workbook(io.BytesIO(data)).active
         assert ws["A2"].value == 1500.75
@@ -83,64 +80,26 @@ class TestNumberFormatDefaults:
 
     def test_small_whole_number_no_force_format(self):
         """Small whole numbers still get the integer default."""
-        data = _intercept_upload("| Count |\n|---|\n| 5 |\n", recalc=False)
+        data = _intercept_upload("| Count |\n|---|\n| 5 |\n")
         ws = load_workbook(io.BytesIO(data)).active
         assert ws["A2"].value == 5
         assert ws["A2"].number_format == DEFAULT_NUMBER_FORMAT
 
 
-class TestFinancialDefaultFormats:
-    """financial_modeling applies dash/parens as the default format."""
+class TestNumberFormatDefaultsHelper:
+    """_default_number_format_for picks the right format by magnitude."""
 
-    def test_financial_mode_whole_number_uses_dash_variant(self):
-        # Use a 5-digit value so it isn't treated as a 4-digit year label.
-        data = _intercept_upload(
-            "| Revenue |\n|---|\n| 100000 |\n",
-            financial_modeling=True, recalc=False,
-        )
-        ws = load_workbook(io.BytesIO(data)).active
-        # zeros render as "-", negatives in parens
-        assert ws["A2"].number_format == FINANCIAL_DEFAULT_NUMBER
+    def test_whole_number_gets_integer_format(self):
+        assert _default_number_format_for(1000.0) == DEFAULT_NUMBER_FORMAT
 
-    def test_financial_mode_non_whole_uses_dash_variant_with_decimals(self):
-        data = _intercept_upload(
-            "| Price |\n|---|\n| 1500.75 |\n",
-            financial_modeling=True, recalc=False,
-        )
-        ws = load_workbook(io.BytesIO(data)).active
-        assert ws["A2"].number_format == FINANCIAL_DEFAULT_NUMBER_DECIMALS
+    def test_decimal_number_gets_decimal_format(self):
+        assert _default_number_format_for(1000.5) == DEFAULT_NUMBER_FORMAT_DECIMALS
 
-    def test_financial_mode_percent_uses_dash_variant(self):
-        data = _intercept_upload(
-            "| Growth |\n|---|\n| 10% |\n",
-            financial_modeling=True, recalc=False,
-        )
-        ws = load_workbook(io.BytesIO(data)).active
-        assert ws["A2"].number_format == FINANCIAL_DEFAULT_PERCENT
-
-    def test_financial_mode_formula_gets_dash_format(self):
-        """Formula cells in financial mode get the dash default so a result
-        of 0 renders as '-' and a negative as '(...)'."""
-        data = _intercept_upload(
-            "| A | Diff |\n|---|---|\n| 100 | =A2-A2 |\n",
-            financial_modeling=True, recalc=False,
-        )
-        ws = load_workbook(io.BytesIO(data)).active
-        assert ws["B2"].number_format == FINANCIAL_DEFAULT_NUMBER
-
-    def test_non_financial_mode_unchanged(self):
-        """Without financial_modeling, plain percent stays at 0.0%."""
-        data = _intercept_upload(
-            "| Growth |\n|---|\n| 10% |\n", recalc=False
-        )
+    def test_plain_percent_default_format(self):
+        """Without financial mode, plain percent stays at 0.0%."""
+        data = _intercept_upload("| Growth |\n|---|\n| 10% |\n")
         ws = load_workbook(io.BytesIO(data)).active
         assert ws["A2"].number_format == "0.0%"
-
-    def test_default_number_format_for_helper(self):
-        assert _default_number_format_for(1000.0, False) == DEFAULT_NUMBER_FORMAT
-        assert _default_number_format_for(1000.5, False) == DEFAULT_NUMBER_FORMAT_DECIMALS
-        assert _default_number_format_for(1000.0, True) == FINANCIAL_DEFAULT_NUMBER
-        assert _default_number_format_for(1000.5, True) == FINANCIAL_DEFAULT_NUMBER_DECIMALS
 
 
 # ── Zero-decimal (integer) currency variant ──────────────────────────────────
@@ -176,7 +135,7 @@ class TestCurrencyIntegerVariant:
 |---|
 | $1500 |
 """
-        data = _intercept_upload(markdown, recalc=False)
+        data = _intercept_upload(markdown)
         ws = load_workbook(io.BytesIO(data)).active
         assert ws["A2"].value == 1500.0
         assert ws["A2"].number_format == "$#,##0"
@@ -202,7 +161,7 @@ class TestThousandsSeparatorParsing:
     def test_plain_cell_with_commas_parses_as_number(self):
         """'1,234' parses as a number rather than staying a string."""
         data = _intercept_upload(
-            "| Population |\n|---|\n| 1,234 |\n", recalc=False
+            "| Population |\n|---|\n| 1,234 |\n"
         )
         ws = load_workbook(io.BytesIO(data)).active
         assert ws["A2"].value == 1234.0
@@ -210,37 +169,45 @@ class TestThousandsSeparatorParsing:
 
     def test_plain_cell_with_commas_and_decimals(self):
         data = _intercept_upload(
-            "| GDP |\n|---|\n| 1,234.56 |\n", recalc=False
+            "| GDP |\n|---|\n| 1,234.56 |\n"
         )
         ws = load_workbook(io.BytesIO(data)).active
         assert ws["A2"].value == 1234.56
         assert ws["A2"].number_format == DEFAULT_NUMBER_FORMAT_DECIMALS
 
 
-# ── Circular detection runs even when recalc=False ───────────────────────────
+# ── Circular detection runs regardless of recalc setting ─────────────────────
 
 
 class TestCircularDetectionWithoutRecalc:
-    def test_circular_ref_detected_when_recalc_false(self):
-        """Cycle detection runs without the recalc engine. Verify the
-        standalone detection path executes when recalc=False by checking
-        the warning log."""
+    def test_circular_ref_detected_when_recalc_disabled(self):
+        """Cycle detection runs even when XLSX_RECALC_ENABLED=false. Verify the
+        standalone detection path logs the cycle."""
+        from unittest.mock import MagicMock
+        from config import Config
+
         markdown = (
             "| A | B |\n"
             "|---|---|\n"
             "| =B2 | =A2 |\n"
         )
-        with patch("xlsx_tools.base_xlsx_tool.upload_file") as mock_upload:
+        fake_cfg = MagicMock(spec=Config)
+        fake_cfg.xlsx_recalc_enabled = False
+        fake_cfg.xlsx_recalc_strict = False
+        fake_cfg.xlsx_default_font = None
+        fake_cfg.xlsx_recalc_timeout_seconds = 30
+
+        with patch("xlsx_tools.base_xlsx_tool.upload_file") as mock_upload, \
+             patch("xlsx_tools.base_xlsx_tool.get_config", return_value=fake_cfg):
             mock_upload.return_value = "fake://circ.xlsx"
             with self._capture_logs("xlsx_tools.base_xlsx_tool") as logs:
-                # recalc=False explicitly → cycle logged but NOT fatal.
-                result = markdown_to_excel(markdown, recalc=False)
+                result = markdown_to_excel(markdown)
         assert result == "fake://circ.xlsx"
         joined = "\n".join(logs)
         assert "circular" in joined.lower() or "#CIRC" in joined
 
-    def test_circular_ref_not_fatal_when_recalc_false(self):
-        """User opted out of recalc → don't surprise-fail on cycles."""
+    def test_circular_ref_not_fatal_by_default(self):
+        """Cycles are logged but NOT fatal when XLSX_RECALC_STRICT is off (default)."""
         markdown = (
             "| A | B |\n"
             "|---|---|\n"
@@ -248,21 +215,31 @@ class TestCircularDetectionWithoutRecalc:
         )
         with patch("xlsx_tools.base_xlsx_tool.upload_file") as mock_upload:
             mock_upload.return_value = "fake://circ.xlsx"
-            # Must NOT raise.
-            result = markdown_to_excel(markdown, recalc=False)
+            # Must NOT raise (strict is off by default).
+            result = markdown_to_excel(markdown)
         assert result == "fake://circ.xlsx"
 
-    def test_circular_ref_fatal_when_recalc_true(self):
-        """Explicit recalc=True still fails on cycles (zero-errors policy)."""
+    def test_circular_ref_fatal_when_strict_enabled(self):
+        """With XLSX_RECALC_STRICT=true, cycles fail the call."""
+        from unittest.mock import MagicMock
+        from config import Config
+
         markdown = (
             "| A | B |\n"
             "|---|---|\n"
             "| =B2 | =A2 |\n"
         )
-        with patch("xlsx_tools.base_xlsx_tool.upload_file") as mock_upload:
+        fake_cfg = MagicMock(spec=Config)
+        fake_cfg.xlsx_recalc_enabled = True
+        fake_cfg.xlsx_recalc_strict = True
+        fake_cfg.xlsx_default_font = None
+        fake_cfg.xlsx_recalc_timeout_seconds = 30
+
+        with patch("xlsx_tools.base_xlsx_tool.upload_file") as mock_upload, \
+             patch("xlsx_tools.base_xlsx_tool.get_config", return_value=fake_cfg):
             mock_upload.return_value = "fake://circ.xlsx"
             with pytest.raises(RuntimeError) as exc_info:
-                markdown_to_excel(markdown, recalc=True)
+                markdown_to_excel(markdown)
         assert "#CIRC" in str(exc_info.value) or "circular" in str(exc_info.value).lower()
 
     @staticmethod
@@ -292,10 +269,12 @@ class TestCircularDetectionWithoutRecalc:
 
 
 class TestRecalcSkipReasonSurfaced:
-    def test_skip_reason_surfaced_when_recalc_explicit(self):
-        """When recalc=True is explicit but the engine can't complete, the
+    def test_skip_reason_surfaced_when_strict_enabled(self):
+        """When XLSX_RECALC_STRICT=true but the engine can't complete, the
         skip reason should surface in the raised error (so the model can
         rewrite the offending formula)."""
+        from unittest.mock import MagicMock
+        from config import Config
         from xlsx_tools.formula_engine import RecalcResult
 
         markdown = (
@@ -303,24 +282,30 @@ class TestRecalcSkipReasonSurfaced:
             "|---|---|\n"
             "| 1 | =A2*2 |\n"
         )
-        # Force the engine to report a skip (e.g. unsupported function).
         fake_result = RecalcResult(
             recalc_performed=False,
             skip_reason="recalculation engine error: NotImplementedError: XLOOKUP",
         )
+        fake_cfg = MagicMock(spec=Config)
+        fake_cfg.xlsx_recalc_enabled = True
+        fake_cfg.xlsx_recalc_strict = True
+        fake_cfg.xlsx_default_font = None
+        fake_cfg.xlsx_recalc_timeout_seconds = 30
+
         with patch("xlsx_tools.base_xlsx_tool.upload_file") as mock_upload, \
+             patch("xlsx_tools.base_xlsx_tool.get_config", return_value=fake_cfg), \
              patch(
                  "xlsx_tools.formula_engine.recalculate_workbook",
                  return_value=fake_result,
              ):
             mock_upload.return_value = "fake://skip.xlsx"
             with pytest.raises(RuntimeError) as exc_info:
-                markdown_to_excel(markdown, recalc=True)
+                markdown_to_excel(markdown)
         msg = str(exc_info.value)
         assert "XLOOKUP" in msg or "could not be completed" in msg.lower()
 
-    def test_skip_reason_not_fatal_when_recalc_default(self):
-        """Defaulted recalc (None) → skip reason logged but file delivered."""
+    def test_skip_reason_not_fatal_when_strict_disabled(self):
+        """With XLSX_RECALC_STRICT=false (default), skip reason is logged but file delivered."""
         from xlsx_tools.formula_engine import RecalcResult
 
         markdown = (
@@ -338,7 +323,7 @@ class TestRecalcSkipReasonSurfaced:
                  return_value=fake_result,
              ):
             mock_upload.return_value = "fake://skip-delivered.xlsx"
-            # recalc=None (default) → must not raise.
+            # strict=False (default) → must not raise.
             result = markdown_to_excel(markdown)
         assert result == "fake://skip-delivered.xlsx"
 
@@ -411,7 +396,7 @@ class TestSheetNameCollisionWarning:
         with patch("xlsx_tools.base_xlsx_tool.upload_file") as mock_upload:
             mock_upload.return_value = "fake://collision.xlsx"
             with caplog.at_level(logging.WARNING, logger="xlsx_tools.base_xlsx_tool"):
-                markdown_to_excel(markdown, recalc=False)
+                markdown_to_excel(markdown)
         joined = "\n".join(r.getMessage() for r in caplog.records)
         assert "collide" in joined.lower() or "Model" in joined
 
@@ -425,7 +410,7 @@ class TestSheetNameCollisionWarning:
         with patch("xlsx_tools.base_xlsx_tool.upload_file") as mock_upload:
             mock_upload.return_value = "fake://distinct.xlsx"
             with caplog.at_level(logging.WARNING, logger="xlsx_tools.base_xlsx_tool"):
-                markdown_to_excel(markdown, recalc=False)
+                markdown_to_excel(markdown)
         collisions = [
             r for r in caplog.records
             if "collide" in r.getMessage().lower()
@@ -464,7 +449,7 @@ class TestCrossSheetFunctionRangePrefix:
             "## Sheet: Summary\n\n"
             "| Total |\n|---|\n| =Data!T1.SUM(A[0]:A[2]) |\n"
         )
-        data = _intercept_upload(markdown, recalc=True)
+        data = _intercept_upload(markdown)
         wb = load_workbook(io.BytesIO(data), data_only=True)
         assert wb["Summary"]["A2"].value == 60
 
@@ -533,7 +518,7 @@ class TestCurrentRowRelativeRefs:
             "| 20 | =B[-1]+A[0] |\n"
             "| 30 | =B[-1]+A[0] |\n"
         )
-        data = _intercept_upload(markdown, recalc=True)
+        data = _intercept_upload(markdown)
         wb = load_workbook(io.BytesIO(data), data_only=True)
         ws = wb.active
         assert ws["B2"].value == 10
@@ -549,7 +534,7 @@ class TestCurrentRowRelativeRefs:
             "| 10 | =A[0]*2 |\n"
             "| 15 | =A[0]*2 |\n"
         )
-        data = _intercept_upload(markdown, recalc=True)
+        data = _intercept_upload(markdown)
         wb = load_workbook(io.BytesIO(data), data_only=True)
         ws = wb.active
         assert ws["B2"].value == 10
@@ -557,59 +542,6 @@ class TestCurrentRowRelativeRefs:
         assert ws["B4"].value == 30
 
 
-class TestYearAsStringRestriction:
-    """Financial mode treats only plausible 4-digit years as text, not all
-    4-digit numbers (a revenue of 1500 must stay numeric)."""
-
-    def test_year_string_in_range(self):
-        from xlsx_tools.helpers import _is_year_string
-        for y in ["2024", "2025", "2099", "2100", "1900", "2050"]:
-            assert _is_year_string(y), f"{y} should be a year"
-
-    def test_year_string_out_of_range(self):
-        from xlsx_tools.helpers import _is_year_string
-        for n in ["1500", "1899", "2101", "5000", "9999", "1234"]:
-            assert not _is_year_string(n), f"{n} should NOT be a year"
-
-    def test_non_four_digit_not_year(self):
-        from xlsx_tools.helpers import _is_year_string
-        for v in ["2050E", "2024A", "abc", "12345", "123"]:
-            assert not _is_year_string(v)
-
-    def test_revenue_4_digit_stays_numeric_in_financial_mode(self):
-        """A 4-digit revenue value must remain a number, not become text."""
-        markdown = "| Revenue |\n|---|\n| 1500 |\n| 2500 |\n"
-        data = _intercept_upload(markdown, financial_modeling=True, recalc=False)
-        ws = load_workbook(io.BytesIO(data)).active
-        assert isinstance(ws["A2"].value, (int, float))
-        assert ws["A2"].value == 1500
-        assert ws["A2"].number_format == "#,##0;(#,##0);-"
-        assert isinstance(ws["A3"].value, (int, float))
-
-    def test_year_column_stays_text_in_financial_mode(self):
-        """Genuine years (2024, 2025) must still be text labels."""
-        markdown = "| Year |\n|---|\n| 2024 |\n| 2025 |\n"
-        data = _intercept_upload(markdown, financial_modeling=True, recalc=False)
-        ws = load_workbook(io.BytesIO(data)).active
-        assert ws["A2"].value == "2024"
-        assert isinstance(ws["A2"].value, str)
-        assert ws["A3"].value == "2025"
-
-    def test_sum_over_4_digit_revenue_correct_in_financial_mode(self):
-        """End-to-end: SUM over 4-digit revenue cells must total correctly,
-        even when the file is later opened in real Excel (which does NOT
-        coerce text-numerics in SUM the way the recalc engine does)."""
-        markdown = (
-            "| Revenue |\n|---|\n| 1500 |\n| 2500 |\n| 3500 |\n| =SUM(A2:A4) |\n"
-        )
-        data = _intercept_upload(markdown, financial_modeling=True, recalc=True)
-        wb = load_workbook(io.BytesIO(data), data_only=True)
-        ws = wb.active
-        # All inputs must be numeric (not text) so Excel-native SUM works.
-        assert isinstance(ws["A2"].value, (int, float))
-        assert isinstance(ws["A3"].value, (int, float))
-        assert isinstance(ws["A4"].value, (int, float))
-        assert ws["A5"].value == 7500
 
 
 # ── Formula references inside typed columns ──────────────────────────────────
@@ -627,7 +559,7 @@ class TestFormulaRefsInTypedColumns:
             "| Item | Qty |\n|---|---|\n"
             "| A | 10 |\n| B | 20 |\n| Total | =SUM(B[-2]:B[-1]) |\n"
         )
-        data = _intercept_upload(markdown, recalc=True)
+        data = _intercept_upload(markdown)
         wbf = load_workbook(io.BytesIO(data))
         wbv = load_workbook(io.BytesIO(data), data_only=True)
         # Reference must be resolved, not left as the literal B[-2]:B[-1].
@@ -640,7 +572,7 @@ class TestFormulaRefsInTypedColumns:
             "| Item | Qty |\n|---|---|\n"
             "| A | 10 |\n| Total | =T1.B[0] |\n"
         )
-        data = _intercept_upload(markdown, recalc=False)
+        data = _intercept_upload(markdown)
         wbf = load_workbook(io.BytesIO(data))
         # T1.B[0] → first data row of T1 = B2.
         assert wbf.active["B3"].value == "=B2"
@@ -653,7 +585,7 @@ class TestFormulaRefsInTypedColumns:
             "<!-- types: currency:$ -->\n"
             "| Total |\n|---|\n| =Data!T1.A[0] |\n"
         )
-        data = _intercept_upload(markdown, recalc=True)
+        data = _intercept_upload(markdown)
         wbf = load_workbook(io.BytesIO(data))
         wbv = load_workbook(io.BytesIO(data), data_only=True)
         assert wbf["Sum"]["A2"].value == "=Data!A2"
@@ -668,14 +600,14 @@ class TestFormulaRefsInTypedColumns:
             "| Item | Qty |\n|---|---|\n"
             "| A | 10 |\n| Total | =SUM(B2:B2) |\n"
         )
-        data = _intercept_upload(markdown, recalc=True)
+        data = _intercept_upload(markdown)
         wbv = load_workbook(io.BytesIO(data), data_only=True)
         assert wbv.active["B3"].value == 10
 
     def test_typed_relative_formula_does_not_abort_recalc(self):
-        """recalc=True must NOT fail the whole call on a typed-column
-        relative formula (an unresolved '=SUM(B[-1])' would otherwise raise
-        in the engine)."""
+        """With recalc enabled, a typed-column relative formula must resolve
+        correctly and not fail the call (an unresolved '=SUM(B[-1])' would
+        otherwise raise in the engine)."""
         markdown = (
             "<!-- types: text, currency:$ -->\n"
             "| Item | Amount |\n|---|---|\n"
@@ -684,7 +616,7 @@ class TestFormulaRefsInTypedColumns:
         with patch("xlsx_tools.base_xlsx_tool.upload_file") as mock_upload:
             mock_upload.return_value = "fake://typed.xlsx"
             # Must not raise.
-            result = markdown_to_excel(markdown, recalc=True)
+            result = markdown_to_excel(markdown)
         assert result == "fake://typed.xlsx"
 
     def test_relative_ref_resolved_in_percent_column(self):
@@ -695,7 +627,7 @@ class TestFormulaRefsInTypedColumns:
             "| Metric | Rate |\n|---|---|\n"
             "| Y1 | 10% |\n| Y2 | 30% |\n| Avg | =AVERAGE(B[-2]:B[-1]) |\n"
         )
-        data = _intercept_upload(markdown, recalc=True)
+        data = _intercept_upload(markdown)
         wbf = load_workbook(io.BytesIO(data))
         wbv = load_workbook(io.BytesIO(data), data_only=True)
         assert wbf.active["B4"].value == "=AVERAGE(B2:B3)"
@@ -710,7 +642,7 @@ class TestFormulaRefsInTypedColumns:
             "| Comp | EV/EBITDA |\n|---|---|\n"
             "| A | 12.0x |\n| B | 10.0x |\n| Mean | =AVERAGE(B[-2]:B[-1]) |\n"
         )
-        data = _intercept_upload(markdown, recalc=True)
+        data = _intercept_upload(markdown)
         wbf = load_workbook(io.BytesIO(data))
         wbv = load_workbook(io.BytesIO(data), data_only=True)
         assert wbf.active["B4"].value == "=AVERAGE(B2:B3)"
@@ -725,7 +657,7 @@ class TestFormulaRefsInTypedColumns:
             "| Check | Flag |\n|---|---|\n"
             "| A | yes |\n| B | =NOT(B[-1]) |\n"
         )
-        data = _intercept_upload(markdown, recalc=True)
+        data = _intercept_upload(markdown)
         wbf = load_workbook(io.BytesIO(data))
         wbv = load_workbook(io.BytesIO(data), data_only=True)
         assert wbf.active["B3"].value == "=NOT(B2)"
@@ -740,7 +672,7 @@ class TestFormulaRefsInTypedColumns:
             "| Event | When |\n|---|---|\n"
             "| Start | 2024-01-01 |\n| NextDay | =B[-1]+1 |\n"
         )
-        data = _intercept_upload(markdown, recalc=True)
+        data = _intercept_upload(markdown)
         wbf = load_workbook(io.BytesIO(data))
         wbv = load_workbook(io.BytesIO(data), data_only=True)
         assert wbf.active["B3"].value == "=B2+1"
@@ -789,7 +721,7 @@ class TestTypesDirectiveCommaInFormat:
             "| Amount | Code |\n|---|---|\n"
             "| 1234 | 007 |\n"
         )
-        data = _intercept_upload(markdown, recalc=False)
+        data = _intercept_upload(markdown)
         ws = load_workbook(io.BytesIO(data)).active
         # Format must survive intact (must not be truncated to '#').
         assert ws["A2"].number_format == "#,##0"
@@ -827,88 +759,34 @@ class TestCurrencyIntegerSectionVariant:
             "<!-- types: currency:$:integer:dash -->\n"
             "| Revenue ($mm) |\n|---|\n| $1500 |\n"
         )
-        data = _intercept_upload(markdown, recalc=False)
+        data = _intercept_upload(markdown)
         ws = load_workbook(io.BytesIO(data)).active
         assert ws["A2"].value == 1500.0
         assert ws["A2"].number_format == "$#,##0;($#,##0);-"
 
 
-# ── Typed columns honor the financial dash default ───────────────────────────
+# ── Typed column format defaults ─────────────────────────────────────────────
 
 
-class TestTypedColumnsFinancialDash:
-    """Under financial_modeling, a typed number/currency/percent column with
-    no explicit dash/parens variant must still use the dash convention
-    (zeros as '-', negatives in parens) — matching the untyped numeric
-    path. An explicit variant or literal format always wins."""
+class TestTypedColumnFormats:
+    """Typed columns produce the expected formats without any financial flag."""
 
-    def test_typed_number_gets_dash_in_financial_mode(self):
+    def test_typed_number_uses_plain_format(self):
+        """Without dash/parens variant, typed `number` columns keep the plain format."""
         markdown = "<!-- types: number -->\n| X |\n|---|\n| 100000 |\n"
-        data = _intercept_upload(markdown, financial_modeling=True, recalc=False)
-        ws = load_workbook(io.BytesIO(data)).active
-        assert ws["A2"].number_format == "#,##0;(#,##0);-"
-
-    def test_typed_currency_gets_dash_in_financial_mode(self):
-        markdown = "<!-- types: currency:$ -->\n| X |\n|---|\n| 100000 |\n"
-        data = _intercept_upload(markdown, financial_modeling=True, recalc=False)
-        ws = load_workbook(io.BytesIO(data)).active
-        assert ws["A2"].number_format == "$#,##0.00;($#,##0.00);-"
-
-    def test_typed_percent_gets_dash_in_financial_mode(self):
-        markdown = "<!-- types: percent -->\n| X |\n|---|\n| 50 |\n"
-        data = _intercept_upload(markdown, financial_modeling=True, recalc=False)
-        ws = load_workbook(io.BytesIO(data)).active
-        assert ws["A2"].number_format == "0.0%;(0.0%);-"
-
-    def test_typed_number_no_dash_without_financial_mode(self):
-        """Without financial_modeling, typed columns keep the plain format."""
-        markdown = "<!-- types: number -->\n| X |\n|---|\n| 100000 |\n"
-        data = _intercept_upload(markdown, recalc=False)
+        data = _intercept_upload(markdown)
         ws = load_workbook(io.BytesIO(data)).active
         assert ws["A2"].number_format == "#,##0"
 
-    def test_explicit_literal_format_wins_in_financial_mode(self):
-        """A literal number format is the user's explicit choice and is not
-        overridden by the financial dash default."""
-        markdown = "<!-- types: number:#,##0.000 -->\n| X |\n|---|\n| 1.5 |\n"
-        data = _intercept_upload(markdown, financial_modeling=True, recalc=False)
-        ws = load_workbook(io.BytesIO(data)).active
-        assert ws["A2"].number_format == "#,##0.000"
-
-    def test_explicit_percent_integer_keeps_no_decimals_with_dash(self):
-        """percent:integer in financial mode keeps the no-decimals opt-out
-        but still gains the dash sections."""
-        markdown = "<!-- types: percent:integer -->\n| X |\n|---|\n| 50 |\n"
-        data = _intercept_upload(markdown, financial_modeling=True, recalc=False)
-        ws = load_workbook(io.BytesIO(data)).active
-        assert ws["A2"].number_format == "0%;(0%);-"
-
-    def test_explicit_dash_variant_unchanged_in_financial_mode(self):
+    def test_typed_number_with_explicit_dash_variant(self):
         markdown = "<!-- types: number:dash -->\n| X |\n|---|\n| 100000 |\n"
-        data = _intercept_upload(markdown, financial_modeling=True, recalc=False)
+        data = _intercept_upload(markdown)
         ws = load_workbook(io.BytesIO(data)).active
         assert ws["A2"].number_format == "#,##0;(#,##0);-"
 
-    def test_formula_in_typed_percent_column_gets_dash_in_financial_mode(self):
-        """A FORMULA cell in a typed percent column also picks up the dash
-        format under financial_modeling (formula cells use the separate
-        _number_format_for_type path)."""
-        markdown = (
-            "<!-- types: text, percent -->\n"
-            "| Y | Margin |\n|---|---|\n"
-            "| 2024 | =1/2 |\n"
-        )
-        data = _intercept_upload(markdown, financial_modeling=True, recalc=False)
+    def test_typed_number_literal_format_respected(self):
+        markdown = "<!-- types: number:#,##0.000 -->\n| X |\n|---|\n| 1.5 |\n"
+        data = _intercept_upload(markdown)
         ws = load_workbook(io.BytesIO(data)).active
-        assert ws["B2"].number_format == "0.0%;(0.0%);-"
-
-    def test_formula_in_typed_currency_column_gets_dash_in_financial_mode(self):
-        markdown = (
-            "<!-- types: text, currency:$:integer -->\n"
-            "| Item | Amount |\n|---|---|\n"
-            "| A | $100 |\n| Total | =B[-1] |\n"
-        )
-        data = _intercept_upload(markdown, financial_modeling=True, recalc=False)
-        ws = load_workbook(io.BytesIO(data)).active
-        assert ws["B3"].number_format == "$#,##0;($#,##0);-"
+        assert ws["A2"].number_format == "#,##0.000"
 

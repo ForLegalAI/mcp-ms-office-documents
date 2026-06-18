@@ -304,6 +304,20 @@ class Config(BaseModel):
             "Toggled via the XLSX_RECALC_ENABLED environment variable."
         ),
     )
+    xlsx_recalc_strict: bool = Field(
+        default=False,
+        description=(
+            "When True, any formula errors detected during recalculation "
+            "(#REF!, #DIV/0!, #VALUE!, #NAME?, #NULL!, #NUM!, #N/A, or "
+            "circular references reported as #CIRC!) cause the tool call "
+            "to fail with a descriptive error so the caller can fix the "
+            "formulas and retry. When False (default), errors are logged "
+            "but the file is still delivered — misconfiguration never "
+            "blocks document generation. Only has an effect when "
+            "XLSX_RECALC_ENABLED is also True. Toggled via the "
+            "XLSX_RECALC_STRICT environment variable."
+        ),
+    )
     xlsx_default_font: Optional[str] = Field(
         default=None,
         description=(
@@ -435,6 +449,14 @@ class Config(BaseModel):
         else:
             xlsx_recalc_enabled = cls._parse_bool(raw_recalc)
 
+        # XLSX strict mode (default off). When True, formula errors during
+        # recalculation cause the tool call to fail rather than log-and-deliver.
+        raw_recalc_strict = os.environ.get("XLSX_RECALC_STRICT")
+        if raw_recalc_strict is None or not raw_recalc_strict.strip():
+            xlsx_recalc_strict = False  # default-off
+        else:
+            xlsx_recalc_strict = cls._parse_bool(raw_recalc_strict)
+
         # Optional default font for generated workbooks. Empty/whitespace
         # → None (use openpyxl's default Calibri).
         xlsx_default_font = os.environ.get("XLSX_DEFAULT_FONT")
@@ -463,6 +485,7 @@ class Config(BaseModel):
                 run_blocking_by_asyncio_thread_enabled=run_blocking_by_asyncio_thread_enabled,
                 run_blocking_max_workers=run_blocking_max_workers,
                 xlsx_recalc_enabled=xlsx_recalc_enabled,
+                xlsx_recalc_strict=xlsx_recalc_strict,
                 xlsx_default_font=xlsx_default_font,
                 xlsx_recalc_timeout_seconds=xlsx_recalc_timeout_seconds,
             )
