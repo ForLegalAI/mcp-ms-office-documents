@@ -9,7 +9,13 @@ ARG PYTHON_VERSION=3.12.8
 # =============================================================================
 # Stage 1: Builder - Install dependencies
 # =============================================================================
-FROM python:${PYTHON_VERSION}-alpine AS builder
+# Using -slim (Debian/glibc) rather than -alpine (musl): the `formulas`
+# library pulls in numpy and scipy, which publish pre-built wheels only
+# for glibc. On Alpine these compile from source and need ~400MB of
+# build tools (gcc, gfortran, musl-dev, linux-headers); on slim the
+# wheels install directly with no build step, yielding faster builds
+# and a smaller final image.
+FROM python:${PYTHON_VERSION}-slim AS builder
 
 # Prevents Python from writing pyc files.
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -31,7 +37,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # =============================================================================
 # Stage 2: Runtime - Final lean image
 # =============================================================================
-FROM python:${PYTHON_VERSION}-alpine AS runtime
+FROM python:${PYTHON_VERSION}-slim AS runtime
 
 # Prevents Python from writing pyc files.
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -49,14 +55,9 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Create a non-privileged user that the app will run under.
 # See https://docs.docker.com/go/dockerfile-user-best-practices/
 ARG UID=10001
-RUN adduser \
-    --disabled-password \
-    --gecos "" \
-    --home "/nonexistent" \
-    --shell "/sbin/nologin" \
-    --no-create-home \
-    --uid "${UID}" \
-    appuser
+RUN groupadd --system --gid "${UID}" appuser \
+    && useradd --system --uid "${UID}" --gid appuser \
+       --home-dir /nonexistent --shell /usr/sbin/nologin appuser
 
 # Create directories for output, custom templates, and config
 RUN mkdir -p output custom_templates config

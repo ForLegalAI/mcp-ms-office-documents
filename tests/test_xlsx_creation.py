@@ -367,8 +367,10 @@ class TestAdjustFormulaReferencesUnit:
         result = adjust_formula_references(
             "=Sales!T1.SUM(B[0]:D[0])", 10, {}, all_positions
         )
-        # T1 starts at row 3, data[0] → row 4
-        assert result == "=SUM(Sales!B4:Sales!D4)"
+        # T1 starts at row 3, data[0] → row 4. The sheet prefix appears only
+        # ONCE on the first range endpoint — =SUM(Sales!B4:Sales!D4) is
+        # invalid Excel syntax and yields #VALUE!.
+        assert result == "=SUM(Sales!B4:D4)"
 
     def test_local_reference_still_works(self):
         from xlsx_tools.helpers import adjust_formula_references
@@ -383,15 +385,17 @@ class TestAdjustFormulaReferencesUnit:
         result = adjust_formula_references(
             "=Revenue!T1.B[0]-B[0]", 5, {"T1": 3}, all_positions
         )
-        # Revenue!T1.B[0] → Revenue!B2, B[0] → B4 (current table starts at 3, data[0] = row 4)
-        assert result == "=Revenue!B2-B4"
+        # Revenue!T1.B[0] → Revenue!B2 (table-relative). The local B[0] is a
+        # CURRENT-row reference (per the tool description), so at row 5 it
+        # resolves to B5 — not to the table's first data row.
+        assert result == "=Revenue!B2-B5"
 
 
 class TestNumberFormats:
     """Tests for cell number_format (percent, thousands separator)."""
 
     def test_percent_cells_get_percent_format(self):
-        """Cells with '50%' should be stored as 0.5 with number_format '0%'."""
+        """Cells with '50%' should be stored as 0.5 with number_format '0.0%'."""
         markdown = """| Metric | Rate |
 |--------|------|
 | Growth | 50%  |
@@ -403,9 +407,9 @@ class TestNumberFormats:
         growth_cell = ws.cell(row=2, column=2)
         margin_cell = ws.cell(row=3, column=2)
         assert growth_cell.value == pytest.approx(0.5)
-        assert growth_cell.number_format == '0%'
+        assert growth_cell.number_format == '0.0%'
         assert margin_cell.value == pytest.approx(0.08)
-        assert margin_cell.number_format == '0%'
+        assert margin_cell.number_format == '0.0%'
 
     def test_non_percent_number_no_percent_format(self):
         """A plain decimal like 0.5 (without '%') should NOT get '0%' format."""
@@ -417,7 +421,7 @@ class TestNumberFormats:
         ws = wb.active
         cell = ws.cell(row=2, column=2)
         assert cell.value == pytest.approx(0.5)
-        assert cell.number_format != '0%'
+        assert cell.number_format != '0.0%'
 
     def test_thousands_separator_format(self):
         """Values >= 1000 should get '#,##0' number format."""
@@ -859,7 +863,7 @@ class TestTypesDirectiveAdvanced:
     """Advanced tests for <!-- types: ... --> directive edge cases and interactions."""
 
     def test_percent_type(self):
-        """Percent directive converts '75%' to 0.75 with 0% format."""
+        """Percent directive converts '75%' to 0.75 with 0.0% format (CFA convention)."""
         markdown = """<!-- types: text, percent -->
 | Task | Progress |
 |------|----------|
@@ -870,7 +874,7 @@ class TestTypesDirectiveAdvanced:
         wb = _create_workbook_from_markdown(markdown)
         ws = wb.active
         assert ws.cell(row=2, column=2).value == pytest.approx(0.75)
-        assert ws.cell(row=2, column=2).number_format == '0%'
+        assert ws.cell(row=2, column=2).number_format == '0.0%'
         assert ws.cell(row=3, column=2).value == pytest.approx(1.0)
         assert ws.cell(row=4, column=2).value == pytest.approx(0.0)
 
@@ -1194,7 +1198,7 @@ class TestApplyColumnTypeUnit:
         result = _apply_column_type(cell, "45%", "percent")
         assert result is True
         assert cell.value == pytest.approx(0.45)
-        assert cell.number_format == '0%'
+        assert cell.number_format == '0.0%'
 
     def test_none_type_returns_false(self):
         from xlsx_tools.helpers import _apply_column_type

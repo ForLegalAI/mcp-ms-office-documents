@@ -101,7 +101,12 @@ def walk_markdown_lines(lines: list[str]) -> list[LineEvent]:
         # Check for sheet heading
         sheet_match = SHEET_HEADING_PATTERN.match(line)
         if sheet_match:
-            pending_directives = {}  # Directives don't carry across sheets
+            # Directives carry forward across sheet headings. A directive
+            # placed at the top of the markdown (above the first '## Sheet:'
+            # header) is a natural place for workbook-wide options like
+            # `<!-- freeze -->` or column types, and silently dropping it
+            # at the sheet boundary was a common source of confusion
+            # (directives appeared to be ignored with no error).
             sheet_name = _sanitize_sheet_name(sheet_match.group(1).strip())
             is_rename = not first_sheet_named and current_row == 1
 
