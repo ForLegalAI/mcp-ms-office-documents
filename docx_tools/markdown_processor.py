@@ -147,7 +147,7 @@ def _render_code_block(doc, lines, start_idx, fence_match, style_map, collect):
             # Use the mapped paragraph style's font; a run-level override would
             # otherwise always win over the style's monospace font.
             apply_style(para, style_map.code, fallback=None)
-            if para.style is None or para.style.name != style_map.code:
+            if para.style.name != style_map.code:
                 # Mapped style is missing from the template — keep it monospace.
                 run.font.name = _CODE_FONT
         else:

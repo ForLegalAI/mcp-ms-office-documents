@@ -119,6 +119,14 @@ def resolve_ordered_abstract_num_id(doc):
     synthesizes one (degraded mode). Returns ``(None, None)`` if no numbering part is
     available or synthesis fails, so the caller renders lists without restart rather than
     raising.
+
+    Limitation: this searches only the hardcoded ``_ORDERED_LIST_STYLES`` names and is
+    unaware of a custom ``StyleMap.list_number`` mapping. If a template maps
+    ``list_number`` to a name not in ``_ORDERED_LIST_STYLES`` and carries no built-in
+    ``List Number`` style, restart numbering falls back to the synthesized *decimal*
+    format rather than the custom style's format (e.g. Roman numerals or letters). The
+    paragraph style — and thus its appearance — is still applied; only the numeral format
+    of the restarted instance degrades.
     """
     try:
         numbering_root = _numbering_root(doc)
