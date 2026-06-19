@@ -14,6 +14,10 @@ See ``docs/plan-issues-66-67.md`` (Issue #66) for the design rationale.
 import logging
 from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Optional
+
+from docx.table import Table
+from docx.text.paragraph import Paragraph
 
 logger = logging.getLogger(__name__)
 
@@ -132,8 +136,6 @@ def apply_style_to_block_element(doc, element, style_name, fallback="Normal") ->
     been rendered. The element is re-wrapped in its python-docx proxy so the style
     *name* is resolved to a style id correctly. Tables take no paragraph fallback.
     """
-    from docx.text.paragraph import Paragraph
-    from docx.table import Table
     tag = element.tag
     if tag.endswith('}p'):
         apply_style(Paragraph(element, doc._body), style_name, fallback)
@@ -156,7 +158,7 @@ _CONFIG_PATHS = (
     Path("/app/config") / "docx_templates.yaml",
     Path(__file__).resolve().parent.parent / "config" / "docx_templates.yaml",
 )
-_global_cache = {}
+_cached_global_style_map: Optional[StyleMap] = None
 
 
 def load_global_style_map() -> StyleMap:
@@ -165,8 +167,9 @@ def load_global_style_map() -> StyleMap:
     Reads the top-level ``style_mapping`` section. Returns :data:`DEFAULT_STYLE_MAP`
     if no config file or section is present. Result is cached for the process.
     """
-    if "map" in _global_cache:
-        return _global_cache["map"]
+    global _cached_global_style_map
+    if _cached_global_style_map is not None:
+        return _cached_global_style_map
     mapping = {}
     for path in _CONFIG_PATHS:
         try:
@@ -178,6 +181,5 @@ def load_global_style_map() -> StyleMap:
             break
         except Exception:
             logger.warning("Failed to read style_mapping from %s", path, exc_info=True)
-    style_map = build_style_map(mapping)
-    _global_cache["map"] = style_map
-    return style_map
+    _cached_global_style_map = build_style_map(mapping)
+    return _cached_global_style_map

@@ -177,6 +177,11 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
     item's indent (*base_indent*) are siblings at *level*; a more-indented item
     begins a child list one level deeper. This makes any consistent indent unit
     work (2, 3 or 4 spaces, or a tab) rather than assuming a fixed step.
+
+    Ordered-list numbering restarts only when the explicit number ``1`` reappears
+    at a level — NOT on any backward jump. ``1, 2, 1`` restarts; ``3, 4, 3`` does
+    not (Word renders ``3, 4, 5``). A list starting at *N* honours that as the
+    first value via ``startOverride``.
     Returns:
         Tuple of (next_line_index, list_of_elements | None).
     """

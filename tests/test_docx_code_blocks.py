@@ -88,6 +88,26 @@ def test_code_style_is_mappable():
     assert styled and all(p.style.name == "My Code" for p in styled)
 
 
+def test_mapped_code_style_font_not_overridden():
+    """A mapped code style keeps its own font (no run-level Courier New override)."""
+    doc = _new(start_styles=("Mono Code",))
+    start = len(doc.paragraphs)
+    process_markdown_content(doc, "```\nx = 1\n```\n", style_map=build_style_map({"code": "Mono Code"}))
+    p = [p for p in _lines(doc, start) if p.text == "x = 1"][0]
+    assert p.style.name == "Mono Code"
+    # No run-level font is forced, so the style's font wins.
+    assert all(r.font.name is None for r in p.runs)
+
+
+def test_default_code_block_uses_courier_new():
+    """With no mapped code style, runs fall back to the monospace font."""
+    doc = _new()
+    start = len(doc.paragraphs)
+    process_markdown_content(doc, "```\ny = 2\n```\n")
+    p = [p for p in _lines(doc, start) if p.text == "y = 2"][0]
+    assert all(r.font.name == "Courier New" for r in p.runs)
+
+
 def test_code_fence_detected_as_block_markdown():
     # Ensures dynamic-template placeholder values with code render as block content.
     assert contains_block_markdown("```\ncode\n```")

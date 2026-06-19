@@ -146,3 +146,19 @@ def test_resolve_uses_list_number_style_abstract():
     style_num = style_el.xpath('.//w:numPr/w:numId/@w:val')[0]
     expected = numbering.num_having_numId(int(style_num)).abstractNumId.val
     assert str(abstract_id) == str(expected)
+
+
+def test_resolve_returns_str_abstract_id():
+    """All resolver paths return a str abstract id (consistent type)."""
+    doc = _new_doc_with_default_styles()
+    abstract_id, _ = resolve_ordered_abstract_num_id(doc)
+    assert isinstance(abstract_id, str)
+
+
+def test_ordered_capture_pattern_agrees_with_detection_on_empty_item():
+    """ORDERED_LIST_CAPTURE_PATTERN matches whenever ORDERED_LIST_PATTERN does."""
+    from docx_tools.patterns import ORDERED_LIST_PATTERN, ORDERED_LIST_CAPTURE_PATTERN
+    s = "1. "  # marker with no item text
+    assert ORDERED_LIST_PATTERN.match(s)
+    m = ORDERED_LIST_CAPTURE_PATTERN.match(s)
+    assert m and m.group(1) == "1" and m.group(2) == ""

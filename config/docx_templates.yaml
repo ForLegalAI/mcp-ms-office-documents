@@ -23,11 +23,11 @@
 #
 # List styles (used for markdown lists):
 #   - List Bullet      (- item, * item, + item) - top level
-#   - List Bullet 2    (nested bullet, 3 spaces indent)
-#   - List Bullet 3    (deeply nested bullet, 6 spaces indent)
+#   - List Bullet 2    (nested bullet — indent child items one level)
+#   - List Bullet 3    (deeply nested bullet — indent two levels)
 #   - List Number      (1. item) - top level
-#   - List Number 2    (nested numbered, 3 spaces indent)
-#   - List Number 3    (deeply nested numbered, 6 spaces indent)
+#   - List Number 2    (nested numbered — indent child items one level)
+#   - List Number 3    (deeply nested numbered — indent two levels)
 #
 # Other styles:
 #   - Quote            (> blockquote text) - only in base tool
@@ -63,9 +63,10 @@
 #     1. First item
 #     2. Second item
 #
-#   Bullet points (- , * or + ; nest with 3-space indent):
+#   Bullet points (- , * or + ; nest by indenting child items — any
+#   consistent unit works: 2, 3 or 4 spaces, or a tab):
 #     - Item one
-#        - Sub item
+#       - Sub item
 #
 #   Block quotes:
 #     > Quoted text (uses the "Quote" style)

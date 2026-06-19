@@ -15,8 +15,10 @@ UNORDERED_LIST_PATTERN = re.compile(r'^[-*+]\s+')
 # Capture variants used by process_list_items() to extract the item text.
 # The ordered pattern captures the explicit number (group 1) so the renderer can
 # restart numbering when "1." reappears at a level; group 2 is the item text.
-ORDERED_LIST_CAPTURE_PATTERN = re.compile(r'^(\d+)\.\s+(.+)')
-UNORDERED_LIST_CAPTURE_PATTERN = re.compile(r'^[-*+]\s+(.+)')
+# Item text is (.*) — matching the detection patterns above — so a marker with no
+# text (e.g. "1." or "-") still captures (as empty) rather than failing the match.
+ORDERED_LIST_CAPTURE_PATTERN = re.compile(r'^(\d+)\.\s+(.*)')
+UNORDERED_LIST_CAPTURE_PATTERN = re.compile(r'^[-*+]\s+(.*)')
 # Comment directive: <!-- key --> or <!-- key: value --> placed on its own line
 # directly above the block it modifies. One mechanism for all block directives
 # (borderless, widths, style, …). Group 1 = key, group 2 = optional value.

@@ -27,8 +27,19 @@ _FALLBACK_INDENT_STEP = 360  # 0.25"
 
 
 def _numbering_root(doc):
-    """Return the ``<w:numbering>`` root element, creating the part if absent."""
-    return doc.part.numbering_part.element
+    """Return the ``<w:numbering>`` root element.
+
+    python-docx's ``numbering_part`` normally materialises an (empty) part on
+    access, but guard against a missing part so the caller can degrade instead
+    of raising deep inside list rendering.
+    """
+    numbering_part = doc.part.numbering_part
+    if numbering_part is None:
+        raise RuntimeError(
+            "Document has no numbering part; ordered-list restart needs a template "
+            "that defines at least one list style (e.g. 'List Number')."
+        )
+    return numbering_part.element
 
 
 def _abstract_id_from_style(doc, numbering_root, style_name):
@@ -44,7 +55,8 @@ def _abstract_id_from_style(doc, numbering_root, style_name):
         num = numbering_root.num_having_numId(int(num_ids[0]))
     except (KeyError, ValueError):
         return None
-    return num.abstractNumId.val
+    # Normalise to str so all three resolver paths return the same type.
+    return str(num.abstractNumId.val)
 
 
 def _find_decimal_abstract(numbering_root):
@@ -71,18 +83,23 @@ def _create_decimal_abstract(numbering_root):
     multi = OxmlElement('w:multiLevelType')
     multi.set(qn('w:val'), 'multilevel')
     abstract.append(multi)
+    def _el(tag, **attrs):
+        """Build a ``w:``-namespaced OxmlElement with ``w:``-namespaced attributes."""
+        el = OxmlElement(tag)
+        for key, value in attrs.items():
+            el.set(qn('w:' + key), value)
+        return el
+
     for ilvl in range(3):
-        lvl = OxmlElement('w:lvl')
-        lvl.set(qn('w:ilvl'), str(ilvl))
-        start = OxmlElement('w:start'); start.set(qn('w:val'), '1'); lvl.append(start)
-        fmt = OxmlElement('w:numFmt'); fmt.set(qn('w:val'), 'decimal'); lvl.append(fmt)
-        text = OxmlElement('w:lvlText'); text.set(qn('w:val'), '%%%d.' % (ilvl + 1)); lvl.append(text)
-        jc = OxmlElement('w:lvlJc'); jc.set(qn('w:val'), 'left'); lvl.append(jc)
+        lvl = _el('w:lvl', ilvl=str(ilvl))
+        lvl.append(_el('w:start', val='1'))
+        lvl.append(_el('w:numFmt', val='decimal'))
+        lvl.append(_el('w:lvlText', val='%%%d.' % (ilvl + 1)))
+        lvl.append(_el('w:lvlJc', val='left'))
         pPr = OxmlElement('w:pPr')
-        ind = OxmlElement('w:ind')
-        ind.set(qn('w:left'), str(_FALLBACK_INDENT_STEP * (ilvl + 1)))
-        ind.set(qn('w:hanging'), str(_FALLBACK_INDENT_STEP))
-        pPr.append(ind)
+        pPr.append(_el('w:ind',
+                       left=str(_FALLBACK_INDENT_STEP * (ilvl + 1)),
+                       hanging=str(_FALLBACK_INDENT_STEP)))
         lvl.append(pPr)
         abstract.append(lvl)
 
@@ -99,9 +116,16 @@ def resolve_ordered_abstract_num_id(doc):
 
     Prefers the abstract definition backing the ``List Number`` style so restarted lists
     keep the template's numbering format; falls back to any decimal definition, and finally
-    synthesizes one (degraded mode). Returns ``(None, root)`` only if synthesis itself fails.
+    synthesizes one (degraded mode). Returns ``(None, None)`` if no numbering part is
+    available or synthesis fails, so the caller renders lists without restart rather than
+    raising.
     """
-    numbering_root = _numbering_root(doc)
+    try:
+        numbering_root = _numbering_root(doc)
+    except RuntimeError:
+        logger.warning("No numbering part available; ordered lists will not restart.",
+                       exc_info=True)
+        return None, None
     for style_name in _ORDERED_LIST_STYLES:
         abstract_id = _abstract_id_from_style(doc, numbering_root, style_name)
         if abstract_id is not None:
@@ -114,7 +138,7 @@ def resolve_ordered_abstract_num_id(doc):
     except Exception:
         logger.warning("Could not synthesize a numbering definition; "
                        "ordered lists will not restart.", exc_info=True)
-        return None, numbering_root
+        return None, None
 
 
 def new_restarted_num(numbering_root, abstract_num_id, level, start=1):

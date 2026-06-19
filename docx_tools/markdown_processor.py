@@ -141,11 +141,14 @@ def _render_code_block(doc, lines, start_idx, fence_match, style_map, collect):
             j += 1  # consume the closing fence
             break
         para = doc.add_paragraph()
-        if style_map.code:
-            apply_style(para, style_map.code, fallback=None)
         # add_run preserves leading/trailing whitespace via xml:space="preserve"
         run = para.add_run(lines[j])
-        run.font.name = _CODE_FONT
+        if style_map.code:
+            # Use the mapped paragraph style's font; a run-level override would
+            # otherwise always win over the style's monospace font.
+            apply_style(para, style_map.code, fallback=None)
+        else:
+            run.font.name = _CODE_FONT
         collect(para._p)
         j += 1
     return j
@@ -279,10 +282,11 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
             if idx >= len(lines):
                 return idx, elements  # directives with nothing to attach to → no-op
             body = doc._body._body
-            # Snapshot existing children (holding the proxies alive so lxml keeps a
-            # stable identity for them); new elements are inserted before the trailing
-            # <w:sectPr>, so positional slicing would be unreliable.
-            existing = None if return_element else list(body)
+            # Snapshot existing children as a set (holding the proxies alive so lxml
+            # keeps stable identities, and giving O(1) membership). New elements are
+            # inserted before the trailing <w:sectPr>, so positional slicing would be
+            # unreliable.
+            existing = None if return_element else set(body)
             new_idx, block_elems = process_markdown_block(
                 doc, lines, idx, return_element=return_element, style_map=style_map,
                 directives=collected,
@@ -291,7 +295,7 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
             style_name = collected.get('style')
             if style_name:
                 produced = (block_elems if return_element
-                            else [el for el in list(body) if el not in existing])
+                            else [el for el in body if el not in existing])
                 for el in produced:
                     apply_style_to_block_element(doc, el, style_name)
             if return_element:
