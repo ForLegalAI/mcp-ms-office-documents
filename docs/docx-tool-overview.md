@@ -144,6 +144,12 @@ style map is cached for the process lifetime (config edits need a restart); `---
 page break diverges from standard markdown's thematic-rule meaning (documented, but LLMs
 may emit `---` expecting a rule).
 
+**3.10 Nested emphasis at a `***` boundary.** _(✅ resolved)_ `**bold with *italic***`
+(and the mirror `*italic with **bold***`) left a literal `*` and mis-attributed the rest of
+the line, because the `**bold**` regex couldn't absorb a nested italic whose closing `*`
+abuts the bold close. Fixed in `patterns.py` by allowing a paired `\*[^*]+\*` inside the
+bold alternative (lone `*` still kept literal via regex backtracking).
+
 ---
 
 ## 4. Improvement opportunities (no significant new syntax)

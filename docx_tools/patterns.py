@@ -44,7 +44,7 @@ _BLOCK_PATTERNS = [
 
 _INLINE_FORMAT_RE = re.compile(
     r'(\*{3}(?:[^*]|\*(?!\*{2}))+\*{3}'  # ***bold italic***
-    r'|\*\*(?:[^*]|\*(?!\*))+\*\*'       # **bold**
+    r'|\*\*(?:[^*]|\*[^*]+\*|\*(?!\*))+\*\*'  # **bold** (allows nested *italic*, incl. at the ***close)
     r'|~~.+?~~'                           # ~~strikethrough~~
     r'|==.+?=='                           # ==highlight==
     r'|__(?!_).+?__'                      # __underline__

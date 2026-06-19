@@ -732,6 +732,33 @@ class TestHelpersRegression:
         bold_runs = [r for r in para.runs if r.bold and r.text.strip()]
         assert len(bold_runs) >= 2
 
+    def test_nested_emphasis_at_triple_star_boundary(self):
+        """REGRESSION: nested *italic* whose close abuts the bold close (***).
+
+        ``**bold with *nested italic***`` previously left a literal ``*`` and
+        mis-attributed the rest of the line. The inner italic should render as
+        bold+italic with no stray asterisks.
+        """
+        doc = Document()
+        para = doc.add_paragraph()
+        parse_inline_formatting(
+            "**bold with *nested italic*** or *italic with **nested bold***", para
+        )
+
+        assert "*" not in para.text, f"stray asterisk in {para.text!r}"
+        # The two nested fragments are both bold AND italic.
+        bi = {r.text for r in para.runs if r.bold and r.italic}
+        assert "nested italic" in bi
+        assert "nested bold" in bi
+
+    def test_lone_star_inside_bold_stays_literal(self):
+        """A lone ``*`` inside bold (not a nested emphasis) is kept verbatim."""
+        doc = Document()
+        para = doc.add_paragraph()
+        parse_inline_formatting("**bold with a * lone star**", para)
+        assert para.text == "bold with a * lone star"
+        assert all(r.bold for r in para.runs if r.text.strip())
+
 
 # =============================================================================
 # Comprehensive Visual Test
