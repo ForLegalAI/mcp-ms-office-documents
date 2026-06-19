@@ -77,6 +77,50 @@
 #     |----------|----------|
 #     | Value 1  | Value 2  |
 #   Tables are converted to Word tables with "Table Grid" style.
+#
+# =============================================================================
+# CUSTOM STYLE MAPPING (optional)
+# =============================================================================
+# By default the renderer applies the built-in Word style names listed above.
+# If your template defines styles under different names, map them here so the
+# rendered markdown picks them up — no need to rename styles in Word.
+#
+# A top-level `style_mapping:` (below) applies to every template. Each template
+# may also declare its own `style_mapping:` which overrides the global one for
+# that template only. Unknown style names fall back to the document default
+# (with a logged warning) rather than failing the document.
+#
+# Recognised keys (any subset):
+#   heading_1 … heading_6        replace Heading 1 … Heading 6
+#   list_number / _2 / _3        replace List Number / List Number 2 / 3
+#   list_bullet / _2 / _3        replace List Bullet / List Bullet 2 / 3
+#   quote                        replace Quote
+#   table                        replace Table Grid
+#   normal                       replace Normal
+#
+# Example (uncomment and adjust to your template's style names):
+# style_mapping:
+#   heading_1: "Brand Title"
+#   list_number: "Brand Numbers"
+#   quote: "Brand Quote"
+#   table: "Brand Table"
+#
+# ---------------------------------------------------------------------------
+# Ad-hoc style tag (inside markdown content)
+# ---------------------------------------------------------------------------
+# To apply any style by name to a single block — without adding it to the
+# mapping above — put a style directive on its own line directly before the
+# block. It applies to the next block only (every item of a list; the table):
+#
+#   <!-- style: Callout -->
+#   This paragraph uses the "Callout" style.
+#
+#   <!-- style: Highlights -->
+#   - first bullet
+#   - second bullet
+#
+# An unknown style name falls back to the document default (with a warning)
+# rather than failing the document.
 
 
 templates:
@@ -90,6 +134,10 @@ templates:
     docx_path: letter_template.docx  # Must be in custom_templates/ directory
     annotations:
       title: Formal Letter Generator
+    # Optional per-template style overrides (win over the global style_mapping):
+    # style_mapping:
+    #   list_number: "Letter Numbers"
+    #   quote: "Letter Quote"
     args:
       - name: recipient_name
         type: string

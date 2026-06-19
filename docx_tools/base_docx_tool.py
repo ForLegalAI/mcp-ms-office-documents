@@ -5,12 +5,14 @@ from docx import Document
 from upload_tools import upload_file
 from .document_features import load_templates, set_header_footer, add_toc
 from .markdown_processor import process_markdown_content
+from .style_map import load_global_style_map
 
 logger = logging.getLogger(__name__)
 
 
 def _markdown_to_doc(markdown_content, title=None, author=None, subject=None,
-                     header_text=None, footer_text=None, include_toc=False):
+                     header_text=None, footer_text=None, include_toc=False,
+                     style_map=None):
     """Convert Markdown content to a python-docx Document object.
 
     This is the core conversion logic, separated from upload concerns so it
@@ -53,8 +55,11 @@ def _markdown_to_doc(markdown_content, title=None, author=None, subject=None,
         set_header_footer(doc, footer_text, 'footer')
 
     # Parse markdown content into document
+    if style_map is None:
+        style_map = load_global_style_map()
     try:
-        process_markdown_content(doc, markdown_content, return_elements=False)
+        process_markdown_content(doc, markdown_content, return_elements=False,
+                                 style_map=style_map)
     except Exception as e:
         logger.error(f"Error in parsing markdown: {e}", exc_info=True)
         raise RuntimeError(f"Error in parsing markdown: {e}") from e
@@ -64,7 +69,8 @@ def _markdown_to_doc(markdown_content, title=None, author=None, subject=None,
 
 
 def markdown_to_word(markdown_content, title=None, author=None, subject=None,
-                     header_text=None, footer_text=None, include_toc=False, file_name=None):
+                     header_text=None, footer_text=None, include_toc=False, file_name=None,
+                     style_map=None):
     """Convert Markdown to Word document, save to memory and upload."""
     doc = _markdown_to_doc(
         markdown_content,
@@ -74,6 +80,7 @@ def markdown_to_word(markdown_content, title=None, author=None, subject=None,
         header_text=header_text,
         footer_text=footer_text,
         include_toc=include_toc,
+        style_map=style_map,
     )
 
     # Save the document to BytesIO and upload

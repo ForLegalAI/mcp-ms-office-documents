@@ -47,6 +47,7 @@ from async_runner import run_blocking
 from .inline_formatting import parse_inline_formatting
 from .patterns import contains_block_markdown
 from .markdown_processor import process_markdown_content
+from .style_map import DEFAULT_STYLE_MAP, build_style_map
 from fastmcp.exceptions import ToolError
 
 
@@ -71,7 +72,8 @@ PLACEHOLDER_PATTERN = re.compile(r'\{\{\{?([a-zA-Z_][a-zA-Z0-9_]*)\}?\}\}')
 def _insert_markdown_content_after_paragraph(
     doc: DocxDocument,
     paragraph: Paragraph,
-    content: str
+    content: str,
+    style_map=DEFAULT_STYLE_MAP,
 ) -> None:
     """Insert markdown content (including lists, headings, soft breaks) after a paragraph.
 
@@ -83,10 +85,12 @@ def _insert_markdown_content_after_paragraph(
         doc: The Word document
         paragraph: The paragraph after which to insert content
         content: The markdown content to insert
+        style_map: Style mapping for rendered block content (see StyleMap).
     """
     try:
         # Process content and get detached elements
-        new_elements = process_markdown_content(doc, content, return_elements=True)
+        new_elements = process_markdown_content(doc, content, return_elements=True,
+                                                style_map=style_map)
 
         # Find the paragraph's position in the document body and insert after it
         body = doc._body._body
@@ -116,7 +120,8 @@ def _replace_placeholder_in_paragraph(
     paragraph: Paragraph,
     placeholder: str,
     value: str,
-    doc: DocxDocument = None
+    doc: DocxDocument = None,
+    style_map=DEFAULT_STYLE_MAP,
 ) -> bool:
     """Replace a placeholder in a paragraph with markdown-formatted text.
 
@@ -197,7 +202,7 @@ def _replace_placeholder_in_paragraph(
 
         if has_block_content and doc is not None:
             # Insert block content after this paragraph
-            _insert_markdown_content_after_paragraph(doc, paragraph, value)
+            _insert_markdown_content_after_paragraph(doc, paragraph, value, style_map)
 
             # If there's text after, add it as a run to this paragraph
             if text_after:
@@ -241,7 +246,8 @@ def _replace_placeholder_in_paragraph(
 def _replace_placeholders_in_paragraph(
     paragraph: Paragraph,
     context: Dict[str, str],
-    doc: DocxDocument = None
+    doc: DocxDocument = None,
+    style_map=DEFAULT_STYLE_MAP,
 ) -> None:
     """Replace all placeholders in a paragraph with their values.
 
@@ -282,7 +288,8 @@ def _replace_placeholders_in_paragraph(
             # Try triple brace first, then double brace
             for placeholder in [f'{{{{{{{placeholder_name}}}}}}}', f'{{{{{placeholder_name}}}}}']:
                 if placeholder in paragraph.text:
-                    if _replace_placeholder_in_paragraph(paragraph, placeholder, value, doc):
+                    if _replace_placeholder_in_paragraph(paragraph, placeholder, value, doc,
+                                                         style_map):
                         replaced = True
                         break
 
@@ -297,7 +304,8 @@ def _replace_placeholders_in_paragraph(
 def _replace_placeholders_in_table(
     table: Table,
     context: Dict[str, str],
-    doc: DocxDocument = None
+    doc: DocxDocument = None,
+    style_map=DEFAULT_STYLE_MAP,
 ) -> None:
     """Replace all placeholders in a table.
 
@@ -307,15 +315,18 @@ def _replace_placeholders_in_table(
         table: The table to process
         context: Dictionary mapping placeholder names to their values
         doc: The Word document (not used for tables, as block content not supported)
+        style_map: Style mapping for any rendered inline content.
     """
     for row in table.rows:
         for cell in row.cells:
             for paragraph in cell.paragraphs:
                 # Note: We don't pass doc to avoid inserting lists in table cells
-                _replace_placeholders_in_paragraph(paragraph, context, doc=None)
+                _replace_placeholders_in_paragraph(paragraph, context, doc=None,
+                                                   style_map=style_map)
 
 
-def _replace_placeholders_in_document(doc: DocxDocument, context: Dict[str, str]) -> None:
+def _replace_placeholders_in_document(doc: DocxDocument, context: Dict[str, str],
+                                      style_map=DEFAULT_STYLE_MAP) -> None:
     """Replace all placeholders in the entire document.
 
     Processes:
@@ -329,11 +340,11 @@ def _replace_placeholders_in_document(doc: DocxDocument, context: Dict[str, str]
     """
     # Process main body paragraphs
     for paragraph in doc.paragraphs:
-        _replace_placeholders_in_paragraph(paragraph, context, doc)
+        _replace_placeholders_in_paragraph(paragraph, context, doc, style_map)
 
     # Process tables
     for table in doc.tables:
-        _replace_placeholders_in_table(table, context, doc)
+        _replace_placeholders_in_table(table, context, doc, style_map)
 
     # Process headers and footers
     for section in doc.sections:
@@ -364,9 +375,11 @@ def _replace_placeholders_in_document(doc: DocxDocument, context: Dict[str, str]
         for part in parts:
             for paragraph in part.paragraphs:
                 # Headers/footers: don't support block content
-                _replace_placeholders_in_paragraph(paragraph, context, doc=None)
+                _replace_placeholders_in_paragraph(paragraph, context, doc=None,
+                                                   style_map=style_map)
             for table in part.tables:
-                _replace_placeholders_in_table(table, context, doc=None)
+                _replace_placeholders_in_table(table, context, doc=None,
+                                               style_map=style_map)
 
 
 def register_docx_template_tools_from_yaml(mcp: FastMCP, yaml_path: Path) -> None:
@@ -387,20 +400,25 @@ def register_docx_template_tools_from_yaml(mcp: FastMCP, yaml_path: Path) -> Non
         logger.error("[dynamic-docx] 'templates' key must be a list – skipping.")
         return
 
+    global_style_mapping = cfg.get("style_mapping") or {}
+
     for spec in templates:
         try:
-            _register_single_template(mcp, spec)
+            _register_single_template(mcp, spec, global_style_mapping)
         except Exception as e:
             name = spec.get("name", "<unknown>")
             logger.exception(f"[dynamic-docx] Failed to register template '{name}': {e}")
 
 
-def _register_single_template(mcp: FastMCP, spec: Dict[str, Any]) -> None:
+def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
+                              global_style_mapping: Dict[str, Any] = None) -> None:
     """Register a single DOCX template as an MCP tool.
 
     Args:
         mcp: The FastMCP instance
         spec: The template specification from YAML
+        global_style_mapping: Document-wide ``style_mapping`` overrides; the
+            template's own ``style_mapping`` (if any) takes precedence.
     """
     name = spec.get("name")
     if not name:
@@ -431,6 +449,9 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any]) -> None:
         return
 
     logger.info(f"[dynamic-docx] Using template for {name}: {resolved}")
+
+    # Resolve the style map for this template (per-template overrides global).
+    style_map = build_style_map(global_style_mapping, spec.get("style_mapping"))
 
     # Build Pydantic model fields from args
     fields: Dict[str, Any] = {}
@@ -485,7 +506,8 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any]) -> None:
     # FastMCP awaits the async tool directly, leaving dispatch entirely
     # to our helper — keeping behaviour consistent with the static tools
     # in main.py.
-    def make_tool_fn(_model=model, _template_path=resolved, _name=name):
+    def make_tool_fn(_model=model, _template_path=resolved, _name=name,
+                     _style_map=style_map):
         def _sync_impl(data):
             try:
                 # Load the template document
@@ -496,7 +518,7 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any]) -> None:
                 context = {k: ("" if v is None else str(v)) for k, v in payload.items()}
 
                 # Replace placeholders
-                _replace_placeholders_in_document(doc, context)
+                _replace_placeholders_in_document(doc, context, _style_map)
 
                 # Save to buffer and upload
                 buffer = io.BytesIO()

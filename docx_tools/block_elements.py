@@ -16,6 +16,12 @@ from .patterns import (
 )
 from .inline_formatting import parse_inline_formatting
 from .patterns import _BR_RE
+from .numbering import (
+    resolve_ordered_abstract_num_id,
+    new_restarted_num,
+    apply_numbering,
+)
+from .style_map import apply_style
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +105,8 @@ def _remove_table_borders(table):
         tblPr.remove(existing)
     tblPr.append(borders)
 
-def add_table_to_doc(table_data, doc, col_alignments=None, borderless=False, col_widths=None):
+def add_table_to_doc(table_data, doc, col_alignments=None, borderless=False,
+                     col_widths=None, table_style='Table Grid'):
     """Add table data to Word document.
     Args:
         table_data: List of rows, each a list of cell text strings.
@@ -108,6 +115,8 @@ def add_table_to_doc(table_data, doc, col_alignments=None, borderless=False, col
         borderless: If True, remove all table borders (invisible table).
         col_widths: Optional list of proportional width values per column.
             Values are normalized to sum to 100% of available page width.
+        table_style: Word table style name to apply (falls back to the document
+            default if the named style is missing).
     Returns the created ``Table`` object, or ``None`` when the table could
     not be created (empty data or exception).
     """
@@ -117,14 +126,10 @@ def add_table_to_doc(table_data, doc, col_alignments=None, borderless=False, col
     cols = max(len(row) for row in table_data) if table_data else 0
     try:
         word_table = doc.add_table(rows=rows, cols=cols)
-        word_table.style = 'Table Grid'
-    except Exception as e:
-        logger.warning("Failed to create table with 'Table Grid' style, using default: %s", e)
-        try:
-            word_table = doc.add_table(rows=rows, cols=cols)
-        except Exception as e2:
-            logger.error("Failed to create table: %s", e2, exc_info=True)
-            return None
+    except Exception as e2:
+        logger.error("Failed to create table: %s", e2, exc_info=True)
+        return None
+    apply_style(word_table, table_style, fallback=None)
     if borderless:
         _remove_table_borders(word_table)
     # Apply column widths if specified
@@ -159,16 +164,20 @@ def add_table_to_doc(table_data, doc, col_alignments=None, borderless=False, col
 # Lists
 # ---------------------------------------------------------------------------
 def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
-                       return_elements=False):
+                       return_elements=False, number_styles=None, bullet_styles=None):
     """Process markdown list items with proper Word numbering.
     When *return_elements* is True the created paragraph XML elements are
     removed from the document body and returned so the caller can re-insert
     them elsewhere (used by the template placeholder machinery).
+    *number_styles*/*bullet_styles* override the per-level Word style names
+    (see :class:`docx_tools.style_map.StyleMap`); they default to the built-ins.
     Returns:
         Tuple of (next_line_index, list_of_elements | None).
     """
-    bullet_styles = ['List Bullet', 'List Bullet 2', 'List Bullet 3']
-    number_styles = ['List Number', 'List Number 2', 'List Number 3']
+    if bullet_styles is None:
+        bullet_styles = ('List Bullet', 'List Bullet 2', 'List Bullet 3')
+    if number_styles is None:
+        number_styles = ('List Number', 'List Number 2', 'List Number 3')
     style_array = number_styles if is_ordered else bullet_styles
     style = style_array[min(level, len(style_array) - 1)]
     elements = [] if return_elements else None
@@ -177,6 +186,14 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
     list_capture_pattern = (
         ORDERED_LIST_CAPTURE_PATTERN if is_ordered else UNORDERED_LIST_CAPTURE_PATTERN
     )
+    # Ordered-list numbering restart state (see docx_tools/numbering.py). Each logical
+    # list gets its own <w:num> instance so it counts independently; a new instance is
+    # started for the first item and whenever "1." reappears at this level.
+    abstract_num_id = None
+    numbering_root = None
+    num_resolved = False
+    current_num_id = None
+    items_emitted = 0
     while i < n:
         original_line = lines[i]
         stripped_left = original_line.lstrip()
@@ -188,8 +205,27 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
         list_match = list_capture_pattern.match(line)
         if not list_match:
             break
-        paragraph = doc.add_paragraph(style=style)
-        parse_inline_formatting(list_match.group(1), paragraph)
+        if is_ordered:
+            item_number = int(list_match.group(1))
+            item_text = list_match.group(2)
+        else:
+            item_number = None
+            item_text = list_match.group(1)
+        paragraph = doc.add_paragraph()
+        apply_style(paragraph, style, fallback='Normal')
+        if is_ordered:
+            if current_num_id is None or (item_number == 1 and items_emitted > 0):
+                if not num_resolved:
+                    abstract_num_id, numbering_root = resolve_ordered_abstract_num_id(doc)
+                    num_resolved = True
+                if abstract_num_id is not None:
+                    current_num_id = new_restarted_num(
+                        numbering_root, abstract_num_id, level, start=item_number
+                    )
+            if current_num_id is not None:
+                apply_numbering(paragraph, current_num_id, level)
+        parse_inline_formatting(item_text, paragraph)
+        items_emitted += 1
         if return_elements:
             elements.append(paragraph._p)
             doc._body._body.remove(paragraph._p)
@@ -209,7 +245,8 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
                 is_nested_unordered = bool(UNORDERED_LIST_PATTERN.match(next_line))
                 if is_nested_ordered or is_nested_unordered:
                     i, nested = process_list_items(
-                        lines, i, doc, is_nested_ordered, next_level, return_elements
+                        lines, i, doc, is_nested_ordered, next_level, return_elements,
+                        number_styles=number_styles, bullet_styles=bullet_styles,
                     )
                     if return_elements and nested:
                         elements.extend(nested)

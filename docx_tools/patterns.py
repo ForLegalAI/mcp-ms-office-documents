@@ -13,8 +13,13 @@ import re
 ORDERED_LIST_PATTERN = re.compile(r'^\d+\.\s+')
 UNORDERED_LIST_PATTERN = re.compile(r'^[-*+]\s+')
 # Capture variants used by process_list_items() to extract the item text.
-ORDERED_LIST_CAPTURE_PATTERN = re.compile(r'^\d+\.\s+(.+)')
+# The ordered pattern captures the explicit number (group 1) so the renderer can
+# restart numbering when "1." reappears at a level; group 2 is the item text.
+ORDERED_LIST_CAPTURE_PATTERN = re.compile(r'^(\d+)\.\s+(.+)')
 UNORDERED_LIST_CAPTURE_PATTERN = re.compile(r'^[-*+]\s+(.+)')
+# Ad-hoc style directive: <!-- style: My Style --> applies the named style to the
+# next block (issue #66, part B). Group 1 is the style name.
+STYLE_DIRECTIVE_PATTERN = re.compile(r'^<!--\s*style:\s*(.+?)\s*-->$', re.IGNORECASE)
 HEADING_PATTERN = re.compile(r'^(#{1,6})\s+(.+)$')
 PAGE_BREAK_PATTERN = re.compile(r'^-{3,}\s*$')
 HORIZONTAL_LINE_PATTERN = re.compile(r'^\*{3,}\s*$')

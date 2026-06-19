@@ -11,6 +11,7 @@ from .patterns import (
     TABLE_LINE_PATTERN,
     ORDERED_LIST_PATTERN,
     UNORDERED_LIST_PATTERN,
+    STYLE_DIRECTIVE_PATTERN,
 )
 from .inline_formatting import parse_inline_formatting
 from .block_elements import (
@@ -22,8 +23,15 @@ from .block_elements import (
     detect_alignment,
     process_alignment_block,
 )
+from .style_map import (
+    DEFAULT_STYLE_MAP,
+    apply_style,
+    add_mapped_heading,
+    apply_style_to_block_element,
+)
 logger = logging.getLogger(__name__)
-def process_markdown_content(doc, content, return_elements=False):
+def process_markdown_content(doc, content, return_elements=False,
+                             style_map=DEFAULT_STYLE_MAP):
     """Process full markdown content with all features: spacing, soft breaks, blocks.
     This is the single source of truth for converting a markdown string into
     document elements. Both the base tool and dynamic template placeholder
@@ -72,13 +80,13 @@ def process_markdown_content(doc, content, return_elements=False):
             if first_line.startswith('#'):
                 stripped_hashes = first_line.lstrip('#')
                 level = len(first_line) - len(stripped_hashes)
-                heading = doc.add_heading('', level=min(level, 6))
+                heading = add_mapped_heading(doc, min(level, 6), style_map)
                 parse_inline_formatting(stripped_hashes.strip(), heading)
                 elem = heading._p
             elif first_line.startswith('>'):
                 quote_text = full_text[1:].strip()
                 quote_para = doc.add_paragraph()
-                quote_para.style = 'Quote'
+                apply_style(quote_para, style_map.quote)
                 parse_inline_formatting(quote_text, quote_para)
                 elem = quote_para._p
             else:
@@ -90,11 +98,14 @@ def process_markdown_content(doc, content, return_elements=False):
                 doc._body._body.remove(elem)
             continue
         # --- All other block elements: delegate to block processor ---
-        i, block_elems = process_markdown_block(doc, lines, i, return_element=return_elements)
+        i, block_elems = process_markdown_block(doc, lines, i,
+                                                return_element=return_elements,
+                                                style_map=style_map)
         if return_elements:
             all_elements.extend(block_elems)
     return all_elements
-def process_markdown_block(doc, lines, start_idx, return_element=True):
+def process_markdown_block(doc, lines, start_idx, return_element=True,
+                           style_map=DEFAULT_STYLE_MAP):
     """Process a single markdown block element and return created XML elements.
     Returns:
         Tuple of (next_index, list_of_elements).
@@ -112,7 +123,7 @@ def process_markdown_block(doc, lines, start_idx, return_element=True):
         heading_match = HEADING_PATTERN.match(stripped)
         if heading_match:
             level = len(heading_match.group(1))
-            heading = doc.add_heading('', level=min(level, 6))
+            heading = add_mapped_heading(doc, min(level, 6), style_map)
             parse_inline_formatting(heading_match.group(2), heading)
             _collect(heading._p)
             return start_idx + 1, elements
@@ -139,7 +150,8 @@ def process_markdown_block(doc, lines, start_idx, return_element=True):
                 word_table = add_table_to_doc(table_data, doc,
                                              col_alignments=col_alignments,
                                              borderless=borderless,
-                                             col_widths=col_widths)
+                                             col_widths=col_widths,
+                                             table_style=style_map.table)
                 if word_table is not None:
                     _collect(word_table._tbl)
                 return next_idx, elements
@@ -183,21 +195,50 @@ def process_markdown_block(doc, lines, start_idx, return_element=True):
         # Ordered list
         if ORDERED_LIST_PATTERN.match(stripped):
             return process_list_items(
-                lines, start_idx, doc, is_ordered=True, level=0, return_elements=return_element
+                lines, start_idx, doc, is_ordered=True, level=0, return_elements=return_element,
+                number_styles=style_map.list_number, bullet_styles=style_map.list_bullet,
             )
         # Unordered list
         if UNORDERED_LIST_PATTERN.match(stripped):
             return process_list_items(
-                lines, start_idx, doc, is_ordered=False, level=0, return_elements=return_element
+                lines, start_idx, doc, is_ordered=False, level=0, return_elements=return_element,
+                number_styles=style_map.list_number, bullet_styles=style_map.list_bullet,
             )
         # Blockquote (> text)
         if stripped.startswith('>'):
             quote_text = stripped[1:].strip()
             quote_para = doc.add_paragraph()
-            quote_para.style = 'Quote'
+            apply_style(quote_para, style_map.quote)
             parse_inline_formatting(quote_text, quote_para)
             _collect(quote_para._p)
             return start_idx + 1, elements
+        # Style directive: <!-- style: Name --> applies Name to the next block.
+        style_directive = STYLE_DIRECTIVE_PATTERN.match(stripped)
+        if style_directive:
+            style_name = style_directive.group(1).strip()
+            # Skip the directive line and any blank lines to reach the next block.
+            next_idx = start_idx + 1
+            while next_idx < len(lines) and not lines[next_idx].strip():
+                next_idx += 1
+            if next_idx >= len(lines):
+                return next_idx, elements  # nothing follows; directive is a no-op
+            body = doc._body._body
+            # Snapshot existing children (holding the proxies alive so lxml keeps a
+            # stable identity for them); new elements are inserted before the trailing
+            # <w:sectPr>, so positional slicing would be unreliable.
+            existing = None if return_element else list(body)
+            new_idx, block_elems = process_markdown_block(
+                doc, lines, next_idx, return_element=return_element, style_map=style_map
+            )
+            if return_element:
+                produced = block_elems
+            else:
+                produced = [el for el in list(body) if el not in existing]
+            for el in produced:
+                apply_style_to_block_element(doc, el, style_name)
+            if return_element:
+                elements.extend(block_elems)
+            return new_idx, elements
         # HTML comment directives (e.g. <!-- borderless -->) — skip silently
         if stripped.startswith('<!--') and stripped.endswith('-->'):
             return start_idx + 1, elements
