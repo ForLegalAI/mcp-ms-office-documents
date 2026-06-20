@@ -12,7 +12,8 @@ that the range is kept or dropped depending on a boolean tool argument:
     {{/if}}
 
 Markers are recognised only when a paragraph's entire (trimmed) text is exactly
-one marker token. Because the marker text is read from the paragraph's combined
+one marker token. Whitespace immediately inside the braces is tolerated, e.g.
+``{{ #if flag }}``. Because the marker text is read from the paragraph's combined
 runs, a marker that Word has split across several runs is still detected.
 
 Granularity is *block-level*: everything between the markers — paragraphs,
@@ -23,24 +24,30 @@ only; conditionals inside table cells, headers and footers are not handled yet.
 Error handling is intentionally forgiving ("warn and keep content"): if the
 markers in the body are not well balanced, a warning is logged, **all content is
 preserved**, and only the recognisable marker paragraphs are stripped so the
-literal ``{{#if}}`` text does not leak into the generated document.
+literal ``{{#if}}`` text does not leak into the generated document. Likewise, a
+condition naming an unknown argument keeps its content (both for ``{{#if}}`` and
+``{{^if}}``) so a typo never silently deletes a block.
 """
 from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any
 
-from docx import Document as DocxDocument
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
+
+if TYPE_CHECKING:  # imported only for type hints; avoids a runtime import
+    from docx import Document as DocxDocument
 
 logger = logging.getLogger(__name__)
 
 # Marker paragraphs: the whole trimmed paragraph text must be exactly one token.
-_OPEN_IF = re.compile(r'^\{\{#if\s+([a-zA-Z_][a-zA-Z0-9_]*)\}\}$')
-_OPEN_UNLESS = re.compile(r'^\{\{\^if\s+([a-zA-Z_][a-zA-Z0-9_]*)\}\}$')
-_CLOSE_IF = re.compile(r'^\{\{/if\}\}$')
+# ``\s*`` around the inner keyword/name tolerates stray spacing inside the braces
+# (e.g. autocorrect or HTML paste producing "{{#if flag }}").
+_OPEN_IF = re.compile(r'^\{\{\s*#if\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}$')
+_OPEN_UNLESS = re.compile(r'^\{\{\s*\^if\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}$')
+_CLOSE_IF = re.compile(r'^\{\{\s*/if\s*\}\}$')
 
 
 class _Marker:
@@ -48,13 +55,13 @@ class _Marker:
 
     __slots__ = ("kind", "name", "negate")
 
-    def __init__(self, kind: str, name: Optional[str] = None, negate: bool = False):
+    def __init__(self, kind: str, name: str | None = None, negate: bool = False):
         self.kind = kind  # "open" or "close"
         self.name = name  # condition name (open markers only)
         self.negate = negate  # True for {{^if ...}}
 
 
-def _parse_marker(text: str) -> Optional[_Marker]:
+def _parse_marker(text: str) -> _Marker | None:
     """Return the marker a paragraph represents, or None if it is not a marker."""
     s = text.strip()
     if not s:
@@ -71,25 +78,32 @@ def _parse_marker(text: str) -> Optional[_Marker]:
 
 
 def _paragraph_text(p_elem) -> str:
-    """Combined run text of a ``<w:p>`` element (handles run-split markers)."""
+    """Combined run text of a ``<w:p>`` element.
+
+    Wrapping the raw element in a ``Paragraph`` with a ``None`` parent is safe
+    here because only ``.text`` is read, which simply concatenates the runs and
+    never touches the parent. This also transparently joins markers that Word
+    has fragmented across multiple runs.
+    """
     return Paragraph(p_elem, None).text
 
 
-def _evaluate(marker: _Marker, conditions: Dict[str, Any]) -> bool:
+def _evaluate(marker: _Marker, conditions: dict[str, Any]) -> bool:
     """Whether the inner content of an open marker should be kept."""
     if marker.name not in conditions:
+        # Unknown name -> always keep content, for both {{#if}} and {{^if}}, so a
+        # typo'd condition never silently deletes a block.
         logger.warning(
             "[dynamic-docx] Condition '%s' is not a known argument; "
-            "treating as true (content kept).",
+            "keeping its content.",
             marker.name,
         )
-        value = True
-    else:
-        value = bool(conditions[marker.name])
+        return True
+    value = bool(conditions[marker.name])
     return (not value) if marker.negate else value
 
 
-def resolve_conditionals(doc: DocxDocument, conditions: Dict[str, Any]) -> None:
+def resolve_conditionals(doc: "DocxDocument", conditions: dict[str, Any]) -> None:
     """Prune conditional blocks in the document body in place.
 
     Must run *before* placeholder substitution, because it deletes whole block
@@ -102,13 +116,13 @@ def resolve_conditionals(doc: DocxDocument, conditions: Dict[str, Any]) -> None:
     _resolve_block_container(doc._body._body, conditions)
 
 
-def _resolve_block_container(container, conditions: Dict[str, Any]) -> None:
+def _resolve_block_container(container, conditions: dict[str, Any]) -> None:
     """Resolve markers among the direct block children of ``container``."""
     p_tag = qn('w:p')
     children = list(container)
 
     # Pass 1: locate marker paragraphs and check that they are balanced.
-    markers: Dict[int, _Marker] = {}
+    markers: dict[int, _Marker] = {}
     depth = 0
     balanced = True
     for elem in children:
@@ -142,15 +156,16 @@ def _resolve_block_container(container, conditions: Dict[str, Any]) -> None:
                 container.remove(elem)
         return
 
-    # Pass 2: prune. A frame on the stack holds whether its inner content is kept;
-    # an element survives only when every enclosing frame keeps its content.
-    stack = []
+    # Pass 2: prune. Markers are guaranteed balanced here, so every close has a
+    # matching open on the stack. A frame holds whether its inner content is
+    # kept; an element survives only when every enclosing frame keeps its content.
+    stack: list[bool] = []
     for elem in children:
         marker = markers.get(id(elem))
         if marker is not None:
             if marker.kind == "open":
                 stack.append(_evaluate(marker, conditions))
-            elif stack:  # close
+            else:  # close — balance guarantees a frame to pop
                 stack.pop()
             container.remove(elem)  # marker paragraphs are always removed
             continue

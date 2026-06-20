@@ -24,11 +24,15 @@
 #
 # Notes:
 #   - The condition name must match a template argument (declare it as type: bool).
-#   - Blocks may be nested. Markers split across runs by Word are still detected.
+#     An unknown name keeps its content (so a typo never silently deletes a block).
+#   - The marker must be the paragraph's only text; spacing inside the braces is
+#     tolerated (e.g. "{{ #if flag }}"). Markers split across runs by Word are
+#     still detected. Blocks may be nested.
 #   - Granularity is block-level (whole paragraphs/tables between the markers).
 #     Conditionals inside table cells, headers and footers are not handled yet.
 #   - Unbalanced markers do not fail the document: a warning is logged, all
-#     content is kept, and the marker paragraphs are stripped.
+#     content is kept, and the marker paragraphs are stripped. A {{/if}} pairs
+#     with the most recently opened block (nesting order), not by name.
 #
 # =============================================================================
 # WORD STYLES USED BY THE SYSTEM

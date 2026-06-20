@@ -13,6 +13,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+import pytest
 from docx import Document
 
 from docx_tools.conditionals import resolve_conditionals
@@ -97,6 +98,15 @@ def test_nested_outer_true_inner_false():
     assert body_texts(doc) == ["outer-top", "outer-bottom"]
 
 
+def test_sibling_blocks_evaluated_independently():
+    # Two separate (non-nested) blocks with different names must be independent.
+    doc = build_doc(
+        ["{{#if a}}", "Section A", "{{/if}}", "{{#if b}}", "Section B", "{{/if}}"]
+    )
+    resolve_conditionals(doc, {"a": True, "b": False})
+    assert body_texts(doc) == ["Section A"]
+
+
 def test_nested_outer_false_drops_everything():
     doc = build_doc(
         [
@@ -148,6 +158,13 @@ def test_table_inside_true_block_is_kept():
 # Multi-run split markers (Word fragments typed text across runs)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.parametrize("opener", ["{{#if flag }}", "{{ #if flag}}", "{{ #if  flag }}"])
+def test_whitespace_inside_braces_is_tolerated(opener):
+    doc = build_doc([opener, "Inner", "{{/if}}"])
+    resolve_conditionals(doc, {"flag": True})
+    assert body_texts(doc) == ["Inner"]
+
+
 def test_marker_split_across_runs_is_detected():
     doc = Document()
     doc.add_paragraph("Before")
@@ -167,9 +184,16 @@ def test_marker_split_across_runs_is_detected():
 # Condition value handling
 # ---------------------------------------------------------------------------
 
-def test_missing_condition_treated_as_true():
+def test_missing_condition_in_if_keeps_content():
     doc = build_doc(["{{#if unknown}}", "Inner", "{{/if}}"])
     resolve_conditionals(doc, {})  # name not present -> keep
+    assert body_texts(doc) == ["Inner"]
+
+
+def test_missing_condition_in_unless_also_keeps_content():
+    # Unknown name must keep content for {{^if}} too, not drop it.
+    doc = build_doc(["{{^if unknown}}", "Inner", "{{/if}}"])
+    resolve_conditionals(doc, {})
     assert body_texts(doc) == ["Inner"]
 
 
@@ -183,10 +207,11 @@ def test_none_value_is_falsy():
 # Forgiving error handling: unbalanced markers -> warn & keep content
 # ---------------------------------------------------------------------------
 
-def test_unbalanced_open_keeps_content_strips_markers():
+@pytest.mark.parametrize("flag", [True, False])
+def test_unbalanced_open_keeps_content_regardless_of_flag(flag):
     doc = build_doc(["{{#if flag}}", "Inner", "still here"])  # no close
-    resolve_conditionals(doc, {"flag": False})
-    # Content preserved; recognisable marker paragraph stripped.
+    resolve_conditionals(doc, {"flag": flag})
+    # Content preserved either way; recognisable marker paragraph stripped.
     assert body_texts(doc) == ["Inner", "still here"]
 
 
