@@ -242,6 +242,8 @@ Both the Word and Excel tools accept Markdown. These references cover **everythi
 | `# H1` … `###### H6` | Headings 1–6 |
 | `- item` / `* item` / `+ item` | Bullet list (nest by indenting children — 2-4 spaces or a tab → `List Bullet 2/3`) |
 | `1. item` / `2. item` | Numbered list (nest by indenting children). **Numbering restarts automatically** whenever a list begins again with `1.` |
+
+> 💡 A single numbered line is only treated as a list when it starts at `1.` **or** is followed by another item. This means a standalone date like `23. června 2026` renders as plain text, not a list. The one exception is a day-1 date (`1. června 2026`), which is indistinguishable from a one-item list — escape the dot to keep it as text: `1\. června 2026`.
 | `> quote` | Block quote (`Quote` style) |
 | `\| A \| B \|` + `\|---\|---\|` | Table (see table features below) |
 | ` ``` ` … ` ``` ` (or `~~~`) | Fenced code block — content is rendered verbatim in a monospace font and **not** parsed as markdown |
@@ -262,7 +264,7 @@ Both the Word and Excel tools accept Markdown. These references cover **everythi
 | `` `code` `` | Monospace (Courier New) |
 | `^super^` · `~sub~` | Superscript (`x^2^`) / subscript (`H~2~O`) |
 | `[text](url)` | Hyperlink |
-| `\*` `\**` `` \` `` | Escaped literals (render the marker as text) |
+| `\*` `\**` `` \` `` `\.` | Escaped literals (render the marker as text — e.g. `1\.` keeps a day-1 date from becoming a list) |
 
 Nesting and combinations work, e.g. `**bold with *italic* inside**`, `**~~bold strikethrough~~**`.
 
@@ -465,7 +467,8 @@ Subject: {{subject}}
 - Each template becomes a separate AI tool at startup
 - Placeholders can be in the document body, tables, headers, and footers
 - Placeholder values support full Markdown (bold, italic, lists, headings…)
-- The original font from the placeholder location is preserved
+- The placeholder's own formatting — font, size, colour, **bold, italic, underline, highlight** — is captured and applied to the replacement text (markdown in the value, e.g. `**bold**`, still wins where it sets formatting)
+- Formatting of the surrounding text in the same paragraph (before/after the placeholder) is preserved
 
 </details>
 

@@ -93,13 +93,55 @@ _BR_RE = re.compile(r'<br\s*/?>', re.IGNORECASE)
 # Utility
 # ---------------------------------------------------------------------------
 
+def ordered_list_is_genuine(lines, idx) -> bool:
+    """Return True if the ordered-list marker at ``lines[idx]`` should start a list.
+
+    A numbered line begins an ordered list only when its number is ``1`` (a list
+    may legitimately have a single item) OR a continuation follows — another
+    sibling ordered item at the same indent, or a more-indented nested list item.
+    This stops a standalone numbered line such as a date ("23. června 2026") from
+    being misread as an ordered list.
+
+    Note: a day-1 date ("1. června 2026") still matches the ``number == 1`` case
+    and must be escaped ("1\\. června 2026") to render as prose; dates on days
+    2–31 are handled automatically here.
+    """
+    raw = lines[idx]
+    match = ORDERED_LIST_CAPTURE_PATTERN.match(raw.strip())
+    if not match:
+        return False
+    if int(match.group(1)) == 1:
+        return True
+    base_indent = len(raw) - len(raw.lstrip())
+    for nxt in lines[idx + 1:]:
+        stripped = nxt.strip()
+        if not stripped:
+            return False  # blank line ends the run before any continuation
+        indent = len(nxt) - len(nxt.lstrip())
+        if indent > base_indent:
+            # A more-indented list item nested under this one is a continuation.
+            return bool(ORDERED_LIST_PATTERN.match(stripped)
+                        or UNORDERED_LIST_PATTERN.match(stripped))
+        if indent == base_indent:
+            return bool(ORDERED_LIST_PATTERN.match(stripped))  # sibling ordered item
+        return False  # dedent ends the run
+    return False
+
+
 def contains_block_markdown(value: str) -> bool:
     """Return True if *value* contains block-level markdown content."""
     from .block_elements import detect_alignment  # deferred to avoid circular
 
-    for line in value.split('\n'):
+    lines = value.split('\n')
+    for idx, line in enumerate(lines):
         stripped = line.strip()
-        if any(p.match(stripped) for p in _BLOCK_PATTERNS):
+        for pattern in _BLOCK_PATTERNS:
+            if not pattern.match(stripped):
+                continue
+            # A lone numbered line (e.g. a date "23. června 2026") is not a list
+            # unless it starts at 1 or has a continuation — keep it inline prose.
+            if pattern is ORDERED_LIST_PATTERN and not ordered_list_is_genuine(lines, idx):
+                continue
             return True
         if detect_alignment(stripped) is not None:
             return True

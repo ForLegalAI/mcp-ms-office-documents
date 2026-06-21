@@ -30,12 +30,14 @@ from __future__ import annotations
 
 import io
 import re
+import copy
 import logging
 from pathlib import Path
 from typing import Any, Dict, Optional, Literal
 
 import yaml
 from docx import Document as DocxDocument
+from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
 from docx.table import Table
 from pydantic import Field, create_model
@@ -117,6 +119,67 @@ def find_docx_template_by_name(filename: str) -> Optional[str]:
     return str(found) if found else None
 
 
+def _copy_run_format(src_run, dst_run) -> None:
+    """Copy *src_run*'s character formatting onto *dst_run*.
+
+    Deep-copies the source run properties element (``<w:rPr>``) so every direct
+    format — bold, italic, underline, colour, highlight, font, character style —
+    is preserved wholesale, rather than enumerating individual properties.
+    """
+    src_rpr = src_run._r.find(qn('w:rPr'))
+    if src_rpr is None:
+        return
+    dst_rpr = dst_run._r.find(qn('w:rPr'))
+    if dst_rpr is not None:
+        dst_run._r.remove(dst_rpr)
+    dst_run._r.insert(0, copy.deepcopy(src_rpr))  # rPr must be the run's first child
+
+
+def _add_formatted_segments(paragraph, segments) -> None:
+    """Append *segments* (``(text, source_run)`` pairs) as runs, keeping format."""
+    for seg_text, seg_run in segments:
+        _copy_run_format(seg_run, paragraph.add_run(seg_text))
+
+
+def _segments_for_range(run_info, lo: int, hi: int):
+    """Return ``(text, run)`` pairs for the part of each run within ``[lo, hi)``.
+
+    Splits the surrounding text at the placeholder boundary while remembering
+    which original run each slice came from, so its formatting can be restored.
+    """
+    segments = []
+    for start, end, run in run_info:
+        seg_lo = max(start, lo)
+        seg_hi = min(end, hi)
+        if seg_lo < seg_hi:
+            segments.append((run.text[seg_lo - start:seg_hi - start], run))
+    return segments
+
+
+def _apply_placeholder_format(run, fmt) -> None:
+    """Fill *run*'s unset formatting from the placeholder's captured format *fmt*.
+
+    Only properties the markdown value left unset (``None``) are filled, so
+    formatting the value asked for (e.g. ``**bold**``) is never clobbered.
+    """
+    if fmt['name'] and not run.font.name:
+        run.font.name = fmt['name']
+    if fmt['size'] and not run.font.size:
+        run.font.size = fmt['size']
+    if fmt['color_rgb'] and not run.font.color.rgb:
+        run.font.color.rgb = fmt['color_rgb']
+    elif fmt['color_theme'] and not run.font.color.theme_color:
+        run.font.color.theme_color = fmt['color_theme']
+    if fmt['bold'] and run.bold is None:
+        run.bold = True
+    if fmt['italic'] and run.italic is None:
+        run.italic = True
+    if fmt['underline'] and run.underline is None:
+        run.underline = fmt['underline']
+    if fmt['highlight'] and run.font.highlight_color is None:
+        run.font.highlight_color = fmt['highlight']
+
+
 def _replace_placeholder_in_paragraph(
     paragraph: Paragraph,
     placeholder: str,
@@ -176,18 +239,30 @@ def _replace_placeholder_in_paragraph(
                 formatting_run = run
                 break
 
-        font_name = formatting_run.font.name if formatting_run else None
-        font_size = formatting_run.font.size if formatting_run else None
-        font_color_rgb = formatting_run.font.color.rgb if formatting_run else None
-        font_color_theme = formatting_run.font.color.theme_color if formatting_run else None
+        # Capture the placeholder run's direct character formatting so it can be
+        # re-applied to the replacement text (font, colour, and the emphasis
+        # formats bold/italic/underline/highlight).
+        placeholder_format = {
+            'name': formatting_run.font.name if formatting_run else None,
+            'size': formatting_run.font.size if formatting_run else None,
+            'color_rgb': formatting_run.font.color.rgb if formatting_run else None,
+            'color_theme': formatting_run.font.color.theme_color if formatting_run else None,
+            'bold': formatting_run.bold if formatting_run else None,
+            'italic': formatting_run.italic if formatting_run else None,
+            'underline': formatting_run.underline if formatting_run else None,
+            'highlight': formatting_run.font.highlight_color if formatting_run else None,
+        }
 
         # Strategy: Rebuild the paragraph content
         # 1. Get text before placeholder
         # 2. Get replacement content (parsed markdown)
         # 3. Get text after placeholder
 
-        text_before = combined_text[:placeholder_start]
-        text_after = combined_text[placeholder_end:]
+        # Slice the surrounding text at the placeholder boundaries, remembering
+        # each slice's source run so its formatting can be restored (rather than
+        # flattening before/after text to plain runs).
+        before_segments = _segments_for_range(run_info, 0, placeholder_start)
+        after_segments = _segments_for_range(run_info, placeholder_end, len(combined_text))
 
         # Check if the value contains block-level content (lists, headings)
         has_block_content = contains_block_markdown(value)
@@ -197,45 +272,30 @@ def _replace_placeholder_in_paragraph(
         for run in runs:
             p_element.remove(run._r)
 
-        # Add text before placeholder (plain text, preserve any formatting would be complex)
-        if text_before:
-            paragraph.add_run(text_before)
+        # Re-add the text before the placeholder, preserving its formatting.
+        _add_formatted_segments(paragraph, before_segments)
 
         if has_block_content and doc is not None:
             # Insert block content after this paragraph
             _insert_markdown_content_after_paragraph(doc, paragraph, value, style_map)
 
-            # If there's text after, add it as a run to this paragraph
-            if text_after:
-                paragraph.add_run(text_after)
+            # Re-add the text after the placeholder, preserving its formatting.
+            _add_formatted_segments(paragraph, after_segments)
 
             # If the placeholder occupied the whole paragraph (no surrounding text),
             # the paragraph is now empty – remove it to avoid a spurious blank line.
-            if not text_before and not text_after:
+            if not before_segments and not after_segments:
                 p_element.getparent().remove(p_element)
         else:
-            # Simple inline replacement
-            # Parse and add the replacement value with markdown formatting
+            # Simple inline replacement. Parse the value into runs, then fill any
+            # formatting it left unset from the placeholder run's captured format.
+            runs_before_value = len(paragraph.runs)
             parse_inline_formatting(value, paragraph)
+            for run in list(paragraph.runs)[runs_before_value:]:
+                _apply_placeholder_format(run, placeholder_format)
 
-            # Apply font formatting to newly added runs (from replacement)
-            if font_name or font_size or font_color_rgb or font_color_theme:
-                # Get runs added after text_before
-                new_runs = list(paragraph.runs)
-                start_idx = 1 if text_before else 0
-                for run in new_runs[start_idx:]:
-                    if font_name and not run.font.name:
-                        run.font.name = font_name
-                    if font_size and not run.font.size:
-                        run.font.size = font_size
-                    if font_color_rgb and not run.font.color.rgb:
-                        run.font.color.rgb = font_color_rgb
-                    elif font_color_theme and not run.font.color.theme_color:
-                        run.font.color.theme_color = font_color_theme
-
-            # Add text after placeholder
-            if text_after:
-                paragraph.add_run(text_after)
+            # Re-add the text after the placeholder, preserving its formatting.
+            _add_formatted_segments(paragraph, after_segments)
 
         return True
 
