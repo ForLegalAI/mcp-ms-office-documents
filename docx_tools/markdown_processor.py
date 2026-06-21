@@ -13,6 +13,7 @@ from .patterns import (
     UNORDERED_LIST_PATTERN,
     COMMENT_DIRECTIVE_PATTERN,
     CODE_FENCE_PATTERN,
+    ordered_list_is_genuine,
 )
 from .inline_formatting import parse_inline_formatting
 from .block_elements import (
@@ -249,8 +250,11 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
                 if return_element and block_elems:
                     elements.extend(block_elems)
                 return idx, elements
-        # Ordered list
-        if ORDERED_LIST_PATTERN.match(stripped):
+        # Ordered list. A numbered line only starts a list when it begins at 1 or
+        # has a continuation (see ordered_list_is_genuine); otherwise it falls
+        # through to a plain paragraph so a standalone date like "23. června 2026"
+        # is not misread as an ordered list.
+        if ORDERED_LIST_PATTERN.match(stripped) and ordered_list_is_genuine(lines, start_idx):
             return process_list_items(
                 lines, start_idx, doc, is_ordered=True, level=0, return_elements=return_element,
                 number_styles=style_map.list_number, bullet_styles=style_map.list_bullet,
