@@ -44,6 +44,7 @@ from fastmcp import FastMCP
 from upload_tools import upload_file
 from template_utils import find_file_in_template_dirs
 from async_runner import run_blocking
+from .conditionals import resolve_conditionals
 from .inline_formatting import parse_inline_formatting
 from .patterns import contains_block_markdown
 from .markdown_processor import process_markdown_content
@@ -515,6 +516,11 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
 
                 # Build context from input data
                 payload = data.model_dump()
+
+                # Resolve conditional blocks ({{#if flag}} ... {{/if}}) before
+                # substitution, since this prunes whole block elements.
+                resolve_conditionals(doc, payload)
+
                 context = {k: ("" if v is None else str(v)) for k, v in payload.items()}
 
                 # Replace placeholders

@@ -7,6 +7,34 @@
 #   {{placeholder_name}} - replaced with the value (supports markdown formatting)
 #
 # =============================================================================
+# CONDITIONAL BLOCKS (optional)
+# =============================================================================
+# Wrap a range of body content between marker paragraphs so it is included only
+# when a boolean argument is set. Put each marker on its OWN paragraph (its whole
+# text must be just the marker), with the content to keep/drop in between:
+#
+#   {{#if include_clause}}        keep the block when include_clause is true
+#   This clause appears only when the argument is true.
+#   (any paragraphs, lists, page breaks or whole tables may go here)
+#   {{/if}}
+#
+#   {{^if include_clause}}        keep the block when include_clause is false
+#   Shown only when include_clause is false.
+#   {{/if}}
+#
+# Notes:
+#   - The condition name must match a template argument (declare it as type: bool).
+#     An unknown name keeps its content (so a typo never silently deletes a block).
+#   - The marker must be the paragraph's only text; spacing inside the braces is
+#     tolerated (e.g. "{{ #if flag }}"). Markers split across runs by Word are
+#     still detected. Blocks may be nested.
+#   - Granularity is block-level (whole paragraphs/tables between the markers).
+#     Conditionals inside table cells, headers and footers are not handled yet.
+#   - Unbalanced markers do not fail the document: a warning is logged, all
+#     content is kept, and the marker paragraphs are stripped. A {{/if}} pairs
+#     with the most recently opened block (nesting order), not by name.
+#
+# =============================================================================
 # WORD STYLES USED BY THE SYSTEM
 # =============================================================================
 # When creating custom templates, ensure these styles exist in your document.
@@ -196,5 +224,13 @@ templates:
         description: Sender's job title or position
         required: false
         default: ""
+      # Example of a boolean flag driving a conditional block in the template.
+      # Wrap the optional content in the .docx with {{#if include_postscript}} ...
+      # {{/if}} to include it only when this is true.
+      # - name: include_postscript
+      #   type: bool
+      #   description: Include the postscript (P.S.) block.
+      #   required: false
+      #   default: false
 
 
