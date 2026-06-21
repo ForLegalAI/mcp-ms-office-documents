@@ -115,6 +115,30 @@ def test_value_markdown_combines_with_placeholder_format():
     assert out.italic is True    # filled from the placeholder run
 
 
+def test_placeholder_explicit_not_bold_is_propagated():
+    # An explicit bold=False on the placeholder (e.g. to counteract a bold
+    # paragraph style) should pass through to a plain replacement value.
+    doc = Document()
+    p = doc.add_paragraph()
+    p.add_run("{{val}}").bold = False
+
+    assert _replace_placeholder_in_paragraph(p, "{{val}}", "hi", doc=doc)
+
+    assert _run_with_text(p, "hi").bold is False
+
+
+def test_value_markdown_bold_wins_over_placeholder_not_bold():
+    # Even when the placeholder is explicitly not-bold, markdown bold in the value
+    # must win (the value's formatting is never overridden).
+    doc = Document()
+    p = doc.add_paragraph()
+    p.add_run("{{val}}").bold = False
+
+    assert _replace_placeholder_in_paragraph(p, "{{val}}", "**strong**", doc=doc)
+
+    assert _run_with_text(p, "strong").bold is True
+
+
 # --- placeholder split across runs (as Word often stores it) ----------------
 
 def test_split_placeholder_preserves_bold_and_surrounding():

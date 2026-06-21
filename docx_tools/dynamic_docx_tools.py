@@ -170,11 +170,14 @@ def _apply_placeholder_format(run, fmt) -> None:
         run.font.color.rgb = fmt['color_rgb']
     elif fmt['color_theme'] and not run.font.color.theme_color:
         run.font.color.theme_color = fmt['color_theme']
-    if fmt['bold'] and run.bold is None:
-        run.bold = True
-    if fmt['italic'] and run.italic is None:
-        run.italic = True
-    if fmt['underline'] and run.underline is None:
+    # Emphasis formats are tri-state (None = inherit). Propagate the placeholder's
+    # explicit value — including an explicit False (e.g. bold turned off to
+    # counteract a paragraph style) — but never override what the markdown set.
+    if fmt['bold'] is not None and run.bold is None:
+        run.bold = fmt['bold']
+    if fmt['italic'] is not None and run.italic is None:
+        run.italic = fmt['italic']
+    if fmt['underline'] is not None and run.underline is None:
         run.underline = fmt['underline']
     if fmt['highlight'] and run.font.highlight_color is None:
         run.font.highlight_color = fmt['highlight']

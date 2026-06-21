@@ -242,8 +242,6 @@ Both the Word and Excel tools accept Markdown. These references cover **everythi
 | `# H1` … `###### H6` | Headings 1–6 |
 | `- item` / `* item` / `+ item` | Bullet list (nest by indenting children — 2-4 spaces or a tab → `List Bullet 2/3`) |
 | `1. item` / `2. item` | Numbered list (nest by indenting children). **Numbering restarts automatically** whenever a list begins again with `1.` |
-
-> 💡 A single numbered line is only treated as a list when it starts at `1.` **or** is followed by another item. This means a standalone date like `23. června 2026` renders as plain text, not a list. The one exception is a day-1 date (`1. června 2026`), which is indistinguishable from a one-item list — escape the dot to keep it as text: `1\. června 2026`.
 | `> quote` | Block quote (`Quote` style) |
 | `\| A \| B \|` + `\|---\|---\|` | Table (see table features below) |
 | ` ``` ` … ` ``` ` (or `~~~`) | Fenced code block — content is rendered verbatim in a monospace font and **not** parsed as markdown |
@@ -252,6 +250,8 @@ Both the Word and Excel tools accept Markdown. These references cover **everythi
 | `***` (3+ asterisks) | Horizontal line (visual separator) |
 
 > ⚠️ Don't confuse `---` (page break) with `***` (horizontal line).
+
+> 💡 A single numbered line is only treated as a list when it starts at `1.` **or** is followed by another item. This means a standalone date like `23. června 2026` renders as plain text, not a list. The one exception is a day-1 date (`1. června 2026`), which is indistinguishable from a one-item list — escape the dot to keep it as text: `1\. června 2026`.
 
 **Inline formatting** (works in paragraphs, headings, list items, table cells, quotes):
 
