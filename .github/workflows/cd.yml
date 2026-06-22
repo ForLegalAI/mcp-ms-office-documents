@@ -16,6 +16,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Validate release tag
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: test -n "$RELEASE_TAG" || { echo "::error::release.tag_name is empty"; exit 1; }
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -25,17 +33,14 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Extract release tag
-        id: meta
-        run: echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
-
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
+          platforms: linux/amd64,linux/arm64
           tags: |
-            georgx22/mcp-office-docs:${{ steps.meta.outputs.version }}
+            georgx22/mcp-office-docs:${{ github.event.release.tag_name }}
             georgx22/mcp-office-docs:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
