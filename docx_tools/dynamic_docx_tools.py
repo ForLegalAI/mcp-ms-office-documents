@@ -152,11 +152,21 @@ def _propagate_format_to_block(doc, inserted, src_ppr, fmt) -> None:
 
     Paragraphs the markdown styled deliberately (headings, list items, quotes,
     code — i.e. those with an explicit ``<w:pStyle>``) are left untouched. Plain
-    (default/Normal) paragraphs inherit the placeholder paragraph's properties
-    *src_ppr* (style/alignment/indent/spacing) and the placeholder run's character
-    format *fmt*, so e.g. a justified letter body stays justified instead of
-    falling back to the document default.
+    (default/Normal) paragraphs inherit the placeholder paragraph's *layout*
+    (alignment/indent/spacing) and the placeholder run's character format *fmt*,
+    so e.g. a justified letter body stays justified instead of falling back to the
+    document default.
     """
+    # Layout-only copy of the placeholder's paragraph properties: drop its
+    # <w:pStyle> so the placeholder's NAMED style (e.g. when the placeholder
+    # happens to sit in a Heading paragraph) is never stamped onto produced prose;
+    # produced prose keeps its own default style and only inherits direct layout.
+    layout_ppr = None
+    if src_ppr is not None:
+        layout_ppr = copy.deepcopy(src_ppr)
+        src_pstyle = layout_ppr.find(qn('w:pStyle'))
+        if src_pstyle is not None:
+            layout_ppr.remove(src_pstyle)
     for elem in inserted:
         if elem.tag != qn('w:p'):
             continue  # tables etc. are not styled here
@@ -164,10 +174,10 @@ def _propagate_format_to_block(doc, inserted, src_ppr, fmt) -> None:
         # An explicit paragraph style means the markdown set the look on purpose.
         if ppr is not None and ppr.find(qn('w:pStyle')) is not None:
             continue
-        if src_ppr is not None:
+        if layout_ppr is not None:
             if ppr is not None:
                 elem.remove(ppr)
-            elem.insert(0, copy.deepcopy(src_ppr))  # pPr must be the paragraph's first child
+            elem.insert(0, copy.deepcopy(layout_ppr))  # pPr must be the paragraph's first child
         for run in Paragraph(elem, doc._body).runs:
             _apply_placeholder_format(run, fmt)
 
@@ -244,9 +254,11 @@ def _replace_placeholder_in_paragraph(
         if placeholder not in full_text:
             return False
 
-        # Normalise literal "\n"/"\r\n" the model may have written as text (rather
-        # than real newlines) so block detection and rendering below treat them as
-        # genuine line breaks instead of leaving stray "n" characters.
+        # Normalise literal "\n"/"\r\n" the model may have written as text (not
+        # real newlines) BEFORE routing, so block detection and the multi-line
+        # check below see genuine line breaks. process_markdown_content /
+        # parse_inline_formatting normalise again downstream (idempotent — that is
+        # what the base tool relies on), so this early pass is for routing only.
         value = normalize_escaped_newlines(value)
 
         # Collect all runs and their text

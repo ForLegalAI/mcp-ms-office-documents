@@ -260,10 +260,12 @@ templates:
   # ===========================================================================
   - name: letterhead_breaks_demo
     description: |
-      Demonstrates the three line-break cases on a letterhead document.
+      DOCUMENTATION ONLY — reference example, not for real output. Illustrates the
+      three line-break cases in argument descriptions. Points at letter_template.docx
+      whose placeholders may not match these names, so treat it as a reference.
     docx_path: letter_template.docx   # reuse any template that has the placeholders
     annotations:
-      title: Line-break demo
+      title: "Line-break demo (reference only)"
     args:
       # SOFT BREAK case: a multi-line block that stays ONE paragraph (use <br>).
       - name: hlavicka

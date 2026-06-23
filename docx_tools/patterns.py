@@ -65,6 +65,9 @@ _LINK_RE = re.compile(r'\[(.*?)]\((.*?)\)')        # [link text](url)
 # and the old r'\\(.)' collapsed it to a stray "n" (and corrupted "\t", Windows
 # paths like C:\new, etc.). Literal "\n"/"\r\n" sequences are turned into real
 # line breaks separately by normalize_escaped_newlines().
+# re.escape() is used to build the character class so the chars that ARE special
+# inside [...] (']', '\', '^', '-') are emitted as literals; the extra escaping of
+# the other punctuation is harmless.
 _ESCAPE_RE = re.compile(r'\\([' + re.escape(string.punctuation) + r'])')
 # Literal newline escape sequences ("\n", "\r\n", "\r" written as text) that LLMs
 # often emit instead of a real newline. Longest alternative first so "\r\n"

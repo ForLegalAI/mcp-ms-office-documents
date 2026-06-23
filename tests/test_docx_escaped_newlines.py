@@ -243,3 +243,28 @@ def test_template_prose_inherits_alignment_but_heading_keeps_style():
     # the heading keeps its own style and is NOT forced to justify
     assert by_text["Nadpis"].style.name == "Heading 2"
     assert by_text["Nadpis"].alignment != WD_ALIGN_PARAGRAPH.JUSTIFY
+
+
+def test_template_placeholder_literal_crlf():
+    # Literal "\r\n" (backslash-r-backslash-n as text) must behave like a real
+    # blank line, not leave stray "r"/"n" characters.
+    doc = Document()
+    doc.add_paragraph().add_run("{{body}}")
+    _replace_placeholders_in_document(
+        doc, {"body": r"First paragraph.\r\n\r\nSecond paragraph."}
+    )
+    bodies = [p for p in doc.paragraphs if p.text.strip()]
+    assert [p.text for p in bodies] == ["First paragraph.", "Second paragraph."]
+
+
+def test_template_named_style_not_stamped_on_prose():
+    # When the placeholder paragraph itself carries a named style (here Heading 1),
+    # produced prose paragraphs must NOT inherit that style — they stay default.
+    doc = Document()
+    para = doc.add_paragraph()
+    para.style = doc.styles["Heading 1"]
+    para.add_run("{{x}}")
+    _replace_placeholders_in_document(doc, {"x": "Plain one.\n\nPlain two."})
+    bodies = [p for p in doc.paragraphs if p.text.strip()]
+    assert [p.text for p in bodies] == ["Plain one.", "Plain two."]
+    assert all(p.style.name == "Normal" for p in bodies)
