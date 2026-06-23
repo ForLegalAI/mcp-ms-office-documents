@@ -117,11 +117,31 @@
 #   Page break:       --- (three+ dashes alone on a line — starts a new page)
 #   Horizontal line:  *** (three+ asterisks alone on a line)
 #   Text alignment:   <center>text</center>  or  <div align="right|center|justify|left">text</div>
-#   Soft line break:  end a line with two trailing spaces
 #
 # Note: in dynamic templates, block content (lists, headings, tables) is rendered
 # for body placeholders; placeholders inside table cells, headers and footers
 # receive inline formatting only.
+#
+# =============================================================================
+# LINE BREAKS — three cases (the same in the base tool and in templates)
+# =============================================================================
+#   New paragraph        -> leave a BLANK LINE between the blocks.
+#   Soft break / newline -> use <br>  (a line break inside the same paragraph,
+#                           e.g. an address block: Street<br>City).
+#                           Two trailing spaces also work but are invisible and
+#                           editors strip them — prefer <br>.
+#   Literal "\n"         -> NEVER. The two characters backslash-n are text, not a
+#                           newline; the model copies whatever it sees. (We now
+#                           convert a stray literal "\n" to a real newline rather
+#                           than corrupt it, but don't rely on or teach it.)
+#
+# Writing the `description:` of an argument:
+#   * Never put the two characters backslash-n in a description — the model will
+#     imitate it and send a literal "\n".
+#   * If a description shows a MULTI-LINE example, use a literal block scalar `|`
+#     (it preserves the line structure). Do NOT use `>` / `>-` — folded scalars
+#     join lines with spaces and destroy the example. Inside a `|` block you also
+#     cannot use `#` comments, so mark soft breaks with a visible <br>.
 #
 # =============================================================================
 # CUSTOM STYLE MAPPING (optional)
@@ -232,5 +252,58 @@ templates:
       #   description: Include the postscript (P.S.) block.
       #   required: false
       #   default: false
+
+  # ===========================================================================
+  # Line-break demo: shows how to describe the three break cases to the model.
+  # Note every `description:` uses a literal block scalar `|` (preserves lines)
+  # and uses <br> for soft breaks — never a literal backslash-n.
+  # ===========================================================================
+  - name: letterhead_breaks_demo
+    description: |
+      Demonstrates the three line-break cases on a letterhead document.
+    docx_path: letter_template.docx   # reuse any template that has the placeholders
+    annotations:
+      title: Line-break demo
+    args:
+      # SOFT BREAK case: a multi-line block that stays ONE paragraph (use <br>).
+      - name: hlavicka
+        type: string
+        required: true
+        description: |
+          Document letterhead, several lines forming ONE block.
+          Put a <br> between lines (soft break — a line break inside one paragraph);
+          do NOT leave blank lines here, or it would split into paragraphs.
+          Example:
+          JUDr. Jan Novák, advokát<br>Jáchymova 26/2<br>110 00 Praha 1
+      # NEW PARAGRAPH case: prose where each paragraph is separate (blank line).
+      - name: text
+        type: string
+        required: true
+        description: |
+          Body text (Markdown). Break rules:
+          - New paragraph: leave a BLANK LINE between paragraphs.
+          - Line break inside a paragraph: use <br>.
+          - Numbered clauses: each item on its own line ("1. ...", "2. ...").
+          Never write the characters backslash-n. Example:
+          Vážený pane,
+
+          obracím se na Vás ve věci smluvní pokuty.
+
+          S pozdravem
+      # MIXED case: bold heading + soft-break list, all one paragraph.
+      - name: prilohy
+        type: string
+        required: false
+        default: " "
+        description: |
+          Attachment list; if none, send a single space. Bold heading, each
+          attachment on its own line via <br>. Example:
+          **Přílohy:**<br>1. Plná moc<br>2. Výzva k zaplacení
+      - name: file_name
+        type: string
+        required: false
+        default: ""
+        description: |
+          Optional output filename (without the .docx extension).
 
 
