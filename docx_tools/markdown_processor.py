@@ -10,11 +10,13 @@ from .patterns import (
     IMAGE_PATTERN,
     TABLE_LINE_PATTERN,
     ORDERED_LIST_PATTERN,
+    ORDERED_LIST_CAPTURE_PATTERN,
     UNORDERED_LIST_PATTERN,
     COMMENT_DIRECTIVE_PATTERN,
     CODE_FENCE_PATTERN,
     ordered_list_is_genuine,
     normalize_escaped_newlines,
+    expand_br_to_block_breaks,
 )
 from .inline_formatting import parse_inline_formatting
 from .block_elements import (
@@ -33,6 +35,25 @@ from .style_map import (
     apply_style_to_block_element,
 )
 logger = logging.getLogger(__name__)
+
+
+def _continues_ordered_run(stripped, ordered_run) -> bool:
+    """True if the ordered marker on *stripped* continues the running count.
+
+    *ordered_run* is a ``{'next': int | None}`` cell tracking the number that
+    would continue the most recent top-level ordered list (see
+    :func:`process_markdown_content`). This lets a continuation list resume after
+    an intervening heading/blank line — e.g. items ``1.``/``2.`` under one
+    heading and ``3.``/``4.`` under the next — even though, in isolation, a lone
+    ``3.`` followed by a blank line is indistinguishable from a date and would
+    not pass :func:`ordered_list_is_genuine`.
+    """
+    if not ordered_run or ordered_run.get('next') is None:
+        return False
+    match = ORDERED_LIST_CAPTURE_PATTERN.match(stripped)
+    return bool(match) and int(match.group(1)) == ordered_run['next']
+
+
 def process_markdown_content(doc, content, return_elements=False,
                              style_map=DEFAULT_STYLE_MAP):
     """Process full markdown content with all features: spacing, soft breaks, blocks.
@@ -51,10 +72,20 @@ def process_markdown_content(doc, content, return_elements=False,
     # newlines) as genuine newlines so they split into paragraphs/blocks instead
     # of being mangled into stray "n" characters downstream.
     content = normalize_escaped_newlines(content)
+    # Promote <br> that borders block content (lists/headings) to real newlines
+    # so such blocks are detected; a prose <br> stays an inline soft break.
+    content = expand_br_to_block_breaks(content)
     lines = content.split('\n')
     n = len(lines)
     i = 0
     all_elements = []
+    # Running ordered-list count: the number that would continue the most recent
+    # top-level ordered list. Preserved across headings and blank lines so a list
+    # can resume after a section heading; reset by any other block content. Lets
+    # _continues_ordered_run() accept e.g. "3." after a heading even when it is
+    # blank-separated (and so not locally genuine). A mutable cell so
+    # process_list_items can update it through process_markdown_block.
+    ordered_run = {'next': None}
     while i < n:
         line = lines[i]
         # --- Empty line handling (preserve spacing) ---
@@ -88,20 +119,31 @@ def process_markdown_content(doc, content, return_elements=False,
                 stripped_hashes = first_line.lstrip('#')
                 level = len(first_line) - len(stripped_hashes)
                 elem = _add_heading(doc, level, stripped_hashes.strip(), style_map)._p
+                # A heading does not break ordered-list continuation.
             elif first_line.startswith('>'):
                 elem = _add_quote(doc, full_text[1:].strip(), style_map)._p
+                ordered_run['next'] = None
             else:
                 para = doc.add_paragraph()
                 parse_inline_formatting(full_text, para)
                 elem = para._p
+                ordered_run['next'] = None
             if return_elements:
                 all_elements.append(elem)
                 doc._body._body.remove(elem)
             continue
         # --- All other block elements: delegate to block processor ---
+        # Continuation survives only headings and (above) blank lines; any other
+        # block content breaks the run. A numbered line is left alone so a list
+        # that actually renders can update the count via process_list_items.
+        stripped = line.strip()
+        if (HEADING_PATTERN.match(stripped) is None
+                and ORDERED_LIST_PATTERN.match(stripped) is None):
+            ordered_run['next'] = None
         i, block_elems = process_markdown_block(doc, lines, i,
                                                 return_element=return_elements,
-                                                style_map=style_map)
+                                                style_map=style_map,
+                                                ordered_run=ordered_run)
         if return_elements:
             all_elements.extend(block_elems)
     return all_elements
@@ -164,12 +206,18 @@ def _render_code_block(doc, lines, start_idx, fence_match, style_map, collect):
 
 
 def process_markdown_block(doc, lines, start_idx, return_element=True,
-                           style_map=DEFAULT_STYLE_MAP, directives=None):
+                           style_map=DEFAULT_STYLE_MAP, directives=None,
+                           ordered_run=None):
     """Process a single markdown block element and return created XML elements.
 
     *directives* carries comment-directive options (`borderless`, `widths`, …)
     collected from `<!-- … -->` lines immediately above this block; see the
     directive branch below.
+
+    *ordered_run* is the running ordered-list count cell from
+    :func:`process_markdown_content`; when present it lets a numbered line that
+    continues the previous list (e.g. after a heading) start a list even if it is
+    not locally genuine, and lets the rendered list update the count.
     Returns:
         Tuple of (next_index, list_of_elements).
     """
@@ -259,10 +307,13 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
         # has a continuation (see ordered_list_is_genuine); otherwise it falls
         # through to a plain paragraph so a standalone date like "23. června 2026"
         # is not misread as an ordered list.
-        if ORDERED_LIST_PATTERN.match(stripped) and ordered_list_is_genuine(lines, start_idx):
+        if ORDERED_LIST_PATTERN.match(stripped) and (
+                ordered_list_is_genuine(lines, start_idx)
+                or _continues_ordered_run(stripped, ordered_run)):
             return process_list_items(
                 lines, start_idx, doc, is_ordered=True, level=0, return_elements=return_element,
                 number_styles=style_map.list_number, bullet_styles=style_map.list_bullet,
+                ordered_run=ordered_run,
             )
         # Unordered list
         if UNORDERED_LIST_PATTERN.match(stripped):
@@ -301,7 +352,7 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
             existing = None if return_element else set(body)
             new_idx, block_elems = process_markdown_block(
                 doc, lines, idx, return_element=return_element, style_map=style_map,
-                directives=collected,
+                directives=collected, ordered_run=ordered_run,
             )
             # The 'style' directive applies the named style to whatever was produced.
             style_name = collected.get('style')
