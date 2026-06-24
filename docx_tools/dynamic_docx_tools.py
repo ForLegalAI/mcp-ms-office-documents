@@ -48,7 +48,9 @@ from template_utils import find_file_in_template_dirs
 from async_runner import run_blocking
 from .conditionals import resolve_conditionals
 from .inline_formatting import parse_inline_formatting
-from .patterns import contains_block_markdown, normalize_escaped_newlines
+from .patterns import (
+    contains_block_markdown, normalize_escaped_newlines, expand_br_to_block_breaks,
+)
 from .markdown_processor import process_markdown_content
 from .style_map import DEFAULT_STYLE_MAP, build_style_map
 from fastmcp.exceptions import ToolError
@@ -262,6 +264,11 @@ def _replace_placeholder_in_paragraph(
         # parse_inline_formatting normalise again downstream (idempotent — that is
         # what the base tool relies on), so this early pass is for routing only.
         value = normalize_escaped_newlines(value)
+        # Likewise promote a <br> that borders block content (a list/heading) to a
+        # real newline up front, so contains_block_markdown / the multi-line check
+        # route such values to the block pipeline instead of inline-only (where the
+        # list would render as literal text). Prose <br> is left as a soft break.
+        value = expand_br_to_block_breaks(value)
 
         # Collect all runs and their text
         runs = list(paragraph.runs)

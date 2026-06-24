@@ -165,7 +165,7 @@ def add_table_to_doc(table_data, doc, col_alignments=None, borderless=False,
 # ---------------------------------------------------------------------------
 def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
                        return_elements=False, number_styles=None, bullet_styles=None,
-                       base_indent=None):
+                       base_indent=None, ordered_run=None):
     """Process markdown list items with proper Word numbering.
     When *return_elements* is True the created paragraph XML elements are
     removed from the document body and returned so the caller can re-insert
@@ -205,6 +205,7 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
     num_resolved = False
     current_num_id = None
     items_emitted = 0
+    last_item_number = None  # last top-level ordered number, to extend ordered_run
     while i < n:
         original_line = lines[i]
         stripped_left = original_line.lstrip()
@@ -238,6 +239,7 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
                     )
             if current_num_id is not None:
                 apply_numbering(paragraph, current_num_id, level)
+            last_item_number = item_number
         parse_inline_formatting(item_text, paragraph)
         items_emitted += 1
         if return_elements:
@@ -283,6 +285,10 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
             elements.append(paragraph._p)
             doc._body._body.remove(paragraph._p)
         i = start_idx + 1
+    # Record where this top-level ordered list left off so a later sibling list
+    # (e.g. after a heading) can continue its numbering instead of restarting.
+    if ordered_run is not None and is_ordered and level == 0 and last_item_number is not None:
+        ordered_run['next'] = last_item_number + 1
     return i, elements
 # ---------------------------------------------------------------------------
 # Page break / horizontal line

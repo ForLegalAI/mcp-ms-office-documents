@@ -158,6 +158,60 @@ def ordered_list_is_genuine(lines, idx) -> bool:
     return False
 
 
+def _segment_is_block(segments, idx) -> bool:
+    """Return True if ``segments[idx]`` begins a block element.
+
+    A heading or unordered-list marker always counts; an ordered-list marker
+    counts only when :func:`ordered_list_is_genuine` accepts it within the
+    *segments* list (so a lone number that is really a date does not).
+    """
+    seg = segments[idx]
+    if HEADING_PATTERN.match(seg) or UNORDERED_LIST_PATTERN.match(seg):
+        return True
+    return bool(ORDERED_LIST_PATTERN.match(seg)
+                and ordered_list_is_genuine(segments, idx))
+
+
+def expand_br_to_block_breaks(text: str) -> str:
+    """Promote ``<br>`` to a real newline when it borders block content.
+
+    ``<br>`` is normally an *inline* soft line break (see
+    :func:`docx_tools.inline_formatting.parse_inline_formatting`). But the
+    block-level parser splits only on real newlines, so a list or heading that a
+    model separated from surrounding text with ``<br>`` is never recognised — a
+    ``"1. ..."`` after a ``<br>`` would render as literal text instead of a
+    numbered list. This pre-pass splits a physical line on ``<br>`` *only* when
+    one of the resulting segments is itself a block element (a heading, or a
+    genuine ordered/unordered list item); plain-prose ``<br>`` is left untouched
+    so it still renders as a within-paragraph soft break.
+
+    Table rows (``| ... |``) and fenced code blocks are never touched: ``<br>``
+    inside a table cell is an in-cell break handled by ``add_table_to_doc`` and
+    code is taken verbatim. Idempotent — running it on already-expanded text is a
+    no-op, so it is safe to call on both the base and placeholder paths.
+    """
+    if not text or not _BR_RE.search(text):
+        return text
+    out = []
+    in_code = False
+    for line in text.split('\n'):
+        stripped = line.strip()
+        if CODE_FENCE_PATTERN.match(stripped):
+            in_code = not in_code
+            out.append(line)
+            continue
+        if in_code or TABLE_LINE_PATTERN.match(stripped) or not _BR_RE.search(line):
+            out.append(line)
+            continue
+        segments = [seg.strip() for seg in _BR_RE.split(line)]
+        if len(segments) > 1 and any(_segment_is_block(segments, idx)
+                                     for idx in range(len(segments))):
+            out.extend(segments)
+        else:
+            out.append(line)
+    return '\n'.join(out)
+
+
 def contains_block_markdown(value: str) -> bool:
     """Return True if *value* contains block-level markdown content."""
     from .block_elements import detect_alignment  # deferred to avoid circular
