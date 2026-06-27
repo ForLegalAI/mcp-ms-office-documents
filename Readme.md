@@ -563,6 +563,11 @@ http://localhost:8958/admin
   and the description the AI sees.
 - **Preview** with sample values (generates a real file; never uploaded anywhere).
 - **Save** — the template becomes a live MCP tool **immediately**, no restart.
+- **Edit** later — adjust arguments, or **Replace document** to upload a new
+  version and re-scan it for placeholders (existing arguments are kept).
+- **Status** page — see live tool counts, per-template usage (calls/errors/last
+  used this session), and a recent activity & error log (filterable to
+  warnings/errors).
 
 **How it's stored:** the UI writes one file per template into
 `config/docx_templates.d/` or `config/email_templates.d/` (plus the asset into

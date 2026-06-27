@@ -46,6 +46,7 @@ from upload_tools import upload_file
 from template_utils import find_file_in_template_dirs
 from template_registry import gather_specs, safe_remove_tool
 from async_runner import run_blocking
+import metrics
 from .conditionals import resolve_conditionals
 from .inline_formatting import parse_inline_formatting
 from .patterns import (
@@ -720,9 +721,11 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
                     buffer.close()
 
                 logger.info(f"[dynamic-docx] Document generated from template {_name}")
+                metrics.record_call("docx", _name)
                 return result
 
             except Exception as e:
+                metrics.record_error("docx", _name, str(e))
                 logger.error(f"[dynamic-docx] Error generating document from {_name}: {e}", exc_info=True)
                 raise ToolError(f"Error generating document from template {_name}: {e}")
 

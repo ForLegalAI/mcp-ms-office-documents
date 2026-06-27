@@ -21,6 +21,7 @@ from upload_tools import upload_file
 from template_utils import find_email_template
 from template_registry import gather_specs, safe_remove_tool
 from async_runner import run_blocking
+import metrics
 from fastmcp.exceptions import ToolError
 
 
@@ -205,16 +206,20 @@ def _register_single_email_template(mcp: FastMCP, spec: Dict[str, Any]) -> bool:
                 try:
                     buffer.write(msg.as_bytes())
                     buffer.seek(0)
-                    return upload_file(buffer, "eml", filename=safe_payload.get("file_name") or safe_payload.get("subject") or _name)
+                    result = upload_file(buffer, "eml", filename=safe_payload.get("file_name") or safe_payload.get("subject") or _name)
+                    metrics.record_call("email", _name)
+                    return result
                 except Exception as e:  # pragma: no cover
                     logger.error(f"[dynamic-email] Error creating email draft for template '{_name}': {e}")
                     raise ToolError(f"Error creating email draft for template '{_name}': {e}")
                 finally:
                     buffer.close()
 
-            except ToolError:
+            except ToolError as e:
+                metrics.record_error("email", _name, str(e))
                 raise
             except Exception as e:
+                metrics.record_error("email", _name, str(e))
                 logger.error(f"[dynamic-email] Unexpected error in tool '{_name}': {e}", exc_info=True)
                 raise ToolError(f"Error generating email from template '{_name}': {e}")
 

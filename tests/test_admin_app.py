@@ -16,6 +16,7 @@ from starlette.testclient import TestClient
 
 import admin.store as store_mod
 import template_utils as tu
+import metrics
 from config import Config
 
 
@@ -46,12 +47,14 @@ def admin_client(tmp_path, monkeypatch):
 
     mcp = FastMCP("test-admin")
     app = build_combined_app(mcp, Config.from_env())
+    metrics.reset()
     client = TestClient(app)
     client.__enter__()
     # Authenticate.
     client.post("/admin/login", data={"password": "pw"})
     yield client, mcp
     client.__exit__(None, None, None)
+    metrics.reset()
 
 
 def _docx_with_placeholders(*paragraphs) -> bytes:
@@ -199,6 +202,54 @@ def test_ui_theme_and_controls_present(admin_client):
     assert "window.__ARG_ROW_HTML__" in body        # client-side row template
     assert 'class="chip"' in body                    # detected placeholder chips
     assert "adminRemoveRow" in body                  # per-row remove handler
+
+
+def test_status_page_renders(admin_client):
+    client, _ = admin_client
+    r = client.get("/admin/status")
+    assert r.status_code == 200
+    assert "Uptime" in r.text
+    assert "Upload backend" in r.text
+    assert "Template usage" in r.text
+    # The errors-only filter is a valid view too.
+    assert client.get("/admin/status?level=error").status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_status_reflects_tool_calls(admin_client):
+    client, mcp = admin_client
+    data = _docx_with_placeholders("Hi {{name}}")
+    client.post("/admin/docx/draft", data={"name": "metric_tpl"},
+                files={"file": ("metric_tpl.docx", data, "application/octet-stream")})
+    client.post("/admin/docx/save", data={
+        "kind": "docx", "asset_filename": "metric_tpl.docx", "name": "metric_tpl",
+        "title": "M", "description": "d", "arg_name": ["name"], "arg_type": ["string"],
+        "arg_required": ["true"], "arg_default": [""], "arg_desc": [""],
+    })
+    await mcp.call_tool("metric_tpl", {"data": {"name": "World"}})
+    assert metrics.get_tool_stat("metric_tpl").calls == 1
+    r = client.get("/admin/status")
+    assert "metric_tpl" in r.text
+
+
+def test_reupload_rescans_new_placeholder(admin_client):
+    client, _ = admin_client
+    client.post("/admin/docx/draft", data={"name": "reup_tpl"},
+                files={"file": ("reup_tpl.docx", _docx_with_placeholders("Hi {{name}}"),
+                                "application/octet-stream")})
+    client.post("/admin/docx/save", data={
+        "kind": "docx", "asset_filename": "reup_tpl.docx", "name": "reup_tpl",
+        "title": "R", "description": "d", "arg_name": ["name"], "arg_type": ["string"],
+        "arg_required": ["true"], "arg_default": [""], "arg_desc": [""],
+    })
+    # Replace the document with one that has an extra placeholder.
+    r = client.post("/admin/docx/reup_tpl/reupload",
+                    files={"file": ("reup_tpl.docx",
+                                    _docx_with_placeholders("Hi {{name}}", "Ref {{case_no}}"),
+                                    "application/octet-stream")})
+    assert r.status_code == 200
+    assert "Re-scanned" in r.text
+    assert "case_no" in r.text  # newly detected placeholder surfaced
 
 
 def test_mcp_endpoint_still_works(admin_client):

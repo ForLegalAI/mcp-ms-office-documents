@@ -15,7 +15,10 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 from typing import Any, Dict, List, Optional
+
+import metrics
 
 from fasthtml.common import (
     FastHTML, Title, Main, Header, Div, P, A, H1, H2, H3, Form, Input, Button,
@@ -118,6 +121,24 @@ summary{cursor:pointer;font-weight:600}
 .login-wrap{max-width:380px;margin:8vh auto}
 .inline-form{display:inline}
 hr{border:none;border-top:1px solid var(--line);margin:1.25rem 0}
+.stats{display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem}
+.stat{flex:1;min-width:150px;background:var(--card);border:1px solid var(--line);
+  border-radius:10px;padding:.85rem 1rem}
+.stat .num{font-size:1.55rem;font-weight:700;line-height:1.2}
+.stat .lbl{font-size:.78rem;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)}
+.logs{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.82rem;
+  max-height:460px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+.logs table{width:100%}
+.logs td{padding:.25rem .5rem;border-bottom:1px solid #f1f5f9;white-space:nowrap}
+.logs td.msg{white-space:normal;word-break:break-word}
+.logs .ts{color:var(--muted)}
+.lvl{font-weight:700}
+.lvl-ERROR,.lvl-CRITICAL{color:var(--err)}
+.lvl-WARNING{color:var(--warn)}
+.lvl-INFO{color:#2563eb}
+.lvl-DEBUG{color:var(--muted)}
+.toggle-row{display:flex;gap:.5rem;align-items:center;margin-bottom:.6rem}
+.num-err{color:var(--err)}
 """
 
 # Vanilla JS for dynamic argument rows (add / remove) — avoids a CDN htmx dep.
@@ -267,6 +288,7 @@ def _topbar(ctx: AdminContext, authed: bool = True):
         A("All templates", href=ctx.u("/")),
         A("New Word", href=ctx.u("/new/docx")),
         A("New Email", href=ctx.u("/new/email")),
+        A("Status", href=ctx.u("/status")),
         A("Log out", href=ctx.u("/logout")),
     ) if authed else Span()
     return Header(Span("📄 Template Admin", cls="brand"), nav, cls="topbar")
@@ -506,6 +528,106 @@ def _edit_form(ctx: AdminContext, kind: str, spec: Dict[str, Any],
 # App factory
 # ---------------------------------------------------------------------------
 
+def _fmt_ts(ts: Optional[float]) -> str:
+    if not ts:
+        return "—"
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+
+
+def _fmt_uptime(seconds: float) -> str:
+    seconds = int(max(0, seconds))
+    d, rem = divmod(seconds, 86400)
+    h, rem = divmod(rem, 3600)
+    m, _ = divmod(rem, 60)
+    if d:
+        return f"{d}d {h}h {m}m"
+    if h:
+        return f"{h}h {m}m"
+    return f"{m}m"
+
+
+def _stat(label: str, value, num_cls: str = ""):
+    return Div(Div(str(value), cls=f"num {num_cls}".strip()), Div(label, cls="lbl"), cls="stat")
+
+
+def _replace_card(ctx: AdminContext, kind: str, name: str):
+    return Div(
+        H3("Replace document"),
+        P("Upload a new version of the source file. We'll re-scan it for placeholders "
+          "and keep the arguments you've already configured.", cls="muted"),
+        Form(
+            Div(Input(name="file", type="file", accept=_asset_ext(kind), required=True), cls="field"),
+            Button("Upload & re-scan", type="submit", cls="btn btn-secondary"),
+            action=ctx.u(f"/{kind}/{name}/reupload"), method="post", enctype="multipart/form-data",
+        ),
+        cls="card",
+    )
+
+
+def _status_view(ctx: AdminContext, level: str = "info"):
+    live_docx = ctx.live_names(KIND_DOCX)
+    live_email = ctx.live_names(KIND_EMAIL)
+    lvl_counts = metrics.counts_by_level()
+    err_count = lvl_counts.get("ERROR", 0) + lvl_counts.get("CRITICAL", 0)
+
+    stats = Div(
+        _stat("Uptime", _fmt_uptime(time.time() - metrics.START_TIME)),
+        _stat("Upload backend", ctx.config.storage.strategy.value),
+        _stat("Live Word tools", len(live_docx)),
+        _stat("Live Email tools", len(live_email)),
+        _stat("Errors logged", err_count, num_cls="num-err" if err_count else ""),
+        cls="stats",
+    )
+
+    # Per-template usage.
+    rows = []
+    for st in metrics.tool_stats():
+        rows.append(Tr(
+            Td(st.name), Td(st.kind), Td(str(st.calls)),
+            Td(str(st.errors), cls="num-err" if st.errors else ""),
+            Td(_fmt_ts(st.last_called)),
+            Td(st.last_error or "—", cls="msg"),
+        ))
+    usage = (Table(
+        Thead(Tr(Th("Tool"), Th("Kind"), Th("Calls"), Th("Errors"),
+                 Th("Last used"), Th("Last error"))),
+        Tbody(*rows),
+        cls="tpl-table",
+    ) if rows else P("No template tools have been called yet this session.", cls="muted"))
+
+    # Recent logs, optionally filtered to errors+warnings.
+    errors_only = level == "error"
+    min_level = logging.WARNING if errors_only else logging.INFO
+    log_rows = [
+        Tr(
+            Td(_fmt_ts(r["time"]), cls="ts"),
+            Td(r["level"], cls=f"lvl lvl-{r['level']}"),
+            Td(r["logger"]),
+            Td(r["message"], cls="msg"),
+        )
+        for r in metrics.recent_logs(min_level, limit=150)
+    ]
+    log_block = (Div(Table(Tbody(*log_rows)), cls="logs") if log_rows
+                 else P("No log records captured yet.", cls="muted"))
+    toggle = Div(
+        Span("Show:", cls="muted"),
+        A("All", href=ctx.u("/status"),
+          cls="btn btn-sm " + ("btn-secondary" if errors_only else "btn-primary")),
+        A("Warnings & errors", href=ctx.u("/status?level=error"),
+          cls="btn btn-sm " + ("btn-primary" if errors_only else "btn-secondary")),
+        A("Refresh", href=ctx.u(f"/status{'?level=error' if errors_only else ''}"), cls="btn btn-sm"),
+        cls="toggle-row",
+    )
+
+    return _page(
+        ctx, "Status",
+        H1("Status"),
+        stats,
+        Div(H2("Template usage (this session)"), usage, cls="card"),
+        Div(H2("Recent activity & errors"), toggle, log_block, cls="card"),
+    )
+
+
 def _new_page(ctx: AdminContext, kind: str, error: str = None):
     return _page(
         ctx, f"New {_KIND_LABEL[kind]} template",
@@ -544,6 +666,9 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
     ctx = AdminContext(mcp, config)
     expected_pw = config.admin_password_effective
     login_path = ctx.u("/login")
+
+    # Capture recent logs for the Status page (only when the admin UI is on).
+    metrics.install_log_capture(level=config.logging.level_no)
 
     # Stable session secret derived from the password so cookies survive
     # restarts; falls back to a constant when no password is configured (the
@@ -612,6 +737,10 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
                 _template_table(ctx, KIND_EMAIL), cls="card"),
         )
 
+    @rt("/status")
+    def status(level: str = "info"):
+        return _status_view(ctx, level=level)
+
     @rt("/new/{kind}")
     def new(kind: str):
         if kind not in KINDS:
@@ -666,6 +795,43 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             _analysis_report(analysis, spec) if analysis else
             _flash("The template's source file is missing — arguments can still be edited.", "warn"),
             _edit_form(ctx, kind, spec, analysis, is_new=False),
+            _replace_card(ctx, kind, name),
+        )
+
+    @rt("/{kind}/{name}/reupload", methods=["post"])
+    async def reupload(req, kind: str, name: str):
+        if kind not in KINDS:
+            return RedirectResponse(ctx.u("/"), status_code=303)
+        spec = ctx.store.get_spec(kind, name)
+        if spec is None:
+            return _page(ctx, "Not found", H1("Not found"),
+                         _flash(f"No managed template named '{name}'.", "err"),
+                         A("← Back to all templates", href=ctx.u("/")))
+        form = await req.form()
+        upload = form.get("file")
+        data = await upload.read() if upload is not None else b""
+        analysis = analyze(kind, data) if data else None
+        error = None
+        if not data:
+            error = "Please choose a file to upload."
+        elif analysis and any("Could not open" in w for w in analysis.warnings):
+            error = analysis.warnings[0]
+        if error:
+            asset = spec.get(_path_key(kind))
+            cur = analyze(kind, ctx.store.read_asset(kind, asset)) if asset and ctx.store.asset_exists(kind, asset) else None
+            return _page(ctx, f"Edit {name}", H1(f"Edit {name}"), _flash(error, "err"),
+                         _edit_form(ctx, kind, spec, cur, is_new=False), _replace_card(ctx, kind, name))
+
+        filename = spec.get(_path_key(kind)) or f"{name}{_asset_ext(kind)}"
+        ctx.store.write_asset(kind, filename, data)
+        return _page(
+            ctx, f"Edit {name}",
+            H1(f"Edit {name}"),
+            _flash(f"Re-scanned {filename}. New placeholders (if any) were added below — "
+                   "review and save to apply.", "ok"),
+            _analysis_report(analysis, spec),
+            _edit_form(ctx, kind, spec, analysis, is_new=False),
+            _replace_card(ctx, kind, name),
         )
 
     @rt("/{kind}/save", methods=["post"])
