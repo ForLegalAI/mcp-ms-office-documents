@@ -35,7 +35,6 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Optional, Literal
 
-import yaml
 from docx import Document as DocxDocument
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
@@ -45,6 +44,7 @@ from fastmcp import FastMCP
 
 from upload_tools import upload_file
 from template_utils import find_file_in_template_dirs
+from template_registry import gather_specs, safe_remove_tool
 from async_runner import run_blocking
 from .conditionals import resolve_conditionals
 from .inline_formatting import parse_inline_formatting
@@ -56,9 +56,19 @@ from .style_map import DEFAULT_STYLE_MAP, build_style_map
 from fastmcp.exceptions import ToolError
 
 
-__all__ = ["register_docx_template_tools_from_yaml"]
+__all__ = [
+    "register_docx_template_tools_from_yaml",
+    "register_docx_template",
+    "unregister_docx_template",
+    "registered_docx_template_names",
+]
 
 logger = logging.getLogger(__name__)
+
+# Live registry of docx template tools registered on the running server,
+# mapping tool name -> the spec it was built from. Lets the admin UI list,
+# replace and remove dynamic docx tools after startup.
+_REGISTERED_DOCX: Dict[str, Dict[str, Any]] = {}
 
 # Type mapping for YAML -> Python types
 TYPE_MAP = {
@@ -525,36 +535,63 @@ def _replace_placeholders_in_document(doc: DocxDocument, context: Dict[str, str]
                                                style_map=style_map)
 
 
+def docx_spec_dir(yaml_path: Path) -> Path:
+    """Directory holding UI-managed per-template docx specs, beside *yaml_path*."""
+    return yaml_path.parent / "docx_templates.d"
+
+
+def registered_docx_template_names() -> list[str]:
+    """Return the names of docx template tools currently registered."""
+    return sorted(_REGISTERED_DOCX)
+
+
 def register_docx_template_tools_from_yaml(mcp: FastMCP, yaml_path: Path) -> None:
-    """Register dynamic DOCX template tools from a YAML configuration file.
+    """Register dynamic DOCX template tools from YAML.
+
+    Merges the master YAML at *yaml_path* with any UI-managed per-template files
+    in the sibling ``docx_templates.d/`` directory (the per-template file wins on
+    a name clash). Either source may be absent.
 
     Args:
         mcp: The FastMCP instance to register tools with
-        yaml_path: Path to the YAML configuration file
+        yaml_path: Path to the master YAML configuration file
     """
-    try:
-        cfg = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
-    except Exception as e:
-        logger.error(f"[dynamic-docx] Failed to load YAML '{yaml_path}': {e}")
-        return
-
-    templates = cfg.get("templates") or []
-    if not isinstance(templates, list):
-        logger.error("[dynamic-docx] 'templates' key must be a list – skipping.")
-        return
-
+    templates, cfg = gather_specs(yaml_path, docx_spec_dir(yaml_path))
     global_style_mapping = cfg.get("style_mapping") or {}
 
     for spec in templates:
         try:
-            _register_single_template(mcp, spec, global_style_mapping)
+            register_docx_template(mcp, spec, global_style_mapping)
         except Exception as e:
-            name = spec.get("name", "<unknown>")
+            name = spec.get("name", "<unknown>") if isinstance(spec, dict) else "<unknown>"
             logger.exception(f"[dynamic-docx] Failed to register template '{name}': {e}")
 
 
+def register_docx_template(
+    mcp: FastMCP, spec: Dict[str, Any], global_style_mapping: Dict[str, Any] = None
+) -> bool:
+    """Register (or replace) a single docx template tool on the live server.
+
+    If a tool with the same name already exists it is removed first, so this is
+    safe to call after startup to apply an edited template. Returns True on
+    success.
+    """
+    name = spec.get("name") if isinstance(spec, dict) else None
+    if name:
+        safe_remove_tool(mcp, name)
+        _REGISTERED_DOCX.pop(name, None)
+    return _register_single_template(mcp, spec, global_style_mapping)
+
+
+def unregister_docx_template(mcp: FastMCP, name: str) -> bool:
+    """Remove a docx template tool from the live server. Returns True if removed."""
+    removed = safe_remove_tool(mcp, name)
+    _REGISTERED_DOCX.pop(name, None)
+    return removed
+
+
 def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
-                              global_style_mapping: Dict[str, Any] = None) -> None:
+                              global_style_mapping: Dict[str, Any] = None) -> bool:
     """Register a single DOCX template as an MCP tool.
 
     Args:
@@ -562,11 +599,15 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
         spec: The template specification from YAML
         global_style_mapping: Document-wide ``style_mapping`` overrides; the
             template's own ``style_mapping`` (if any) takes precedence.
+
+    Returns:
+        True when the tool was registered; False when the spec was skipped
+        (missing name/path, file not found, …).
     """
     name = spec.get("name")
     if not name:
         logger.warning("[dynamic-docx] Template missing 'name', skipping.")
-        return
+        return False
 
     description = spec.get("description", f"Generate document from {name} template")
     annotations = spec.get("annotations", {})
@@ -574,7 +615,7 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
 
     if not docx_path:
         logger.warning(f"[dynamic-docx] Missing docx_path for {name}, skipping.")
-        return
+        return False
 
     # Validate path is filename only (no directory components)
     docx_path_obj = Path(docx_path)
@@ -583,13 +624,13 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
             f"[dynamic-docx] docx_path must be filename only (no directories) for {name}; "
             f"got '{docx_path}'"
         )
-        return
+        return False
 
     # Resolve the template file
     resolved = find_docx_template_by_name(docx_path)
     if not resolved:
         logger.error(f"[dynamic-docx] Template file not found for {name}: {docx_path}")
-        return
+        return False
 
     logger.info(f"[dynamic-docx] Using template for {name}: {resolved}")
 
@@ -700,5 +741,7 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
         tags={"docx", "document", "template"},
     )(make_tool_fn())
 
+    _REGISTERED_DOCX[name] = spec
     logger.info(f"[dynamic-docx] Registered tool: {name}")
+    return True
 

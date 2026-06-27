@@ -99,52 +99,44 @@ async def health_live(request: Request) -> PlainTextResponse:
     """Liveness probe — returns 200 OK while the event loop is responsive."""
     return PlainTextResponse("alive", status_code=200)
 
-# Look for dynamic email templates in production and local locations.
-# Production (container): /app/config/email_templates.yaml
-# Local development: <project_root>/config/email_templates.yaml
-APP_CONFIG_PATH = Path("/app/config") / "email_templates.yaml"
-LOCAL_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "email_templates.yaml"
+# Resolve the config directory: production mount (/app/config) is preferred,
+# otherwise the in-project config/ directory for local development.
+_APP_CONFIG_DIR = Path("/app/config")
+_LOCAL_CONFIG_DIR = Path(__file__).resolve().parent / "config"
+_CONFIG_DIR = _APP_CONFIG_DIR if _APP_CONFIG_DIR.exists() else _LOCAL_CONFIG_DIR
 
-# Prefer the production path when present, otherwise fall back to local config.
-_primary_yaml = None
-for candidate in (APP_CONFIG_PATH, LOCAL_CONFIG_PATH):
-    if candidate.exists():
-        _primary_yaml = candidate
-        logger.info("[dynamic-email] Found email templates file: %s", candidate)
-        break
 
-if _primary_yaml:
+def _has_templates(master: Path, spec_subdir: str) -> bool:
+    """True if a master YAML or a UI-managed ``*.d`` directory is present.
+
+    The loaders merge both sources, so registration should run whenever EITHER
+    exists — including the case where the master YAML was never created but the
+    admin UI has written per-template files into ``<spec_subdir>``.
+    """
+    return master.is_file() or (master.parent / spec_subdir).is_dir()
+
+
+# Dynamic email templates: master config/email_templates.yaml merged with any
+# UI-managed per-template files in config/email_templates.d/.
+_email_yaml = _CONFIG_DIR / "email_templates.yaml"
+if _has_templates(_email_yaml, "email_templates.d"):
     try:
-        register_email_template_tools_from_yaml(mcp, _primary_yaml)
+        register_email_template_tools_from_yaml(mcp, _email_yaml)
     except Exception as e:
-        logger.exception("[dynamic-email] Failed to register email templates from %s: %s", _primary_yaml, e)
+        logger.exception("[dynamic-email] Failed to register email templates from %s: %s", _email_yaml, e)
 else:
-    logger.info(
-        "[dynamic-email] No dynamic email templates file found at /app/config/email_templates.yaml or config/email_templates.yaml - skipping"
-    )
+    logger.info("[dynamic-email] No email templates found under %s - skipping", _CONFIG_DIR)
 
-# Look for dynamic DOCX templates in production and local locations.
-# Production (container): /app/config/docx_templates.yaml
-# Local development: <project_root>/config/docx_templates.yaml
-APP_DOCX_CONFIG_PATH = Path("/app/config") / "docx_templates.yaml"
-LOCAL_DOCX_CONFIG_PATH = Path(__file__).resolve().parent / "config" / "docx_templates.yaml"
-
-_docx_yaml = None
-for candidate in (APP_DOCX_CONFIG_PATH, LOCAL_DOCX_CONFIG_PATH):
-    if candidate.exists():
-        _docx_yaml = candidate
-        logger.info("[dynamic-docx] Found DOCX templates file: %s", candidate)
-        break
-
-if _docx_yaml:
+# Dynamic DOCX templates: master config/docx_templates.yaml merged with any
+# UI-managed per-template files in config/docx_templates.d/.
+_docx_yaml = _CONFIG_DIR / "docx_templates.yaml"
+if _has_templates(_docx_yaml, "docx_templates.d"):
     try:
         register_docx_template_tools_from_yaml(mcp, _docx_yaml)
     except Exception as e:
         logger.exception("[dynamic-docx] Failed to register DOCX templates from %s: %s", _docx_yaml, e)
 else:
-    logger.info(
-        "[dynamic-docx] No dynamic DOCX templates file found at /app/config/docx_templates.yaml or config/docx_templates.yaml - skipping"
-    )
+    logger.info("[dynamic-docx] No DOCX templates found under %s - skipping", _CONFIG_DIR)
 
 
 @mcp.tool(

@@ -255,6 +255,34 @@ class StorageSettings(BaseModel):
         return self
 
 
+class AdminSettings(BaseModel):
+    """Configuration for the optional FastHTML template-admin UI.
+
+    The admin UI is **opt-in**: when ``enabled`` is False (the default) the
+    server behaves exactly as before — no admin routes are mounted and no
+    extra dependencies are required at runtime. When enabled, a single shared
+    password (``password``) gates the admin subtree mounted at ``path``.
+    """
+    enabled: bool = Field(default=False, description="Mount the template-admin UI when True.")
+    password: Optional[str] = Field(
+        default=None,
+        description="Shared password gating the admin UI. Falls back to the API key when unset.",
+    )
+    path: str = Field(default="/admin", description="URL prefix the admin UI is mounted under.")
+
+    @model_validator(mode="after")
+    def _normalize(self) -> "AdminSettings":
+        # Normalise the mount path to a leading-slash, no-trailing-slash form.
+        p = (self.path or "/admin").strip()
+        if not p.startswith("/"):
+            p = "/" + p
+        p = p.rstrip("/") or "/admin"
+        self.path = p
+        if self.password is not None:
+            self.password = self.password.strip() or None
+        return self
+
+
 class Config(BaseModel):
     """Top-level configuration container used by the whole application."""
     logging: LoggingSettings
@@ -262,6 +290,10 @@ class Config(BaseModel):
     api_key: Optional[str] = Field(
         default=None,
         description="API key for authenticating incoming requests. None means no auth.",
+    )
+    admin: AdminSettings = Field(
+        default_factory=AdminSettings,
+        description="Settings for the optional template-admin UI.",
     )
     run_blocking_by_asyncio_thread_enabled: bool = Field(
         default=True,
@@ -290,6 +322,16 @@ class Config(BaseModel):
             "RUN_BLOCKING_MAX_WORKERS environment variable."
         ),
     )
+
+    @property
+    def admin_password_effective(self) -> Optional[str]:
+        """Password the admin UI should accept.
+
+        Prefers the explicit ``ADMIN_PASSWORD``; falls back to ``API_KEY`` so a
+        single secret can protect both the MCP endpoint and the admin UI.
+        Returns ``None`` when neither is set (admin auth cannot be satisfied).
+        """
+        return self.admin.password or self.api_key
 
     @staticmethod
     def _parse_bool(value: Optional[str]) -> bool:
@@ -368,6 +410,15 @@ class Config(BaseModel):
         # API key authentication (optional – empty/missing means no auth)
         raw_api_key = (os.environ.get("API_KEY") or "").strip() or None
 
+        # Template-admin UI (optional, opt-in). Disabled unless ADMIN_ENABLED is
+        # truthy. The admin password gates the UI; when unset it falls back to
+        # the API key (so a single secret can protect both /mcp and /admin).
+        admin_settings = AdminSettings(
+            enabled=cls._parse_bool(os.environ.get("ADMIN_ENABLED")),
+            password=(os.environ.get("ADMIN_PASSWORD") or "").strip() or None,
+            path=(os.environ.get("ADMIN_PATH") or "/admin"),
+        )
+
         # Toggle for thread-pool offload of blocking tool work. Default
         # True — when the env var is absent or empty we treat it as
         # "unset, use default". Set the var to "false"/"0"/"no"/"off" to
@@ -393,6 +444,7 @@ class Config(BaseModel):
                 logging=logging_settings,
                 storage=storage_settings,
                 api_key=raw_api_key,
+                admin=admin_settings,
                 run_blocking_by_asyncio_thread_enabled=run_blocking_by_asyncio_thread_enabled,
                 run_blocking_max_workers=run_blocking_max_workers,
             )
