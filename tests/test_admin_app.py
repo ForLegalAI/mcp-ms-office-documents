@@ -124,7 +124,7 @@ async def test_create_makes_tool_live(admin_client):
     }
     r = client.post("/admin/docx/save", data=save)
     assert r.status_code == 200
-    assert "is live" in r.text
+    assert "now live" in r.text
     assert "live_letter" in await _tool_names(mcp)
     # Persisted as a managed spec file.
     assert store_mod.FileTemplateStore.from_config().get_spec("docx", "live_letter")["name"] == "live_letter"
@@ -180,6 +180,25 @@ def test_invalid_name_rejected(admin_client):
                     files={"file": ("x.docx", data, "application/octet-stream")})
     assert r.status_code == 200
     assert "Invalid template name" in r.text
+
+
+def test_ui_theme_and_controls_present(admin_client):
+    """The self-contained theme and dynamic-row controls are wired in."""
+    client, _ = admin_client
+    # Index ships the inline theme + topbar (no CDN dependency).
+    idx = client.get("/admin/").text
+    assert "Template Admin" in idx
+    assert "--brand" in idx  # inline CSS variables
+    assert "cdn" not in idx.lower()  # no external stylesheet/script
+
+    data = _docx_with_placeholders("Dear {{recipient}},", "{{#if ps}}", "{{note}}", "{{/if}}")
+    r = client.post("/admin/docx/draft", data={"name": "ux_tpl"},
+                    files={"file": ("ux_tpl.docx", data, "application/octet-stream")})
+    body = r.text
+    assert "+ Add argument" in body                 # dynamic add-row control
+    assert "window.__ARG_ROW_HTML__" in body        # client-side row template
+    assert 'class="chip"' in body                    # detected placeholder chips
+    assert "adminRemoveRow" in body                  # per-row remove handler
 
 
 def test_mcp_endpoint_still_works(admin_client):

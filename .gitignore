@@ -49,3 +49,5 @@ config/
 
 # Temporary files
 *.tmp
+# FastHTML session key (admin UI)
+.sesskey

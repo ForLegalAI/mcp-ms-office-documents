@@ -13,13 +13,15 @@ Authoring model (chosen with the maintainer): the user uploads a real ``.docx``
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 from typing import Any, Dict, List, Optional
 
 from fasthtml.common import (
-    FastHTML, Titled, Div, P, A, H2, H3, Form, Input, Button, Label, Span,
-    Table, Thead, Tbody, Tr, Th, Td, Select, Option, Textarea, Details, Summary,
-    Hr, RedirectResponse, Response, HTMLResponse, Hidden,
+    FastHTML, Title, Main, Header, Div, P, A, H1, H2, H3, Form, Input, Button,
+    Label, Span, Table, Thead, Tbody, Tr, Th, Td, Select, Option, Textarea,
+    Details, Summary, Meta, Style, Script, NotStr, to_xml,
+    RedirectResponse, Response, HTMLResponse, Hidden,
 )
 from starlette.routing import Mount
 
@@ -33,10 +35,102 @@ from template_registry import gather_specs
 logger = logging.getLogger(__name__)
 
 KINDS = (KIND_DOCX, KIND_EMAIL)
-_KIND_LABEL = {KIND_DOCX: "Word (docx)", KIND_EMAIL: "Email (html)"}
+_KIND_LABEL = {KIND_DOCX: "Word", KIND_EMAIL: "Email"}
+_KIND_ICON = {KIND_DOCX: "📝", KIND_EMAIL: "✉️"}
 _ARG_TYPES = ["string", "int", "float", "bool", "list"]
 # Style-mapping keys surfaced in the UI (subset of the full recognised set).
 _STYLE_KEYS = ["heading_1", "list_number", "list_bullet", "quote", "table"]
+
+# Self-contained theme — no CDN dependency, so the UI looks right offline / in
+# locked-down deployments (FastHTML's default pico.css is CDN-loaded).
+ADMIN_CSS = """
+:root{
+  --bg:#f1f5f9; --card:#ffffff; --ink:#0f172a; --muted:#64748b; --line:#e2e8f0;
+  --brand:#4f46e5; --brand-d:#4338ca; --ok:#16a34a; --warn:#b45309; --err:#dc2626;
+  --ok-bg:#ecfdf5; --warn-bg:#fffbeb; --err-bg:#fef2f2; --info-bg:#eff6ff;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+  font-size:15px;line-height:1.5}
+a{color:var(--brand);text-decoration:none}
+a:hover{text-decoration:underline}
+.topbar{background:var(--brand);color:#fff;padding:.75rem 1.25rem;
+  display:flex;align-items:center;justify-content:space-between;gap:1rem;
+  box-shadow:0 1px 3px rgba(0,0,0,.15)}
+.topbar .brand{font-weight:700;font-size:1.05rem;color:#fff;display:flex;align-items:center;gap:.5rem}
+.topbar nav a{color:#e0e7ff;margin-left:1rem;font-size:.92rem}
+.topbar nav a:hover{color:#fff}
+.container{max-width:980px;margin:1.5rem auto;padding:0 1.25rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+  padding:1.25rem 1.5rem;margin-bottom:1.25rem;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+h1{font-size:1.5rem;margin:.2rem 0 1rem}
+h2{font-size:1.15rem;margin:0 0 .75rem}
+h3{font-size:1rem;margin:1.25rem 0 .5rem}
+.muted{color:var(--muted);font-size:.9rem}
+.field{margin-bottom:1rem}
+.field label{display:block;font-weight:600;font-size:.85rem;margin-bottom:.3rem}
+input,select,textarea{width:100%;padding:.5rem .6rem;border:1px solid var(--line);
+  border-radius:8px;font:inherit;background:#fff;color:var(--ink)}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--brand);
+  outline-offset:-1px;border-color:var(--brand)}
+input[disabled]{background:#f8fafc;color:var(--muted)}
+textarea{resize:vertical}
+.btn{display:inline-flex;align-items:center;gap:.4rem;cursor:pointer;border-radius:8px;
+  padding:.5rem .9rem;font:inherit;font-weight:600;border:1px solid transparent;
+  background:#fff;color:var(--ink);text-decoration:none}
+.btn:hover{text-decoration:none}
+.btn-primary{background:var(--brand);color:#fff}
+.btn-primary:hover{background:var(--brand-d);color:#fff}
+.btn-secondary{background:#fff;color:var(--brand);border-color:var(--brand)}
+.btn-secondary:hover{background:#eef2ff}
+.btn-danger{background:#fff;color:var(--err);border-color:#fecaca}
+.btn-danger:hover{background:var(--err-bg)}
+.btn-sm{padding:.3rem .55rem;font-size:.82rem}
+.btn-icon{padding:.25rem .5rem;background:#fff;border:1px solid var(--line);color:var(--err)}
+.btn-icon:hover{background:var(--err-bg);border-color:#fecaca}
+.actions{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center}
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:.55rem .5rem;border-bottom:1px solid var(--line);vertical-align:middle}
+th{font-size:.78rem;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)}
+.tpl-table td{font-size:.95rem}
+.args-table td{padding:.3rem .35rem;border-bottom:none}
+.args-table th{padding-bottom:.25rem}
+.args-table input,.args-table select{padding:.4rem .5rem;font-size:.9rem}
+.col-name{width:22%}.col-type{width:12%}.col-req{width:13%}.col-def{width:16%}.col-x{width:38px}
+.badge{display:inline-block;padding:.12rem .5rem;border-radius:999px;font-size:.74rem;
+  font-weight:600;line-height:1.5}
+.badge-live{background:var(--ok-bg);color:var(--ok)}
+.badge-off{background:#f1f5f9;color:var(--muted)}
+.badge-ro{background:#f1f5f9;color:var(--muted)}
+.badge-if{background:#eef2ff;color:var(--brand);margin-left:.4rem}
+.chip{display:inline-block;padding:.15rem .55rem;margin:.15rem .25rem .15rem 0;border-radius:6px;
+  background:#eef2ff;color:var(--brand-d);font-size:.82rem;font-family:ui-monospace,Menlo,monospace}
+.chip-if{background:#fef9c3;color:#854d0e}
+.flash{padding:.6rem .85rem;border-radius:8px;margin:.5rem 0;border:1px solid transparent}
+.flash-info{background:var(--info-bg);border-color:#bfdbfe}
+.flash-ok{background:var(--ok-bg);border-color:#a7f3d0}
+.flash-warn{background:var(--warn-bg);border-color:#fde68a;color:#854d0e}
+.flash-err{background:var(--err-bg);border-color:#fecaca;color:#991b1b}
+.empty{text-align:center;padding:2rem 1rem;color:var(--muted)}
+details{margin:1rem 0;border:1px solid var(--line);border-radius:8px;padding:.5rem .85rem}
+summary{cursor:pointer;font-weight:600}
+.login-wrap{max-width:380px;margin:8vh auto}
+.inline-form{display:inline}
+hr{border:none;border-top:1px solid var(--line);margin:1.25rem 0}
+"""
+
+# Vanilla JS for dynamic argument rows (add / remove) — avoids a CDN htmx dep.
+ARG_ROWS_JS = """
+function adminAddArgRow(){
+  var tb=document.getElementById('argrows');
+  if(!tb) return;
+  tb.insertAdjacentHTML('beforeend', window.__ARG_ROW_HTML__);
+}
+function adminRemoveRow(btn){
+  var tr=btn.closest('tr'); if(tr) tr.remove();
+}
+"""
 
 
 class AdminContext:
@@ -167,21 +261,34 @@ def _asset_ext(kind: str) -> str:
 # View fragments
 # ---------------------------------------------------------------------------
 
-def _nav(ctx: AdminContext):
-    return Div(
-        A("All templates", href=ctx.u("/")), " · ",
-        A("New Word template", href=ctx.u("/new/docx")), " · ",
-        A("New Email template", href=ctx.u("/new/email")), " · ",
+def _topbar(ctx: AdminContext, authed: bool = True):
+    from fasthtml.common import Nav
+    nav = Nav(
+        A("All templates", href=ctx.u("/")),
+        A("New Word", href=ctx.u("/new/docx")),
+        A("New Email", href=ctx.u("/new/email")),
         A("Log out", href=ctx.u("/logout")),
-        style="margin-bottom:1rem",
+    ) if authed else Span()
+    return Header(Span("📄 Template Admin", cls="brand"), nav, cls="topbar")
+
+
+def _page(ctx: AdminContext, title: str, *content, authed: bool = True):
+    """Wrap page *content* in the themed shell (title + topbar + container)."""
+    return (
+        Title(f"{title} · Template Admin"),
+        _topbar(ctx, authed),
+        Main(Div(*content, cls="container")),
     )
 
 
 def _flash(msg: Optional[str], kind: str = "info"):
     if not msg:
         return None
-    color = {"info": "#2563eb", "ok": "#16a34a", "warn": "#d97706", "err": "#dc2626"}.get(kind, "#2563eb")
-    return Div(msg, style=f"padding:.5rem .75rem;border-left:4px solid {color};background:#f8fafc;margin:.5rem 0")
+    return Div(msg, cls=f"flash flash-{kind}")
+
+
+def _status_badge(live: bool):
+    return Span("● Live", cls="badge badge-live") if live else Span("Not live", cls="badge badge-off")
 
 
 def _template_table(ctx: AdminContext, kind: str):
@@ -194,31 +301,41 @@ def _template_table(ctx: AdminContext, kind: str):
         name = spec.get("name")
         nargs = len(spec.get("args") or [])
         rows.append(Tr(
-            Td(name),
+            Td(A(name, href=ctx.u(f"/{kind}/{name}/edit"))),
             Td(str(nargs)),
-            Td("● live" if name in live else "○ not live"),
-            Td(
-                A("Edit", href=ctx.u(f"/{kind}/{name}/edit")), " · ",
-                Form(Button("Delete", type="submit", cls="secondary",
-                            onclick="return confirm('Delete this template?')"),
-                     action=ctx.u(f"/{kind}/{name}/delete"), method="post",
-                     style="display:inline"),
-            ),
+            Td(_status_badge(name in live)),
+            Td(Div(
+                A("Edit", href=ctx.u(f"/{kind}/{name}/edit"), cls="btn btn-secondary btn-sm"),
+                Form(Button("Delete", type="submit", cls="btn btn-danger btn-sm",
+                            onclick="return confirm('Delete this template? This removes the live tool.')"),
+                     action=ctx.u(f"/{kind}/{name}/delete"), method="post", cls="inline-form"),
+                cls="actions",
+            )),
         ))
     # Read-only templates from the master YAML (live but not UI-managed).
     for name in sorted(live - managed_names):
-        rows.append(Tr(Td(name), Td("—"), Td("● live (master YAML)"), Td(Span("read-only", style="color:#888"))))
+        rows.append(Tr(
+            Td(name), Td("—"),
+            Td(Span("● Live", cls="badge badge-live")),
+            Td(Span("from master YAML — read-only", cls="badge badge-ro")),
+        ))
 
     if not rows:
-        return P(f"No {_KIND_LABEL[kind]} templates yet.")
+        return Div(
+            P(f"No {_KIND_LABEL[kind]} templates yet."),
+            A(f"{_KIND_ICON[kind]} Create your first {_KIND_LABEL[kind]} template",
+              href=ctx.u(f"/new/{kind}"), cls="btn btn-primary"),
+            cls="empty",
+        )
     return Table(
         Thead(Tr(Th("Name"), Th("Args"), Th("Status"), Th("Actions"))),
         Tbody(*rows),
+        cls="tpl-table",
     )
 
 
-def _arg_row(arg: Dict[str, Any] = None, lock_bool: bool = False):
-    """Render one editable argument row (parallel-indexed fields)."""
+def _arg_row(arg: Dict[str, Any] = None, cond: bool = False):
+    """Render one editable argument row (parallel-indexed fields + remove button)."""
     arg = arg or {}
     name = arg.get("name", "")
     atype = str(arg.get("type", "string")).lower()
@@ -226,20 +343,32 @@ def _arg_row(arg: Dict[str, Any] = None, lock_bool: bool = False):
     default = arg.get("default", "")
     desc = arg.get("description", "")
 
-    type_opts = [
-        Option(t, value=t, selected=(t == atype)) for t in _ARG_TYPES
-    ]
+    type_opts = [Option(t, value=t, selected=(t == atype)) for t in _ARG_TYPES]
     req_opts = [
         Option("required", value="true", selected=required),
         Option("optional", value="false", selected=not required),
     ]
+    name_cell = [Input(name="arg_name", value=name, placeholder="argument_name")]
+    if cond:
+        name_cell.append(Span("if", cls="badge badge-if", title="Conditional flag"))
     return Tr(
-        Td(Input(name="arg_name", value=name, placeholder="arg_name")),
-        Td(Select(*type_opts, name="arg_type", disabled=lock_bool)),
-        Td(Select(*req_opts, name="arg_required")),
-        Td(Input(name="arg_default", value="" if default in (None,) else str(default), placeholder="(default)")),
-        Td(Input(name="arg_desc", value=desc, placeholder="description shown to the AI")),
+        Td(*name_cell, cls="col-name"),
+        Td(Select(*type_opts, name="arg_type"), cls="col-type"),
+        Td(Select(*req_opts, name="arg_required"), cls="col-req"),
+        Td(Input(name="arg_default", value="" if default in (None,) else str(default),
+                 placeholder="optional"), cls="col-def"),
+        Td(Input(name="arg_desc", value=desc, placeholder="what this is, for the AI")),
+        Td(Button("✕", type="button", cls="btn-icon", title="Remove",
+                  onclick="adminRemoveRow(this)"), cls="col-x"),
+        cls="arg-row",
     )
+
+
+def _chips(items, cond_set=None):
+    cond_set = cond_set or set()
+    if not items:
+        return Span("none", cls="muted")
+    return Span(*[Span(it, cls="chip chip-if" if it in cond_set else "chip") for it in items])
 
 
 def _style_mapping_block(analysis: Optional[Analysis], spec: Dict[str, Any]):
@@ -250,94 +379,124 @@ def _style_mapping_block(analysis: Optional[Analysis], spec: Dict[str, Any]):
         cur = current.get(key, "")
         opts = [Option("(use built-in)", value="__default__", selected=not cur)]
         opts += [Option(s, value=s, selected=(s == cur)) for s in styles]
-        selects.append(Div(Label(key, style="font-weight:600"), Select(*opts, name=f"style_{key}")))
+        selects.append(Div(Label(key), Select(*opts, name=f"style_{key}"), cls="field"))
     return Details(
-        Summary("Advanced: map markdown styles to your template's style names"),
-        P("Only needed if your template renames the built-in Word styles.",
-          style="color:#666;font-size:.9em"),
+        Summary("Advanced — map markdown styles to your template's own style names"),
+        P("Only needed if your Word template renames the built-in styles "
+          "(Heading 1, List Number, …). Otherwise leave these alone.", cls="muted"),
         *selects,
     )
 
 
 def _analysis_report(analysis: Analysis, spec: Dict[str, Any]):
     rec = reconcile(analysis, spec.get("args") or [])
+    cond_set = set(analysis.conditionals)
     items = [
-        P(f"Detected placeholders: {', '.join(analysis.placeholders) or '—'}"),
-        P(f"Detected conditionals: {', '.join(analysis.conditionals) or '—'}"),
+        Div(Label("Detected placeholders"), _chips(analysis.placeholders), cls="field"),
+        Div(Label("Detected conditionals"),
+            _chips(analysis.conditionals, cond_set) if analysis.conditionals else Span("none", cls="muted"),
+            cls="field"),
     ]
     if analysis.missing_required_styles:
         items.append(_flash(
-            "Template is missing styles the renderer uses: "
-            + ", ".join(analysis.missing_required_styles), "warn"))
+            "⚠ The document is missing some Word styles the renderer uses: "
+            + ", ".join(analysis.missing_required_styles)
+            + ". Lists/headings using them will fall back to the default style.", "warn"))
     for w in analysis.warnings:
-        items.append(_flash(w, "warn"))
+        items.append(_flash("⚠ " + w, "warn"))
     if rec.orphan_args:
-        items.append(_flash("Args with no matching placeholder: " + ", ".join(rec.orphan_args), "warn"))
+        items.append(_flash("Args with no matching placeholder (they'll be ignored by the document): "
+                            + ", ".join(rec.orphan_args), "warn"))
     if rec.non_bool_conditions:
-        items.append(_flash(
-            "Conditional flags should be type 'bool': " + ", ".join(rec.non_bool_conditions), "warn"))
-    return Div(*[i for i in items if i is not None],
-               style="background:#f8fafc;padding:.5rem .75rem;margin:.5rem 0")
+        items.append(_flash("Conditional flags should be type 'bool': "
+                            + ", ".join(rec.non_bool_conditions), "warn"))
+    return Div(H3("What we found in the document"),
+               *[i for i in items if i is not None], cls="card")
 
 
 def _edit_form(ctx: AdminContext, kind: str, spec: Dict[str, Any],
                analysis: Optional[Analysis], is_new: bool):
     asset_filename = spec.get(_path_key(kind), "")
     annotations = spec.get("annotations") or {}
+    cond_set = set(analysis.conditionals) if analysis else set()
 
-    # Build arg rows: declared args first, then detected-but-missing, then blanks.
+    # Build arg rows: declared args first, then detected-but-missing. No blank
+    # spares — users add rows with the "Add argument" button.
     existing = spec.get("args") or []
     existing_names = {a.get("name") for a in existing if isinstance(a, dict)}
-    rows = [_arg_row(a) for a in existing]
+    rows = [_arg_row(a, cond=a.get("name") in cond_set) for a in existing]
     if analysis:
-        cond_set = set(analysis.conditionals)
         for ph in analysis.placeholders:
             if ph not in existing_names:
                 is_cond = ph in cond_set
                 rows.append(_arg_row(
                     {"name": ph, "type": "bool" if is_cond else "string",
-                     "required": not is_cond, "description": ""}))
+                     "required": not is_cond, "description": ""}, cond=is_cond))
                 existing_names.add(ph)
-        for cond in analysis.conditionals:
-            if cond not in existing_names:
-                rows.append(_arg_row({"name": cond, "type": "bool", "required": False, "description": ""}))
-                existing_names.add(cond)
-    rows += [_arg_row() for _ in range(3)]  # spare blank rows for manual additions
+        for c in analysis.conditionals:
+            if c not in existing_names:
+                rows.append(_arg_row({"name": c, "type": "bool", "required": False,
+                                      "description": ""}, cond=True))
+                existing_names.add(c)
+    if not rows:
+        rows = [_arg_row()]
 
-    report = _analysis_report(analysis, spec) if analysis else None
+    name_field = (
+        Div(Label("Tool name"),
+            Input(name="name", value=spec.get("name", ""), required=True,
+                  placeholder="e.g. formal_letter"),
+            P("Letters, digits and underscores. This is what the AI calls.", cls="muted"),
+            cls="field")
+        if is_new else
+        Div(Label("Tool name"), Input(value=spec.get("name", ""), disabled=True), cls="field")
+    )
+
+    details_card = Div(
+        H3("Tool details"),
+        name_field,
+        Div(Label("Title"), Input(name="title", value=annotations.get("title", ""),
+            placeholder="Friendly name shown to the user"), cls="field"),
+        Div(Label("Description"),
+            Textarea(spec.get("description", ""), name="description", rows="3",
+                     placeholder="Tell the AI when and how to use this template."),
+            P("This is the instruction the AI sees when choosing the tool.", cls="muted"),
+            cls="field"),
+        cls="card",
+    )
+
+    args_card = Div(
+        H3("Arguments"),
+        P("Every placeholder and conditional in your document needs an argument. "
+          "We pre-filled them from the document — adjust types and descriptions, then save.",
+          cls="muted"),
+        Table(
+            Thead(Tr(Th("Name", cls="col-name"), Th("Type", cls="col-type"),
+                     Th("Required", cls="col-req"), Th("Default", cls="col-def"),
+                     Th("Description"), Th("", cls="col-x"))),
+            Tbody(*rows, id="argrows"),
+            cls="args-table",
+        ),
+        Div(Button("+ Add argument", type="button", cls="btn btn-secondary btn-sm",
+                   onclick="adminAddArgRow()"), style="margin-top:.6rem"),
+        cls="card",
+    )
 
     return Form(
         Hidden(name="kind", value=kind),
         Hidden(name="asset_filename", value=asset_filename),
         Hidden(name="name", value=spec.get("name", "")) if not is_new else None,
-
-        report,
+        details_card,
+        args_card,
+        Div(_style_mapping_block(analysis, spec), cls="card") if kind == KIND_DOCX else None,
         Div(
-            Label("Tool name (letters, digits, underscore)"),
-            Input(name="name", value=spec.get("name", ""), required=True) if is_new
-            else Input(value=spec.get("name", ""), disabled=True),
-        ),
-        Div(Label("Title (shown to the user)"),
-            Input(name="title", value=annotations.get("title", ""))),
-        Div(Label("Description (instructions the AI sees)"),
-            Textarea(spec.get("description", ""), name="description", rows="3")),
-
-        H3("Arguments"),
-        P("Each placeholder/conditional in the document needs an argument. Empty rows are ignored.",
-          style="color:#666;font-size:.9em"),
-        Table(
-            Thead(Tr(Th("Name"), Th("Type"), Th("Required"), Th("Default"), Th("Description"))),
-            Tbody(*rows),
-        ),
-
-        _style_mapping_block(analysis, spec) if kind == KIND_DOCX else None,
-
-        Hr(),
-        Div(
-            Button("Save & make live", type="submit"),
-            Button("Preview", type="submit", formaction=ctx.u(f"/{kind}/preview"),
-                   formtarget="_blank", cls="secondary"),
-            style="display:flex;gap:.5rem",
+            Div(
+                Button("Save & make live", type="submit", cls="btn btn-primary"),
+                Button("Preview", type="submit", formaction=ctx.u(f"/{kind}/preview"),
+                       formtarget="_blank", cls="btn btn-secondary"),
+                A("Cancel", href=ctx.u("/"), cls="btn"),
+                cls="actions",
+            ),
+            cls="card",
         ),
         action=ctx.u(f"/{kind}/save"), method="post",
     )
@@ -346,6 +505,40 @@ def _edit_form(ctx: AdminContext, kind: str, spec: Dict[str, Any],
 # ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
+
+def _new_page(ctx: AdminContext, kind: str, error: str = None):
+    return _page(
+        ctx, f"New {_KIND_LABEL[kind]} template",
+        H1(f"{_KIND_ICON[kind]} New {_KIND_LABEL[kind]} template"),
+        _flash(error, "err"),
+        Div(
+            Form(
+                Div(Label("Tool name"),
+                    Input(name="name", required=True, placeholder="e.g. formal_letter"),
+                    P("Letters, digits and underscores — this is what the AI calls.", cls="muted"),
+                    cls="field"),
+                Div(Label(f"{_KIND_LABEL[kind]} file ({_asset_ext(kind)})"),
+                    Input(name="file", type="file", accept=_asset_ext(kind), required=True),
+                    cls="field"),
+                Button("Upload & analyze", type="submit", cls="btn btn-primary"),
+                action=ctx.u(f"/{kind}/draft"), method="post", enctype="multipart/form-data",
+            ),
+            cls="card",
+        ),
+        Details(
+            Summary("How does this work?"),
+            P("Author your document in ",
+              "Word" if kind == KIND_DOCX else "any HTML editor",
+              " and insert placeholders like ", Span("{{recipient_name}}", cls="chip"),
+              " wherever a value should go."),
+            P("Wrap optional content in ", Span("{{#if include_clause}}", cls="chip"),
+              " … ", Span("{{/if}}", cls="chip"), " to show it only when a flag is set.",
+              cls="muted") if kind == KIND_DOCX else None,
+            P("When you upload, we scan the file, list every placeholder, and pre-build the "
+              "argument form for you. Nothing goes live until you press Save.", cls="muted"),
+        ),
+    )
+
 
 def build_admin_app(mcp, config: Config) -> FastHTML:
     ctx = AdminContext(mcp, config)
@@ -357,20 +550,49 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
     # login can't succeed in that case anyway).
     secret = hashlib.sha256(f"mcp-office-admin:{expected_pw or ''}".encode()).hexdigest()
 
-    app = FastHTML(secret_key=secret, before=auth.make_before(login_path))
+    # Self-contained headers (no CDN): meta + theme CSS + the row JS, with the
+    # blank-row HTML injected so "Add argument" can clone it client-side.
+    blank_row_html = json.dumps(to_xml(_arg_row()))
+    hdrs = (
+        Meta(charset="utf-8"),
+        Meta(name="viewport", content="width=device-width, initial-scale=1"),
+        Style(ADMIN_CSS),
+        Script(NotStr(f"window.__ARG_ROW_HTML__ = {blank_row_html};\n{ARG_ROWS_JS}")),
+    )
+
+    app = FastHTML(secret_key=secret, before=auth.make_before(login_path),
+                   default_hdrs=False, htmx=False, surreal=False, hdrs=hdrs)
     rt = app.route
 
     @rt("/login", methods=["get", "post"])
     async def login(req, sess):
+        error = None
         if req.method == "POST":
             form = await req.form()
             if auth.check_password(form.get("password"), expected_pw):
                 sess[auth.SESSION_KEY] = True
                 return RedirectResponse(ctx.u("/"), status_code=303)
-            return Titled("Admin login",
-                          _flash("Incorrect password.", "err"),
-                          _login_form(ctx))
-        return Titled("Admin login", _login_form(ctx))
+            error = "Incorrect password."
+        return _page(
+            ctx, "Sign in",
+            Div(
+                Div(
+                    H1("📄 Template Admin"),
+                    P("Sign in to manage document templates.", cls="muted"),
+                    _flash(error, "err"),
+                    Form(
+                        Div(Label("Password"),
+                            Input(name="password", type="password", required=True, autofocus=True),
+                            cls="field"),
+                        Button("Sign in", type="submit", cls="btn btn-primary"),
+                        action=ctx.u("/login"), method="post",
+                    ),
+                    cls="card",
+                ),
+                cls="login-wrap",
+            ),
+            authed=False,
+        )
 
     @rt("/logout")
     def logout(sess):
@@ -379,33 +601,22 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
 
     @rt("/")
     def index(sess):
-        return Titled(
-            "Template Admin",
-            _nav(ctx),
-            H2("Word templates"),
-            _template_table(ctx, KIND_DOCX),
-            H2("Email templates"),
-            _template_table(ctx, KIND_EMAIL),
+        return _page(
+            ctx, "Templates",
+            H1("Templates"),
+            P("Create reusable Word and email templates. Each one becomes a tool the AI can call.",
+              cls="muted"),
+            Div(H2(f"{_KIND_ICON[KIND_DOCX]} Word templates"),
+                _template_table(ctx, KIND_DOCX), cls="card"),
+            Div(H2(f"{_KIND_ICON[KIND_EMAIL]} Email templates"),
+                _template_table(ctx, KIND_EMAIL), cls="card"),
         )
 
     @rt("/new/{kind}")
     def new(kind: str):
         if kind not in KINDS:
             return RedirectResponse(ctx.u("/"), status_code=303)
-        return Titled(
-            f"New {_KIND_LABEL[kind]} template",
-            _nav(ctx),
-            P(f"Upload a {_asset_ext(kind)} file containing {{{{placeholders}}}}. "
-              "We'll detect them and build the argument form."),
-            Form(
-                Div(Label("Tool name"), Input(name="name", required=True,
-                    placeholder="e.g. formal_letter")),
-                Div(Label(f"{_asset_ext(kind)} file"),
-                    Input(name="file", type="file", accept=_asset_ext(kind), required=True)),
-                Button("Upload & analyze", type="submit"),
-                action=ctx.u(f"/{kind}/draft"), method="post", enctype="multipart/form-data",
-            ),
-        )
+        return _new_page(ctx, kind)
 
     @rt("/{kind}/draft", methods=["post"])
     async def draft(req, kind: str):
@@ -415,26 +626,24 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         try:
             name = validate_name((form.get("name") or "").strip())
         except TemplateStoreError as e:
-            return Titled("New template", _nav(ctx), _flash(str(e), "err"),
-                          A("Back", href=ctx.u(f"/new/{kind}")))
+            return _new_page(ctx, kind, error=str(e))
         upload = form.get("file")
         data = await upload.read() if upload is not None else b""
         if not data:
-            return Titled("New template", _nav(ctx), _flash("No file uploaded.", "err"),
-                          A("Back", href=ctx.u(f"/new/{kind}")))
+            return _new_page(ctx, kind, error="Please choose a file to upload.")
 
         analysis = analyze(kind, data)
         if any("Could not open" in w for w in analysis.warnings):
-            return Titled("New template", _nav(ctx), _flash(analysis.warnings[0], "err"),
-                          A("Back", href=ctx.u(f"/new/{kind}")))
+            return _new_page(ctx, kind, error=analysis.warnings[0])
 
         filename = f"{name}{_asset_ext(kind)}"
         ctx.store.write_asset(kind, filename, data)
         spec = {"name": name, "description": "", _path_key(kind): filename, "args": []}
-        return Titled(
-            f"Configure {name}",
-            _nav(ctx),
-            _flash(f"Analyzed {filename}. Review the arguments below and save.", "ok"),
+        return _page(
+            ctx, f"Configure {name}",
+            H1(f"Configure {name}"),
+            _flash(f"Analyzed {filename} — review the arguments below, preview, then save.", "ok"),
+            _analysis_report(analysis, spec),
             _edit_form(ctx, kind, spec, analysis, is_new=False),
         )
 
@@ -444,14 +653,20 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             return RedirectResponse(ctx.u("/"), status_code=303)
         spec = ctx.store.get_spec(kind, name)
         if spec is None:
-            return Titled("Not found", _nav(ctx),
-                          _flash(f"No managed template named {name}.", "err"))
+            return _page(ctx, "Not found", H1("Not found"),
+                         _flash(f"No managed template named '{name}'.", "err"),
+                         A("← Back to all templates", href=ctx.u("/")))
         analysis = None
         asset = spec.get(_path_key(kind))
         if asset and ctx.store.asset_exists(kind, asset):
             analysis = analyze(kind, ctx.store.read_asset(kind, asset))
-        return Titled(f"Edit {name}", _nav(ctx),
-                      _edit_form(ctx, kind, spec, analysis, is_new=False))
+        return _page(
+            ctx, f"Edit {name}",
+            H1(f"Edit {name}"),
+            _analysis_report(analysis, spec) if analysis else
+            _flash("The template's source file is missing — arguments can still be edited.", "warn"),
+            _edit_form(ctx, kind, spec, analysis, is_new=False),
+        )
 
     @rt("/{kind}/save", methods=["post"])
     async def save(req, kind: str):
@@ -462,13 +677,19 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             spec = _build_spec(kind, form)
             ctx.store.save_spec(kind, spec)
         except TemplateStoreError as e:
-            return Titled("Save failed", _nav(ctx), _flash(str(e), "err"),
-                          A("Back", href=ctx.u("/")))
+            return _page(ctx, "Save failed", H1("Save failed"), _flash(str(e), "err"),
+                         A("← Back to all templates", href=ctx.u("/")))
         ok = ctx.register(kind, spec)
-        msg = (f"Saved — tool '{spec['name']}' is live."
-               if ok else f"Saved, but the tool '{spec['name']}' could not be registered (check logs).")
-        return Titled("Saved", _nav(ctx), _flash(msg, "ok" if ok else "warn"),
-                      A("Back to all templates", href=ctx.u("/")))
+        msg = (f"Saved — the tool '{spec['name']}' is now live and ready for the AI to use."
+               if ok else f"Saved, but the tool '{spec['name']}' could not be registered (check the logs).")
+        return _page(
+            ctx, "Saved",
+            H1("✓ Saved" if ok else "Saved with a warning"),
+            _flash(msg, "ok" if ok else "warn"),
+            Div(A("Back to all templates", href=ctx.u("/"), cls="btn btn-primary"),
+                A("Keep editing", href=ctx.u(f"/{kind}/{spec['name']}/edit"), cls="btn btn-secondary"),
+                cls="actions"),
+        )
 
     @rt("/{kind}/preview", methods=["post"])
     async def preview(req, kind: str):
@@ -478,7 +699,8 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         spec = _build_spec(kind, form)
         asset = spec.get(_path_key(kind))
         if not asset or not ctx.store.asset_exists(kind, asset):
-            return HTMLResponse("<p>No asset to preview yet — save first.</p>", status_code=400)
+            return HTMLResponse("<p>Nothing to preview yet — save the template first.</p>",
+                                status_code=400)
         data = ctx.store.read_asset(kind, asset)
         analysis = analyze(kind, data)
         values = sample_values(spec.get("args") or [], analysis.conditionals)
@@ -500,14 +722,6 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         return RedirectResponse(ctx.u("/"), status_code=303)
 
     return app
-
-
-def _login_form(ctx: AdminContext):
-    return Form(
-        Div(Label("Password"), Input(name="password", type="password", required=True, autofocus=True)),
-        Button("Log in", type="submit"),
-        action=ctx.u("/login"), method="post",
-    )
 
 
 # ---------------------------------------------------------------------------
