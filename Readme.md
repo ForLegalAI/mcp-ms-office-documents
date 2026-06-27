@@ -529,6 +529,55 @@ Unknown style names fall back to the document default (with a logged warning) ra
 
 ---
 
+## 🖥️ Template Admin UI (optional)
+
+Prefer clicking over editing YAML? Enable the built-in **template-admin UI** to
+create and manage dynamic **Word** and **email** templates from your browser —
+no YAML, no restart.
+
+<details>
+<summary><strong>How to enable and use it</strong></summary>
+
+**1.** Set these in your `.env`:
+
+```
+ADMIN_ENABLED=true
+ADMIN_PASSWORD=choose-a-strong-password   # falls back to API_KEY if omitted
+# ADMIN_PATH=/admin                        # optional, this is the default
+```
+
+**2.** Start the server as usual. The admin UI is served from the **same port**
+as the MCP endpoint:
+
+```
+http://localhost:8958/admin
+```
+
+**3.** Log in with your `ADMIN_PASSWORD`, then:
+
+- **Upload** a Word `.docx` (or email `.html`) that contains `{{placeholders}}`
+  (and optionally `{{#if flag}} … {{/if}}` conditionals). Author it in real Word
+  — full fidelity is preserved.
+- The UI **auto-detects** every placeholder and conditional and pre-builds the
+  argument form. Fill in each argument's type, whether it's required, a default,
+  and the description the AI sees.
+- **Preview** with sample values (generates a real file; never uploaded anywhere).
+- **Save** — the template becomes a live MCP tool **immediately**, no restart.
+
+**How it's stored:** the UI writes one file per template into
+`config/docx_templates.d/` or `config/email_templates.d/` (plus the asset into
+`custom_templates/`). Your hand-written master `config/*.yaml` files are never
+modified — UI templates are simply merged on top of them at load time.
+
+> **Single-instance note:** live, no-restart registration assumes one server
+> instance owns the template files (the standard docker-compose setup). For a
+> multi-replica deployment, put the template files on shared storage and roll
+> the pods to pick up changes.
+
+</details>
+
+---
+
 ## 🔌 Connecting Your AI Client
 
 Point your MCP-compatible client to the server endpoint:

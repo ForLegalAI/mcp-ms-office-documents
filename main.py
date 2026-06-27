@@ -360,10 +360,30 @@ async def create_xml_document(
         raise ToolError(f"Error creating XML file: {e}")
 
 if __name__ == "__main__":
-    mcp.run(
-        transport="streamable-http",
-        host="0.0.0.0",
-        port=8958,
-        log_level=config.logging.mcp_level_str,
-        path="/mcp"
-    )
+    if config.admin.enabled:
+        # Admin UI enabled: serve the MCP endpoint and the FastHTML template-admin
+        # from a SINGLE ASGI process (uvicorn) so saving a template can register
+        # its MCP tool live, with no restart.
+        import uvicorn
+        from admin.app import build_combined_app
+
+        if not config.admin_password_effective:
+            logger.warning(
+                "[admin] ADMIN_ENABLED is set but neither ADMIN_PASSWORD nor API_KEY "
+                "is configured — the admin UI will reject all logins."
+            )
+        logger.info("[admin] Template-admin UI enabled at %s (port 8958)", config.admin.path)
+        uvicorn.run(
+            build_combined_app(mcp, config),
+            host="0.0.0.0",
+            port=8958,
+            log_level=config.logging.mcp_level_str,
+        )
+    else:
+        mcp.run(
+            transport="streamable-http",
+            host="0.0.0.0",
+            port=8958,
+            log_level=config.logging.mcp_level_str,
+            path="/mcp"
+        )

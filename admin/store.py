@@ -136,6 +136,10 @@ class TemplateStore(ABC):
         """Return the bytes of an asset file (raises if not found)."""
 
     @abstractmethod
+    def write_asset(self, kind: str, filename: str, data: bytes) -> str:
+        """Write *data* to the asset file, returning the validated filename."""
+
+    @abstractmethod
     def asset_exists(self, kind: str, filename: str) -> bool:
         """Return True if the asset file exists in the writable custom dir."""
 
@@ -225,6 +229,13 @@ class FileTemplateStore(TemplateStore):
         if not path.is_file():
             raise TemplateStoreError(f"Asset not found: {filename}")
         return path.read_bytes()
+
+    def write_asset(self, kind: str, filename: str, data: bytes) -> str:
+        validate_asset_filename(filename, kind)
+        self.custom_dir.mkdir(parents=True, exist_ok=True)
+        self.asset_path(kind, filename).write_bytes(data)
+        logger.info("[template-store] Wrote %s asset %s (%d bytes)", kind, filename, len(data))
+        return filename
 
     def asset_exists(self, kind: str, filename: str) -> bool:
         try:
