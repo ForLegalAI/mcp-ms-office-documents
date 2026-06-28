@@ -18,7 +18,7 @@ import pystache
 from docx import Document as DocxDocument
 
 from docx_tools.conditionals import resolve_conditionals
-from docx_tools.dynamic_docx_tools import _replace_placeholders_in_document
+from docx_tools.dynamic_docx_tools import replace_placeholders_in_document
 from docx_tools.style_map import build_style_map
 
 
@@ -66,7 +66,7 @@ def render_docx_preview(
 
     resolve_conditionals(doc, values)
     context = {k: ("" if v is None else str(v)) for k, v in values.items()}
-    _replace_placeholders_in_document(doc, context, style_map)
+    replace_placeholders_in_document(doc, context, style_map)
 
     out = io.BytesIO()
     doc.save(out)

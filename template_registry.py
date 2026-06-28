@@ -44,12 +44,13 @@ def safe_remove_tool(mcp, name: str) -> bool:
         return False
 
 
-def _read_one_spec(path: Path) -> Optional[Dict[str, Any]]:
+def read_spec_file(path: Path) -> Optional[Dict[str, Any]]:
     """Load a single per-template ``*.yaml`` file into a spec dict.
 
     Accepts either a bare spec mapping or a ``{templates: [spec]}`` wrapper.
     Returns ``None`` (with a log) for unreadable / malformed files so one bad
-    file never aborts the whole load.
+    file never aborts the whole load. This is the canonical loader, also used by
+    :class:`admin.store.FileTemplateStore`.
     """
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -71,7 +72,7 @@ def read_spec_dir(spec_dir: Path) -> List[Dict[str, Any]]:
         return []
     specs: List[Dict[str, Any]] = []
     for path in sorted(spec_dir.glob("*.yaml")):
-        spec = _read_one_spec(path)
+        spec = read_spec_file(path)
         if spec is not None:
             specs.append(spec)
     return specs

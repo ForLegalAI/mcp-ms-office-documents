@@ -28,6 +28,8 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
+from template_registry import read_spec_file
+
 logger = logging.getLogger(__name__)
 
 # Supported template kinds.
@@ -203,26 +205,10 @@ class FileTemplateStore(TemplateStore):
             return None
         return self._read_spec_file(path)
 
-    @staticmethod
-    def _read_spec_file(path: Path) -> Optional[Dict[str, Any]]:
-        """Load one managed spec file.
-
-        A managed file holds a single spec mapping. For resilience a file that
-        instead wraps it as ``{templates: [spec]}`` is also accepted (first
-        entry wins).
-        """
-        try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        except Exception as e:
-            logger.error("[template-store] Failed to parse %s: %s", path, e)
-            return None
-        if isinstance(data, dict) and isinstance(data.get("templates"), list):
-            templates = data["templates"]
-            data = templates[0] if templates else {}
-        if not isinstance(data, dict) or not data.get("name"):
-            logger.warning("[template-store] Ignoring malformed spec file %s", path)
-            return None
-        return data
+    # A managed file holds a single spec mapping (or a ``{templates: [spec]}``
+    # wrapper). Reuse the canonical loader so the parsing/validation logic lives
+    # in exactly one place.
+    _read_spec_file = staticmethod(read_spec_file)
 
     def read_asset(self, kind: str, filename: str) -> bytes:
         path = self.asset_path(kind, filename)

@@ -32,6 +32,7 @@ import io
 import re
 import copy
 import logging
+import threading
 from pathlib import Path
 from typing import Any, Dict, Optional, Literal
 
@@ -62,14 +63,18 @@ __all__ = [
     "register_docx_template",
     "unregister_docx_template",
     "registered_docx_template_names",
+    "replace_placeholders_in_document",
 ]
 
 logger = logging.getLogger(__name__)
 
 # Live registry of docx template tools registered on the running server,
 # mapping tool name -> the spec it was built from. Lets the admin UI list,
-# replace and remove dynamic docx tools after startup.
+# replace and remove dynamic docx tools after startup. Guarded by a lock because
+# it is mutated from HTTP request handlers (admin save/delete) and read from the
+# status page concurrently.
 _REGISTERED_DOCX: Dict[str, Dict[str, Any]] = {}
+_REG_LOCK = threading.Lock()
 
 # Type mapping for YAML -> Python types
 TYPE_MAP = {
@@ -536,6 +541,11 @@ def _replace_placeholders_in_document(doc: DocxDocument, context: Dict[str, str]
                                                style_map=style_map)
 
 
+# Public alias: the admin preview renderer reuses the document substitution
+# pipeline across the package boundary.
+replace_placeholders_in_document = _replace_placeholders_in_document
+
+
 def docx_spec_dir(yaml_path: Path) -> Path:
     """Directory holding UI-managed per-template docx specs, beside *yaml_path*."""
     return yaml_path.parent / "docx_templates.d"
@@ -543,7 +553,8 @@ def docx_spec_dir(yaml_path: Path) -> Path:
 
 def registered_docx_template_names() -> list[str]:
     """Return the names of docx template tools currently registered."""
-    return sorted(_REGISTERED_DOCX)
+    with _REG_LOCK:
+        return sorted(_REGISTERED_DOCX)
 
 
 def register_docx_template_tools_from_yaml(mcp: FastMCP, yaml_path: Path) -> None:
@@ -580,14 +591,16 @@ def register_docx_template(
     name = spec.get("name") if isinstance(spec, dict) else None
     if name:
         safe_remove_tool(mcp, name)
-        _REGISTERED_DOCX.pop(name, None)
+        with _REG_LOCK:
+            _REGISTERED_DOCX.pop(name, None)
     return _register_single_template(mcp, spec, global_style_mapping)
 
 
 def unregister_docx_template(mcp: FastMCP, name: str) -> bool:
     """Remove a docx template tool from the live server. Returns True if removed."""
     removed = safe_remove_tool(mcp, name)
-    _REGISTERED_DOCX.pop(name, None)
+    with _REG_LOCK:
+        _REGISTERED_DOCX.pop(name, None)
     return removed
 
 
@@ -677,6 +690,11 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
 
     # Create the Pydantic model
     model = create_model(f"{name}_DocxArgs", **fields)  # type: ignore
+    # Expose the dynamically-created model in the module globals: Pydantic/FastMCP
+    # resolve the tool's annotation (`data: <Model>`) by name against this module's
+    # namespace when building the tool schema, so the class must be importable from
+    # here. The name `<tool>_DocxArgs` is unique per template; re-registering an
+    # edited template intentionally overwrites the prior model.
     globals()[model.__name__] = model
 
     # Create the tool function.
@@ -744,7 +762,8 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
         tags={"docx", "document", "template"},
     )(make_tool_fn())
 
-    _REGISTERED_DOCX[name] = spec
+    with _REG_LOCK:
+        _REGISTERED_DOCX[name] = spec
     logger.info(f"[dynamic-docx] Registered tool: {name}")
     return True
 

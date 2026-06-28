@@ -11,6 +11,7 @@ from __future__ import annotations
 import io
 import pystache
 import logging
+import threading
 from email.mime.text import MIMEText
 from email import encoders
 from pathlib import Path
@@ -37,6 +38,7 @@ logger = logging.getLogger(__name__)
 # Live registry of email template tools registered on the running server,
 # mapping tool name -> the spec it was built from.
 _REGISTERED_EMAIL: Dict[str, Dict[str, Any]] = {}
+_REG_LOCK = threading.Lock()
 
 TYPE_MAP = {
     "string": str, "str": str,
@@ -62,7 +64,8 @@ def email_spec_dir(yaml_path: Path) -> Path:
 
 def registered_email_template_names() -> list[str]:
     """Return the names of email template tools currently registered."""
-    return sorted(_REGISTERED_EMAIL)
+    with _REG_LOCK:
+        return sorted(_REGISTERED_EMAIL)
 
 
 def register_email_template_tools_from_yaml(mcp: FastMCP, yaml_path: Path) -> None:
@@ -90,14 +93,16 @@ def register_email_template(mcp: FastMCP, spec: Dict[str, Any]) -> bool:
     name = spec.get("name") if isinstance(spec, dict) else None
     if name:
         safe_remove_tool(mcp, name)
-        _REGISTERED_EMAIL.pop(name, None)
+        with _REG_LOCK:
+            _REGISTERED_EMAIL.pop(name, None)
     return _register_single_email_template(mcp, spec)
 
 
 def unregister_email_template(mcp: FastMCP, name: str) -> bool:
     """Remove an email template tool from the live server. Returns True if removed."""
     removed = safe_remove_tool(mcp, name)
-    _REGISTERED_EMAIL.pop(name, None)
+    with _REG_LOCK:
+        _REGISTERED_EMAIL.pop(name, None)
     return removed
 
 
@@ -160,6 +165,8 @@ def _register_single_email_template(mcp: FastMCP, spec: Dict[str, Any]) -> bool:
         fields[arg_name] = (field_type, Field(default, description=desc) if desc is not None else default)
 
     model = create_model(f"{name}_Args", **fields)  # type: ignore
+    # See dynamic_docx_tools: the tool annotation is resolved by name against this
+    # module's globals when FastMCP builds the schema, so the model must live here.
     globals()[model.__name__] = model
 
     renderer = pystache.Renderer(file_encoding="utf-8")
@@ -231,6 +238,7 @@ def _register_single_email_template(mcp: FastMCP, spec: Dict[str, Any]) -> bool:
         return tool_impl
 
     mcp.tool(name=name, description=description, annotations=annotations, meta=meta)(make_tool_fn())
-    _REGISTERED_EMAIL[name] = spec
+    with _REG_LOCK:
+        _REGISTERED_EMAIL[name] = spec
     logger.info(f"[dynamic-email] Registered tool: {name}")
     return True

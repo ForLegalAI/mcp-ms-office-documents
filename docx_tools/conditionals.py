@@ -77,6 +77,11 @@ def _parse_marker(text: str) -> _Marker | None:
     return None
 
 
+# Public alias: the admin analyzer reuses marker parsing across the package
+# boundary, so expose it under a non-underscore name.
+parse_marker = _parse_marker
+
+
 def _paragraph_text(p_elem) -> str:
     """Combined run text of a ``<w:p>`` element.
 

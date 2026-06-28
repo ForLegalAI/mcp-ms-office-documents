@@ -4,6 +4,7 @@ The template store and template-resolution directories are redirected to a
 temp path so tests never touch the repo's custom_templates/config.
 """
 import io
+import re
 import sys
 from pathlib import Path
 
@@ -70,6 +71,21 @@ async def _tool_names(mcp):
     return [t.name for t in await mcp.list_tools()]
 
 
+def _csrf(client) -> str:
+    """Extract the session CSRF token from a page that always renders a form."""
+    html = client.get("/admin/new/docx").text
+    tag = re.search(r'<input[^>]*name="csrf"[^>]*>', html)
+    assert tag, "no CSRF input found on page"
+    return re.search(r'value="([^"]*)"', tag.group(0)).group(1)
+
+
+def _post(client, url, data=None, files=None, **kwargs):
+    """POST to an admin route with the session CSRF token injected."""
+    payload = dict(data or {})
+    payload["csrf"] = _csrf(client)
+    return client.post(url, data=payload, files=files, **kwargs)
+
+
 def test_login_required(tmp_path, monkeypatch):
     monkeypatch.setattr(store_mod, "_LOCAL_CUSTOM_DIR", tmp_path / "c")
     monkeypatch.setattr(store_mod, "_LOCAL_CONFIG_DIR", tmp_path / "cfg")
@@ -99,8 +115,8 @@ def test_index_lists_sections(admin_client):
 def test_draft_detects_placeholders(admin_client):
     client, _ = admin_client
     data = _docx_with_placeholders("Dear {{recipient}},", "{{body}}")
-    r = client.post(
-        "/admin/docx/draft",
+    r = _post(
+        client, "/admin/docx/draft",
         data={"name": "letter_x"},
         files={"file": ("letter_x.docx", data, "application/octet-stream")},
     )
@@ -113,8 +129,8 @@ def test_draft_detects_placeholders(admin_client):
 async def test_create_makes_tool_live(admin_client):
     client, mcp = admin_client
     data = _docx_with_placeholders("Dear {{recipient}},", "{{body}}")
-    client.post(
-        "/admin/docx/draft",
+    _post(
+        client, "/admin/docx/draft",
         data={"name": "live_letter"},
         files={"file": ("live_letter.docx", data, "application/octet-stream")},
     )
@@ -125,7 +141,7 @@ async def test_create_makes_tool_live(admin_client):
         "arg_required": ["true", "true"], "arg_default": ["", ""],
         "arg_desc": ["who", "the body"],
     }
-    r = client.post("/admin/docx/save", data=save)
+    r = _post(client, "/admin/docx/save", data=save)
     assert r.status_code == 200
     assert "now live" in r.text
     assert "live_letter" in await _tool_names(mcp)
@@ -137,15 +153,15 @@ async def test_create_makes_tool_live(admin_client):
 async def test_edit_then_delete(admin_client):
     client, mcp = admin_client
     data = _docx_with_placeholders("{{body}}")
-    client.post("/admin/docx/draft", data={"name": "tmp_tpl"},
-                files={"file": ("tmp_tpl.docx", data, "application/octet-stream")})
+    _post(client, "/admin/docx/draft", data={"name": "tmp_tpl"},
+          files={"file": ("tmp_tpl.docx", data, "application/octet-stream")})
     save = {
         "kind": "docx", "asset_filename": "tmp_tpl.docx", "name": "tmp_tpl",
         "title": "T", "description": "d",
         "arg_name": ["body"], "arg_type": ["string"], "arg_required": ["true"],
         "arg_default": [""], "arg_desc": [""],
     }
-    client.post("/admin/docx/save", data=save)
+    _post(client, "/admin/docx/save", data=save)
     assert "tmp_tpl" in await _tool_names(mcp)
 
     # Edit page renders with the saved spec.
@@ -153,7 +169,7 @@ async def test_edit_then_delete(admin_client):
     assert r.status_code == 200 and "tmp_tpl" in r.text
 
     # Delete unregisters and removes the managed spec.
-    r = client.post("/admin/docx/tmp_tpl/delete", follow_redirects=False)
+    r = _post(client, "/admin/docx/tmp_tpl/delete", follow_redirects=False)
     assert r.status_code == 303
     assert "tmp_tpl" not in await _tool_names(mcp)
     assert store_mod.FileTemplateStore.from_config().get_spec("docx", "tmp_tpl") is None
@@ -162,15 +178,15 @@ async def test_edit_then_delete(admin_client):
 def test_preview_returns_docx(admin_client):
     client, _ = admin_client
     data = _docx_with_placeholders("Dear {{recipient}},", "{{body}}")
-    client.post("/admin/docx/draft", data={"name": "prev_tpl"},
-                files={"file": ("prev_tpl.docx", data, "application/octet-stream")})
+    _post(client, "/admin/docx/draft", data={"name": "prev_tpl"},
+          files={"file": ("prev_tpl.docx", data, "application/octet-stream")})
     pv = {
         "kind": "docx", "asset_filename": "prev_tpl.docx", "name": "prev_tpl",
         "title": "P", "description": "d",
         "arg_name": ["recipient", "body"], "arg_type": ["string", "string"],
         "arg_required": ["true", "true"], "arg_default": ["", ""], "arg_desc": ["", ""],
     }
-    r = client.post("/admin/docx/preview", data=pv)
+    r = _post(client, "/admin/docx/preview", data=pv)
     assert r.status_code == 200
     assert r.content[:2] == b"PK"  # a real .docx (zip)
     assert "attachment" in r.headers.get("content-disposition", "")
@@ -179,8 +195,8 @@ def test_preview_returns_docx(admin_client):
 def test_invalid_name_rejected(admin_client):
     client, _ = admin_client
     data = _docx_with_placeholders("{{body}}")
-    r = client.post("/admin/docx/draft", data={"name": "1 bad name"},
-                    files={"file": ("x.docx", data, "application/octet-stream")})
+    r = _post(client, "/admin/docx/draft", data={"name": "1 bad name"},
+              files={"file": ("x.docx", data, "application/octet-stream")})
     assert r.status_code == 200
     assert "Invalid template name" in r.text
 
@@ -195,8 +211,8 @@ def test_ui_theme_and_controls_present(admin_client):
     assert "cdn" not in idx.lower()  # no external stylesheet/script
 
     data = _docx_with_placeholders("Dear {{recipient}},", "{{#if ps}}", "{{note}}", "{{/if}}")
-    r = client.post("/admin/docx/draft", data={"name": "ux_tpl"},
-                    files={"file": ("ux_tpl.docx", data, "application/octet-stream")})
+    r = _post(client, "/admin/docx/draft", data={"name": "ux_tpl"},
+              files={"file": ("ux_tpl.docx", data, "application/octet-stream")})
     body = r.text
     assert "+ Add argument" in body                 # dynamic add-row control
     assert "window.__ARG_ROW_HTML__" in body        # client-side row template
@@ -219,37 +235,59 @@ def test_status_page_renders(admin_client):
 async def test_status_reflects_tool_calls(admin_client):
     client, mcp = admin_client
     data = _docx_with_placeholders("Hi {{name}}")
-    client.post("/admin/docx/draft", data={"name": "metric_tpl"},
-                files={"file": ("metric_tpl.docx", data, "application/octet-stream")})
-    client.post("/admin/docx/save", data={
+    _post(client, "/admin/docx/draft", data={"name": "metric_tpl"},
+          files={"file": ("metric_tpl.docx", data, "application/octet-stream")})
+    _post(client, "/admin/docx/save", data={
         "kind": "docx", "asset_filename": "metric_tpl.docx", "name": "metric_tpl",
         "title": "M", "description": "d", "arg_name": ["name"], "arg_type": ["string"],
         "arg_required": ["true"], "arg_default": [""], "arg_desc": [""],
     })
     await mcp.call_tool("metric_tpl", {"data": {"name": "World"}})
-    assert metrics.get_tool_stat("metric_tpl").calls == 1
+    # Recorded regardless of whether the LOCAL upload succeeds in this env.
+    st = metrics.get_tool_stat("metric_tpl")
+    assert st is not None and (st.calls + st.errors) >= 1
     r = client.get("/admin/status")
     assert "metric_tpl" in r.text
 
 
 def test_reupload_rescans_new_placeholder(admin_client):
     client, _ = admin_client
-    client.post("/admin/docx/draft", data={"name": "reup_tpl"},
-                files={"file": ("reup_tpl.docx", _docx_with_placeholders("Hi {{name}}"),
-                                "application/octet-stream")})
-    client.post("/admin/docx/save", data={
+    _post(client, "/admin/docx/draft", data={"name": "reup_tpl"},
+          files={"file": ("reup_tpl.docx", _docx_with_placeholders("Hi {{name}}"),
+                          "application/octet-stream")})
+    _post(client, "/admin/docx/save", data={
         "kind": "docx", "asset_filename": "reup_tpl.docx", "name": "reup_tpl",
         "title": "R", "description": "d", "arg_name": ["name"], "arg_type": ["string"],
         "arg_required": ["true"], "arg_default": [""], "arg_desc": [""],
     })
     # Replace the document with one that has an extra placeholder.
-    r = client.post("/admin/docx/reup_tpl/reupload",
-                    files={"file": ("reup_tpl.docx",
-                                    _docx_with_placeholders("Hi {{name}}", "Ref {{case_no}}"),
-                                    "application/octet-stream")})
+    r = _post(client, "/admin/docx/reup_tpl/reupload",
+              files={"file": ("reup_tpl.docx",
+                              _docx_with_placeholders("Hi {{name}}", "Ref {{case_no}}"),
+                              "application/octet-stream")})
     assert r.status_code == 200
     assert "Re-scanned" in r.text
     assert "case_no" in r.text  # newly detected placeholder surfaced
+
+
+def test_post_without_csrf_is_rejected(admin_client):
+    client, _ = admin_client
+    # A save POST with no CSRF token is refused.
+    r = client.post("/admin/docx/save", data={
+        "kind": "docx", "asset_filename": "x.docx", "name": "nope",
+        "arg_name": [], "arg_type": [], "arg_required": [], "arg_default": [], "arg_desc": [],
+    })
+    assert r.status_code == 403
+
+
+def test_oversized_upload_rejected(admin_client):
+    client, _ = admin_client
+    from admin.app import MAX_UPLOAD_BYTES
+    big = b"x" * (MAX_UPLOAD_BYTES + 1)
+    r = _post(client, "/admin/docx/draft", data={"name": "big_tpl"},
+              files={"file": ("big_tpl.docx", big, "application/octet-stream")})
+    assert r.status_code == 200
+    assert "too large" in r.text.lower()
 
 
 def test_mcp_endpoint_still_works(admin_client):

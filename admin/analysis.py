@@ -22,10 +22,9 @@ from typing import Any, Dict, List
 
 from docx import Document as DocxDocument
 from docx.oxml.ns import qn
-from docx.text.paragraph import Paragraph
 
 from docx_tools.dynamic_docx_tools import PLACEHOLDER_PATTERN
-from docx_tools.conditionals import _parse_marker
+from docx_tools.conditionals import parse_marker
 
 # Styles the markdown renderer applies by name; warn when a template lacks them.
 REQUIRED_DOCX_STYLES = [
@@ -92,9 +91,12 @@ def _iter_docx_paragraph_texts(doc: DocxDocument):
 def _iter_docx_body_marker_texts(doc: DocxDocument):
     """Yield body-level paragraph texts (for conditional balance checking)."""
     p_tag = qn("w:p")
+    t_tag = qn("w:t")
     for elem in doc.element.body:
         if elem.tag == p_tag:
-            yield Paragraph(elem, None).text
+            # Concatenate the paragraph's run text straight from the XML, avoiding
+            # python-docx's internal Paragraph(elem, None) constructor.
+            yield "".join(t.text or "" for t in elem.iter(t_tag))
 
 
 def analyze_docx(data: bytes) -> Analysis:
@@ -117,7 +119,7 @@ def analyze_docx(data: bytes) -> Analysis:
     depth = 0
     balanced = True
     for text in _iter_docx_body_marker_texts(doc):
-        marker = _parse_marker(text)
+        marker = parse_marker(text)
         if marker is None:
             continue
         if marker.kind == "open":

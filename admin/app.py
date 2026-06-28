@@ -44,6 +44,13 @@ _ARG_TYPES = ["string", "int", "float", "bool", "list"]
 # Style-mapping keys surfaced in the UI (subset of the full recognised set).
 _STYLE_KEYS = ["heading_1", "list_number", "list_bullet", "quote", "table"]
 
+# Reject uploads larger than this (read fully into memory before validation).
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+def _csrf_input(token: str):
+    return Hidden(name="csrf", value=token or "")
+
 # Self-contained theme — no CDN dependency, so the UI looks right offline / in
 # locked-down deployments (FastHTML's default pico.css is CDN-loaded).
 ADMIN_CSS = """
@@ -162,14 +169,18 @@ class AdminContext:
         self.config = config
         self.path = config.admin.path.rstrip("/")
         self.store = FileTemplateStore.from_config()
-        # Global docx style_mapping from the master YAML (for live registration).
-        master = self.store.config_dir / "docx_templates.yaml"
-        _templates, cfg = gather_specs(master, None)
-        self.global_style_mapping = cfg.get("style_mapping") or {}
 
     def u(self, path: str = "") -> str:
         """Absolute (mount-prefixed) URL for an admin-relative *path*."""
         return f"{self.path}{path}"
+
+    @property
+    def global_style_mapping(self) -> Dict[str, Any]:
+        """Master-YAML ``style_mapping``, re-read each access so edits on disk
+        take effect without a restart (the admin UI is about live editing)."""
+        master = self.store.config_dir / "docx_templates.yaml"
+        _templates, cfg = gather_specs(master, None)
+        return cfg.get("style_mapping") or {}
 
     # -- live MCP tool registration ----------------------------------------
 
@@ -313,7 +324,7 @@ def _status_badge(live: bool):
     return Span("● Live", cls="badge badge-live") if live else Span("Not live", cls="badge badge-off")
 
 
-def _template_table(ctx: AdminContext, kind: str):
+def _template_table(ctx: AdminContext, kind: str, csrf: str = ""):
     managed = ctx.store.list_specs(kind)
     managed_names = {s.get("name") for s in managed}
     live = set(ctx.live_names(kind))
@@ -328,8 +339,10 @@ def _template_table(ctx: AdminContext, kind: str):
             Td(_status_badge(name in live)),
             Td(Div(
                 A("Edit", href=ctx.u(f"/{kind}/{name}/edit"), cls="btn btn-secondary btn-sm"),
-                Form(Button("Delete", type="submit", cls="btn btn-danger btn-sm",
-                            onclick="return confirm('Delete this template? This removes the live tool.')"),
+                Form(_csrf_input(csrf),
+                     Button("Delete", type="submit", cls="btn btn-danger btn-sm",
+                            onclick="return confirm('Delete this template? This removes the live tool. "
+                                    "The source file is kept in custom_templates/.')"),
                      action=ctx.u(f"/{kind}/{name}/delete"), method="post", cls="inline-form"),
                 cls="actions",
             )),
@@ -437,7 +450,7 @@ def _analysis_report(analysis: Analysis, spec: Dict[str, Any]):
 
 
 def _edit_form(ctx: AdminContext, kind: str, spec: Dict[str, Any],
-               analysis: Optional[Analysis], is_new: bool):
+               analysis: Optional[Analysis], is_new: bool, csrf: str = ""):
     asset_filename = spec.get(_path_key(kind), "")
     annotations = spec.get("annotations") or {}
     cond_set = set(analysis.conditionals) if analysis else set()
@@ -504,6 +517,7 @@ def _edit_form(ctx: AdminContext, kind: str, spec: Dict[str, Any],
     )
 
     return Form(
+        _csrf_input(csrf),
         Hidden(name="kind", value=kind),
         Hidden(name="asset_filename", value=asset_filename),
         Hidden(name="name", value=spec.get("name", "")) if not is_new else None,
@@ -550,12 +564,13 @@ def _stat(label: str, value, num_cls: str = ""):
     return Div(Div(str(value), cls=f"num {num_cls}".strip()), Div(label, cls="lbl"), cls="stat")
 
 
-def _replace_card(ctx: AdminContext, kind: str, name: str):
+def _replace_card(ctx: AdminContext, kind: str, name: str, csrf: str = ""):
     return Div(
         H3("Replace document"),
         P("Upload a new version of the source file. We'll re-scan it for placeholders "
           "and keep the arguments you've already configured.", cls="muted"),
         Form(
+            _csrf_input(csrf),
             Div(Input(name="file", type="file", accept=_asset_ext(kind), required=True), cls="field"),
             Button("Upload & re-scan", type="submit", cls="btn btn-secondary"),
             action=ctx.u(f"/{kind}/{name}/reupload"), method="post", enctype="multipart/form-data",
@@ -628,13 +643,14 @@ def _status_view(ctx: AdminContext, level: str = "info"):
     )
 
 
-def _new_page(ctx: AdminContext, kind: str, error: str = None):
+def _new_page(ctx: AdminContext, kind: str, csrf: str = "", error: str = None):
     return _page(
         ctx, f"New {_KIND_LABEL[kind]} template",
         H1(f"{_KIND_ICON[kind]} New {_KIND_LABEL[kind]} template"),
         _flash(error, "err"),
         Div(
             Form(
+                _csrf_input(csrf),
                 Div(Label("Tool name"),
                     Input(name="name", required=True, placeholder="e.g. formal_letter"),
                     P("Letters, digits and underscores — this is what the AI calls.", cls="muted"),
@@ -689,6 +705,14 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
                    default_hdrs=False, htmx=False, surreal=False, hdrs=hdrs)
     rt = app.route
 
+    def _csrf_guard(sess, form):
+        """Return a 403 response when the form's CSRF token is invalid, else None."""
+        if not auth.valid_csrf(sess, form.get("csrf")):
+            logger.warning("[admin] Rejected POST with invalid CSRF token")
+            return Response("CSRF validation failed — reload the page and try again.",
+                            status_code=403)
+        return None
+
     @rt("/login", methods=["get", "post"])
     async def login(req, sess):
         error = None
@@ -696,7 +720,10 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             form = await req.form()
             if auth.check_password(form.get("password"), expected_pw):
                 sess[auth.SESSION_KEY] = True
+                auth.ensure_csrf(sess)
                 return RedirectResponse(ctx.u("/"), status_code=303)
+            client = req.client.host if req.client else "?"
+            logger.warning("[admin] Failed login attempt from %s", client)
             error = "Incorrect password."
         return _page(
             ctx, "Sign in",
@@ -726,15 +753,16 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
 
     @rt("/")
     def index(sess):
+        csrf = auth.ensure_csrf(sess)
         return _page(
             ctx, "Templates",
             H1("Templates"),
             P("Create reusable Word and email templates. Each one becomes a tool the AI can call.",
               cls="muted"),
             Div(H2(f"{_KIND_ICON[KIND_DOCX]} Word templates"),
-                _template_table(ctx, KIND_DOCX), cls="card"),
+                _template_table(ctx, KIND_DOCX, csrf), cls="card"),
             Div(H2(f"{_KIND_ICON[KIND_EMAIL]} Email templates"),
-                _template_table(ctx, KIND_EMAIL), cls="card"),
+                _template_table(ctx, KIND_EMAIL, csrf), cls="card"),
         )
 
     @rt("/status")
@@ -742,28 +770,35 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         return _status_view(ctx, level=level)
 
     @rt("/new/{kind}")
-    def new(kind: str):
+    def new(sess, kind: str):
         if kind not in KINDS:
             return RedirectResponse(ctx.u("/"), status_code=303)
-        return _new_page(ctx, kind)
+        return _new_page(ctx, kind, csrf=auth.ensure_csrf(sess))
 
     @rt("/{kind}/draft", methods=["post"])
-    async def draft(req, kind: str):
+    async def draft(req, sess, kind: str):
         if kind not in KINDS:
             return RedirectResponse(ctx.u("/"), status_code=303)
         form = await req.form()
+        bad = _csrf_guard(sess, form)
+        if bad:
+            return bad
+        csrf = auth.ensure_csrf(sess)
         try:
             name = validate_name((form.get("name") or "").strip())
         except TemplateStoreError as e:
-            return _new_page(ctx, kind, error=str(e))
+            return _new_page(ctx, kind, csrf=csrf, error=str(e))
         upload = form.get("file")
         data = await upload.read() if upload is not None else b""
         if not data:
-            return _new_page(ctx, kind, error="Please choose a file to upload.")
+            return _new_page(ctx, kind, csrf=csrf, error="Please choose a file to upload.")
+        if len(data) > MAX_UPLOAD_BYTES:
+            return _new_page(ctx, kind, csrf=csrf,
+                             error=f"File too large (max {MAX_UPLOAD_BYTES // (1024*1024)} MB).")
 
         analysis = analyze(kind, data)
         if any("Could not open" in w for w in analysis.warnings):
-            return _new_page(ctx, kind, error=analysis.warnings[0])
+            return _new_page(ctx, kind, csrf=csrf, error=analysis.warnings[0])
 
         filename = f"{name}{_asset_ext(kind)}"
         ctx.store.write_asset(kind, filename, data)
@@ -773,11 +808,11 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             H1(f"Configure {name}"),
             _flash(f"Analyzed {filename} — review the arguments below, preview, then save.", "ok"),
             _analysis_report(analysis, spec),
-            _edit_form(ctx, kind, spec, analysis, is_new=False),
+            _edit_form(ctx, kind, spec, analysis, is_new=False, csrf=csrf),
         )
 
     @rt("/{kind}/{name}/edit")
-    def edit(kind: str, name: str):
+    def edit(sess, kind: str, name: str):
         if kind not in KINDS:
             return RedirectResponse(ctx.u("/"), status_code=303)
         spec = ctx.store.get_spec(kind, name)
@@ -785,6 +820,7 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             return _page(ctx, "Not found", H1("Not found"),
                          _flash(f"No managed template named '{name}'.", "err"),
                          A("← Back to all templates", href=ctx.u("/")))
+        csrf = auth.ensure_csrf(sess)
         analysis = None
         asset = spec.get(_path_key(kind))
         if asset and ctx.store.asset_exists(kind, asset):
@@ -794,12 +830,12 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             H1(f"Edit {name}"),
             _analysis_report(analysis, spec) if analysis else
             _flash("The template's source file is missing — arguments can still be edited.", "warn"),
-            _edit_form(ctx, kind, spec, analysis, is_new=False),
-            _replace_card(ctx, kind, name),
+            _edit_form(ctx, kind, spec, analysis, is_new=False, csrf=csrf),
+            _replace_card(ctx, kind, name, csrf),
         )
 
     @rt("/{kind}/{name}/reupload", methods=["post"])
-    async def reupload(req, kind: str, name: str):
+    async def reupload(req, sess, kind: str, name: str):
         if kind not in KINDS:
             return RedirectResponse(ctx.u("/"), status_code=303)
         spec = ctx.store.get_spec(kind, name)
@@ -808,19 +844,26 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
                          _flash(f"No managed template named '{name}'.", "err"),
                          A("← Back to all templates", href=ctx.u("/")))
         form = await req.form()
+        bad = _csrf_guard(sess, form)
+        if bad:
+            return bad
+        csrf = auth.ensure_csrf(sess)
         upload = form.get("file")
         data = await upload.read() if upload is not None else b""
         analysis = analyze(kind, data) if data else None
         error = None
         if not data:
             error = "Please choose a file to upload."
+        elif len(data) > MAX_UPLOAD_BYTES:
+            error = f"File too large (max {MAX_UPLOAD_BYTES // (1024*1024)} MB)."
         elif analysis and any("Could not open" in w for w in analysis.warnings):
             error = analysis.warnings[0]
         if error:
             asset = spec.get(_path_key(kind))
             cur = analyze(kind, ctx.store.read_asset(kind, asset)) if asset and ctx.store.asset_exists(kind, asset) else None
             return _page(ctx, f"Edit {name}", H1(f"Edit {name}"), _flash(error, "err"),
-                         _edit_form(ctx, kind, spec, cur, is_new=False), _replace_card(ctx, kind, name))
+                         _edit_form(ctx, kind, spec, cur, is_new=False, csrf=csrf),
+                         _replace_card(ctx, kind, name, csrf))
 
         filename = spec.get(_path_key(kind)) or f"{name}{_asset_ext(kind)}"
         ctx.store.write_asset(kind, filename, data)
@@ -830,15 +873,18 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             _flash(f"Re-scanned {filename}. New placeholders (if any) were added below — "
                    "review and save to apply.", "ok"),
             _analysis_report(analysis, spec),
-            _edit_form(ctx, kind, spec, analysis, is_new=False),
-            _replace_card(ctx, kind, name),
+            _edit_form(ctx, kind, spec, analysis, is_new=False, csrf=csrf),
+            _replace_card(ctx, kind, name, csrf),
         )
 
     @rt("/{kind}/save", methods=["post"])
-    async def save(req, kind: str):
+    async def save(req, sess, kind: str):
         if kind not in KINDS:
             return RedirectResponse(ctx.u("/"), status_code=303)
         form = await req.form()
+        bad = _csrf_guard(sess, form)
+        if bad:
+            return bad
         try:
             spec = _build_spec(kind, form)
             ctx.store.save_spec(kind, spec)
@@ -858,10 +904,13 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         )
 
     @rt("/{kind}/preview", methods=["post"])
-    async def preview(req, kind: str):
+    async def preview(req, sess, kind: str):
         if kind not in KINDS:
             return RedirectResponse(ctx.u("/"), status_code=303)
         form = await req.form()
+        bad = _csrf_guard(sess, form)
+        if bad:
+            return bad
         spec = _build_spec(kind, form)
         asset = spec.get(_path_key(kind))
         if not asset or not ctx.store.asset_exists(kind, asset):
@@ -881,7 +930,11 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         return HTMLResponse(html)
 
     @rt("/{kind}/{name}/delete", methods=["post"])
-    def delete(kind: str, name: str):
+    async def delete(req, sess, kind: str, name: str):
+        form = await req.form()
+        bad = _csrf_guard(sess, form)
+        if bad:
+            return bad
         if kind in KINDS:
             ctx.store.delete_spec(kind, name, delete_asset=False)
             ctx.unregister(kind, name)
