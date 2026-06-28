@@ -290,6 +290,20 @@ def test_oversized_upload_rejected(admin_client):
     assert "too large" in r.text.lower()
 
 
+def test_logout_get_does_not_clear_session(admin_client):
+    client, _ = admin_client
+    # A GET to /logout only shows a confirm page; the session stays authed.
+    r = client.get("/admin/logout")
+    assert r.status_code == 200
+    assert "Sign out" in r.text
+    assert client.get("/admin/", follow_redirects=False).status_code == 200
+
+    # A CSRF-validated POST actually logs out.
+    r = _post(client, "/admin/logout", follow_redirects=False)
+    assert r.status_code == 303
+    assert client.get("/admin/", follow_redirects=False).status_code == 303  # back to login
+
+
 def test_mcp_endpoint_still_works(admin_client):
     """The MCP endpoint is reachable through the combined app."""
     client, _ = admin_client

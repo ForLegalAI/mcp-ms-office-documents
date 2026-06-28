@@ -746,10 +746,38 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             authed=False,
         )
 
-    @rt("/logout")
-    def logout(sess):
-        sess.pop(auth.SESSION_KEY, None)
-        return RedirectResponse(login_path, status_code=303)
+    @rt("/logout", methods=["get", "post"])
+    async def logout(req, sess):
+        # Only a CSRF-validated POST clears the session, so a cross-origin GET
+        # (e.g. <img src="/admin/logout">) can't force-logout an admin.
+        if req.method == "POST":
+            form = await req.form()
+            bad = _csrf_guard(sess, form)
+            if bad:
+                return bad
+            sess.pop(auth.SESSION_KEY, None)
+            return RedirectResponse(login_path, status_code=303)
+        csrf = auth.ensure_csrf(sess)
+        return _page(
+            ctx, "Sign out",
+            Div(
+                Div(
+                    H1("Sign out?"),
+                    P("You'll need your password to sign back in.", cls="muted"),
+                    Form(
+                        _csrf_input(csrf),
+                        Div(
+                            Button("Sign out", type="submit", cls="btn btn-primary"),
+                            A("Cancel", href=ctx.u("/"), cls="btn"),
+                            cls="actions",
+                        ),
+                        action=ctx.u("/logout"), method="post",
+                    ),
+                    cls="card",
+                ),
+                cls="login-wrap",
+            ),
+        )
 
     @rt("/")
     def index(sess):
