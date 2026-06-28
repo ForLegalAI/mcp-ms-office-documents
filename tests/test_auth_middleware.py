@@ -148,8 +148,10 @@ class TestAuthorizationHeaderSurfaced:
         call_next = AsyncMock(return_value="ok")
         context = _make_context()
 
-        # Patch only the request lookup; get_http_headers runs for real and
-        # would strip Authorization unless on_request passes include=.
+        # Patch only FastMCP's internal request accessor so the real
+        # get_http_headers runs (it would strip Authorization unless on_request
+        # passes include=). If this breaks after a FastMCP upgrade, check
+        # fastmcp.server.dependencies.get_http_request.
         with patch.object(deps, "get_http_request", return_value=fake_request):
             result = await mw.on_request(context, call_next)
 
