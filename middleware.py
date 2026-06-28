@@ -83,7 +83,13 @@ class ApiKeyAuthMiddleware(Middleware):
     # Middleware hook
     # ------------------------------------------------------------------
     async def on_request(self, context: MiddlewareContext, call_next):
-        headers = get_http_headers() or {}
+        # NOTE: get_http_headers() strips a set of "problematic" headers by
+        # default — and that set INCLUDES `authorization` (and
+        # `proxy-authorization`). Without opting them back in via `include=`,
+        # an `Authorization: Bearer <key>` request arrives here with the header
+        # already removed, so only `x-api-key` would ever authenticate. Pass
+        # include={...} so the Authorization header is surfaced to us.
+        headers = get_http_headers(include={"authorization", "proxy-authorization"}) or {}
         api_key = self._extract_key(headers)
 
         if api_key is None or not secrets.compare_digest(api_key, self.expected_key):

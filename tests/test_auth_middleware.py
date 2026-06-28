@@ -130,6 +130,47 @@ def _make_context(method: str = "tools/call"):
     return ctx
 
 
+class TestAuthorizationHeaderSurfaced:
+    """Regression: FastMCP's get_http_headers() strips `authorization` by default.
+
+    These use the REAL get_http_headers (only the underlying request is faked),
+    so they would fail if on_request stopped opting the header back in.
+    """
+
+    async def test_real_get_http_headers_surfaces_authorization(self):
+        import fastmcp.server.dependencies as deps
+        from starlette.datastructures import Headers
+
+        fake_request = MagicMock()
+        fake_request.headers = Headers({"Authorization": "Bearer secret-123", "host": "x"})
+
+        mw = ApiKeyAuthMiddleware("secret-123")
+        call_next = AsyncMock(return_value="ok")
+        context = _make_context()
+
+        # Patch only the request lookup; get_http_headers runs for real and
+        # would strip Authorization unless on_request passes include=.
+        with patch.object(deps, "get_http_request", return_value=fake_request):
+            result = await mw.on_request(context, call_next)
+
+        call_next.assert_awaited_once_with(context)
+        assert result == "ok"
+
+    async def test_on_request_opts_in_authorization_header(self):
+        """on_request must ask get_http_headers to include the auth headers."""
+        mw = ApiKeyAuthMiddleware("secret-123")
+        call_next = AsyncMock(return_value="ok")
+        context = _make_context()
+
+        with patch("middleware.get_http_headers",
+                   return_value={"authorization": "Bearer secret-123"}) as ghh:
+            await mw.on_request(context, call_next)
+
+        _args, kwargs = ghh.call_args
+        included = {h.lower() for h in (kwargs.get("include") or set())}
+        assert "authorization" in included
+
+
 class TestOnRequest:
     """Integration-style tests for the on_request middleware hook."""
 
