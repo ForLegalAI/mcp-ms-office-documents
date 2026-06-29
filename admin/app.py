@@ -984,7 +984,7 @@ def build_combined_app(mcp, config: Config):
     """
     from starlette.applications import Starlette
 
-    mcp_app = mcp.http_app(path="/mcp")
+    mcp_app = mcp.http_app(path="/mcp", stateless_http=config.stateless_http)
     admin_app = build_admin_app(mcp, config)
     routes = [
         Mount(config.admin.path, app=admin_app),
