@@ -362,10 +362,10 @@ class TestAlignmentDirectivesInPlaceholders:
         only set spacing (which still produces a <w:pPr> to inherit)."""
         doc = self._replace(
             lambda p: setattr(p.paragraph_format, "space_after", Pt(6)),
-            '<div align="right">\nDate: 2026-06-29\n</div>',
+            '<div align="right">\nRight-aligned text\n</div>',
         )
         result = self._aligned_text(doc)
-        assert ("Date: 2026-06-29", WD_ALIGN_PARAGRAPH.RIGHT) in result
+        assert ("Right-aligned text", WD_ALIGN_PARAGRAPH.RIGHT) in result
 
     def test_center_value_with_following_prose_inherits_placeholder(self):
         """The centered block keeps CENTER while plain prose after it still

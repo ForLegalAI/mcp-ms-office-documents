@@ -196,11 +196,9 @@ def _propagate_format_to_block(doc, inserted, src_ppr, fmt) -> None:
         if ppr is not None and ppr.find(qn('w:pStyle')) is not None:
             continue
         if layout_ppr is not None:
-            # An explicit alignment the markdown set on this otherwise-plain prose
-            # (e.g. via <center> or <div align="...">) is deliberate, so it must
-            # survive the layout inheritance instead of being clobbered by the
-            # placeholder's own alignment. Capture it before swapping the pPr and
-            # re-apply afterwards (via the API, so <w:jc> lands in schema order).
+            # Preserve a deliberate markdown alignment (e.g. <center>, <div align>)
+            # across the pPr swap so it wins over the placeholder's own alignment;
+            # re-apply via the API so <w:jc> lands in schema order.
             own_alignment = para.alignment
             if ppr is not None:
                 elem.remove(ppr)
