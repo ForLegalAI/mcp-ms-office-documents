@@ -385,5 +385,6 @@ if __name__ == "__main__":
             host="0.0.0.0",
             port=8958,
             log_level=config.logging.mcp_level_str,
-            path="/mcp"
+            path="/mcp",
+            stateless_http=config.stateless_http,
         )

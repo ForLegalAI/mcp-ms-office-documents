@@ -322,6 +322,21 @@ class Config(BaseModel):
             "RUN_BLOCKING_MAX_WORKERS environment variable."
         ),
     )
+    stateless_http: bool = Field(
+        default=False,
+        description=(
+            "When True, the FastMCP streamable-http transport runs in "
+            "stateless mode: each request is independent, no Mcp-Session-Id "
+            "is tracked, and any pod can serve any follow-up call. Required "
+            "for horizontally-scaled EKS deployments (replicas >= 2) where "
+            "the default in-process session dict would otherwise cause "
+            "-32600 'Session not found' errors when the initialize and "
+            "tools/call requests land on different pods. Default False "
+            "preserves the stateful behaviour; this is safe for single-pod "
+            "deployments and is what every existing deployment uses today. "
+            "Toggled via the STATELESS_HTTP environment variable."
+        ),
+    )
 
     @property
     def admin_password_effective(self) -> Optional[str]:
@@ -439,6 +454,11 @@ class Config(BaseModel):
         except (ValueError, TypeError):
             run_blocking_max_workers = 4
 
+        # Stateless streamable-http transport. Absent or empty env var
+        # means False (existing behaviour). Truthy ("1"/"true"/"yes"/"on")
+        # enables stateless mode for horizontal scaling.
+        stateless_http = cls._parse_bool(os.environ.get("STATELESS_HTTP"))
+
         try:
             return cls(
                 logging=logging_settings,
@@ -447,6 +467,7 @@ class Config(BaseModel):
                 admin=admin_settings,
                 run_blocking_by_asyncio_thread_enabled=run_blocking_by_asyncio_thread_enabled,
                 run_blocking_max_workers=run_blocking_max_workers,
+                stateless_http=stateless_http,
             )
         except ValidationError as e:
             # Wrap Pydantic validation errors in a simpler exception for callers
