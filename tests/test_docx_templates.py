@@ -378,6 +378,24 @@ class TestAlignmentDirectivesInPlaceholders:
         assert result["Centered title"] == WD_ALIGN_PARAGRAPH.CENTER
         assert result["Normal body paragraph"] == WD_ALIGN_PARAGRAPH.JUSTIFY
 
+    def test_heading_inside_center_block_renders_as_heading(self):
+        """A heading inside a <center> block in placeholder content becomes a
+        real heading (aligned), not literal '#' text."""
+        doc = self._replace(lambda p: None, "<center>\n# Centered Heading\n</center>")
+        match = [p for p in doc.paragraphs if p.text.strip() == "Centered Heading"]
+        assert match, "the '#' marks must not leak as literal text"
+        assert match[0].style.name == "Heading 1"
+        assert match[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
+
+    def test_heading_inside_div_right_block_renders_as_heading(self):
+        """A heading inside a <div align="right"> block keeps its style and the
+        block's alignment."""
+        doc = self._replace(lambda p: None, '<div align="right">\n## Right Heading\n</div>')
+        match = [p for p in doc.paragraphs if p.text.strip() == "Right Heading"]
+        assert match
+        assert match[0].style.name == "Heading 2"
+        assert match[0].alignment == WD_ALIGN_PARAGRAPH.RIGHT
+
 
 # =============================================================================
 # Table Placeholder Tests
