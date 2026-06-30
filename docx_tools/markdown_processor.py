@@ -3,6 +3,8 @@ This module contains process_markdown_content and process_markdown_block which
 orchestrate all block-level and inline parsing into a python-docx Document.
 """
 import logging
+from docx.oxml.ns import qn
+from docx.text.paragraph import Paragraph
 from .patterns import (
     HEADING_PATTERN,
     PAGE_BREAK_PATTERN,
@@ -14,6 +16,7 @@ from .patterns import (
     UNORDERED_LIST_PATTERN,
     COMMENT_DIRECTIVE_PATTERN,
     CODE_FENCE_PATTERN,
+    _ALIGN_CLOSE_RE,
     ordered_list_is_genuine,
     normalize_escaped_newlines,
     expand_br_to_block_breaks,
@@ -26,7 +29,6 @@ from .block_elements import (
     add_horizontal_line,
     add_image_to_doc,
     detect_alignment,
-    process_alignment_block,
 )
 from .style_map import (
     DEFAULT_STYLE_MAP,
@@ -291,18 +293,29 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
         if align_result is not None:
             inner, alignment = align_result
             if inner is not None:
-                para = doc.add_paragraph()
+                # Inline form: <center>text</center> / <div align="...">text</div>.
+                # A heading written inside it still becomes a real heading (then
+                # aligned), rather than rendering its "#" marks as literal text.
+                heading_match = HEADING_PATTERN.match(inner)
+                if heading_match:
+                    para = _add_heading(doc, len(heading_match.group(1)),
+                                        heading_match.group(2), style_map)
+                else:
+                    para = doc.add_paragraph()
+                    parse_inline_formatting(inner, para)
                 para.alignment = alignment
-                parse_inline_formatting(inner, para)
                 _collect(para._p)
                 return start_idx + 1, elements
-            else:
-                idx, block_elems = process_alignment_block(
-                    lines, start_idx + 1, doc, alignment, return_elements=return_element
-                )
-                if return_element and block_elems:
-                    elements.extend(block_elems)
-                return idx, elements
+            # Block-open form: render the inner lines through the full block
+            # pipeline so headings/lists inside the block are recognised, then
+            # stamp the alignment on every produced paragraph.
+            idx, block_elems = _process_alignment_block(
+                doc, lines, start_idx + 1, alignment, style_map,
+                return_element, ordered_run,
+            )
+            if return_element and block_elems:
+                elements.extend(block_elems)
+            return idx, elements
         # Ordered list. A numbered line only starts a list when it begins at 1 or
         # has a continuation (see ordered_list_is_genuine); otherwise it falls
         # through to a plain paragraph so a standalone date like "23. června 2026"
@@ -375,3 +388,42 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
     except Exception as e:
         logger.error("Failed to process markdown block at line %d: %s", start_idx, e, exc_info=True)
         return start_idx + 1, elements
+
+
+def _process_alignment_block(doc, lines, start_idx, alignment, style_map,
+                             return_element, ordered_run):
+    """Render the lines inside a multi-line ``<center>``/``<div align>`` block.
+
+    Each inner line goes through the normal block pipeline (so headings, lists,
+    tables, etc. are recognised instead of rendering their markers as literal
+    text), and *alignment* is then applied to every produced paragraph.
+
+    Returns ``(next_index, produced_elements)``. ``produced_elements`` is
+    populated only when *return_element* is True (the block pipeline detaches the
+    elements for the caller); otherwise the produced paragraphs stay in the body
+    and are located via a before/after snapshot so the alignment can be stamped.
+    """
+    body = doc._body._body
+    existing = None if return_element else set(body)
+    collected = []
+    i = start_idx
+    while i < len(lines):
+        stripped = lines[i].strip()
+        if _ALIGN_CLOSE_RE.match(stripped):
+            i += 1
+            break
+        if not stripped:
+            i += 1
+            continue
+        i, produced = process_markdown_block(
+            doc, lines, i, return_element=return_element,
+            style_map=style_map, ordered_run=ordered_run,
+        )
+        if return_element:
+            collected.extend(produced)
+    produced_all = (collected if return_element
+                    else [el for el in body if el not in existing])
+    for el in produced_all:
+        if el.tag == qn('w:p'):  # alignment applies to paragraphs, not tables
+            Paragraph(el, doc._body).alignment = alignment
+    return i, collected

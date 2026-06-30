@@ -1713,6 +1713,48 @@ class TestTextAlignment:
                             and p.text.strip()]
         assert len(right_paragraphs) >= 2
 
+    def test_heading_inside_center_block(self):
+        """A heading inside a <center> block is a real heading (aligned), not
+        literal '#' text."""
+        markdown = "<center>\n# Centered Title\n</center>"
+        doc = save_test_document(markdown, "align_heading_center.docx")
+        match = [p for p in doc.paragraphs if p.text.strip() == "Centered Title"]
+        assert match, "heading text should not carry literal '#' marks"
+        assert match[0].style.name == "Heading 1"
+        assert match[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
+
+    def test_heading_inside_div_right_block(self):
+        """A heading inside a <div align="right"> block keeps its style and the
+        block's alignment."""
+        markdown = '<div align="right">\n## Right Heading\n</div>'
+        doc = save_test_document(markdown, "align_heading_right.docx")
+        match = [p for p in doc.paragraphs if p.text.strip() == "Right Heading"]
+        assert match
+        assert match[0].style.name == "Heading 2"
+        assert match[0].alignment == WD_ALIGN_PARAGRAPH.RIGHT
+
+    def test_inline_center_wrapping_heading(self):
+        """The single-line form <center># Heading</center> also yields a real
+        heading rather than literal text."""
+        markdown = "<center># Inline Heading</center>"
+        doc = save_test_document(markdown, "align_heading_inline.docx")
+        match = [p for p in doc.paragraphs if p.text.strip() == "Inline Heading"]
+        assert match
+        assert match[0].style.name == "Heading 1"
+        assert match[0].alignment == WD_ALIGN_PARAGRAPH.CENTER
+
+    def test_list_inside_center_block(self):
+        """List items inside an alignment block are real list paragraphs, aligned
+        — the '#'/'-' markers are not emitted as literal text."""
+        markdown = "<center>\n- one\n- two\n</center>"
+        doc = save_test_document(markdown, "align_list_center.docx")
+        items = [p for p in doc.paragraphs
+                 if p.text.strip() in ("one", "two")]
+        assert len(items) == 2
+        for p in items:
+            assert "Bullet" in p.style.name
+            assert p.alignment == WD_ALIGN_PARAGRAPH.CENTER
+
 
 # =============================================================================
 # Document Metadata Tests (Feature 5)

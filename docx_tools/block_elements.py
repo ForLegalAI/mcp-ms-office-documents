@@ -12,7 +12,6 @@ from .patterns import (
     UNORDERED_LIST_CAPTURE_PATTERN,
     _ALIGN_INLINE_RE,
     _ALIGN_OPEN_RE,
-    _ALIGN_CLOSE_RE,
 )
 from .inline_formatting import parse_inline_formatting
 from .patterns import _BR_RE
@@ -349,25 +348,7 @@ def detect_alignment(line):
         align = ALIGNMENT_MAP.get((m.group(1) or 'center').lower(), WD_ALIGN_PARAGRAPH.CENTER)
         return None, align
     return None
-
-
-def process_alignment_block(lines, start_idx, doc, alignment, return_elements=False):
-    """Process lines inside a multi-line alignment block."""
-    elements = [] if return_elements else None
-    i = start_idx
-    while i < len(lines):
-        stripped = lines[i].strip()
-        if _ALIGN_CLOSE_RE.match(stripped):
-            i += 1
-            break
-        if not stripped:
-            i += 1
-            continue
-        para = doc.add_paragraph()
-        para.alignment = alignment
-        parse_inline_formatting(stripped, para)
-        if return_elements:
-            elements.append(para._p)
-            doc._body._body.remove(para._p)
-        i += 1
-    return i, elements
+# Multi-line alignment blocks are rendered by
+# markdown_processor._process_alignment_block, which routes the inner lines
+# through the full block pipeline so headings/lists inside <center>/<div align>
+# are recognised (not emitted as literal text) and then applies the alignment.
