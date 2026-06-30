@@ -296,6 +296,9 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
                 # Inline form: <center>text</center> / <div align="...">text</div>.
                 # A heading written inside it still becomes a real heading (then
                 # aligned), rather than rendering its "#" marks as literal text.
+                # Only headings are promoted here; a single-line list such as
+                # "<center>- item</center>" stays inline prose — use the multi-line
+                # block form (handled by _process_alignment_block) for lists.
                 heading_match = HEADING_PATTERN.match(inner)
                 if heading_match:
                     para = _add_heading(doc, len(heading_match.group(1)),

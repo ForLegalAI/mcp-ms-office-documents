@@ -348,7 +348,3 @@ def detect_alignment(line):
         align = ALIGNMENT_MAP.get((m.group(1) or 'center').lower(), WD_ALIGN_PARAGRAPH.CENTER)
         return None, align
     return None
-# Multi-line alignment blocks are rendered by
-# markdown_processor._process_alignment_block, which routes the inner lines
-# through the full block pipeline so headings/lists inside <center>/<div align>
-# are recognised (not emitted as literal text) and then applies the alignment.
