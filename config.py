@@ -246,6 +246,43 @@ class LibreChatSettings(BaseModel):
         return self
 
 
+class PersonalFilesSettings(BaseModel):
+    """Configuration for the personal-files MCP storage backend.
+
+    When UPLOAD_STRATEGY is set to PERSONAL_FILES, generated documents are
+    pushed (multipart) to the librechat-personal-files-mcp ``POST /binary``
+    endpoint, which stores them in the user's private storage and returns
+    the relative path.
+
+    Required environment variables:
+    - PERSONAL_FILES_URL: Base URL of the personal-files MCP server
+      (e.g. http://librechat-personal-files:8080)
+    - PERSONAL_FILES_SERVICE_TOKEN: Service token that must match
+      SERVICE_TOKEN in the personal-files server.
+    Optional:
+    - PERSONAL_FILES_PATH_PREFIX: subdirectory inside the user root where
+      documents are stored (default "office").
+    """
+    url: str = Field(description="Personal-files MCP server base URL")
+    service_token: str = Field(description="Service token for the /binary endpoint")
+    path_prefix: str = Field(default="office", description="Subfolder inside the user root")
+
+    @model_validator(mode="after")
+    def _non_empty(self) -> "PersonalFilesSettings":
+        missing = [
+            name for name, val in (
+                ("PERSONAL_FILES_URL", self.url),
+                ("PERSONAL_FILES_SERVICE_TOKEN", self.service_token),
+            ) if not str(val).strip()
+        ]
+        if missing:
+            raise ValueError(f"Missing required PersonalFiles settings: {', '.join(missing)}")
+        self.url = self.url.strip().rstrip("/")
+        self.service_token = self.service_token.strip()
+        self.path_prefix = self.path_prefix.strip().strip("/") or "office"
+        return self
+
+
 class StorageStrategy(str, Enum):
     """Supported upload backends for produced documents."""
     LOCAL = "LOCAL"
@@ -254,6 +291,7 @@ class StorageStrategy(str, Enum):
     AZURE = "AZURE"
     MINIO = "MINIO"
     LIBRECHAT = "LIBRECHAT"
+    PERSONAL_FILES = "PERSONAL_FILES"
 
 
 class StorageSettings(BaseModel):
@@ -271,6 +309,7 @@ class StorageSettings(BaseModel):
     azure: Optional[AzureSettings] = None
     minio: Optional[MinioSettings] = None
     librechat: Optional[LibreChatSettings] = None
+    personal_files: Optional[PersonalFilesSettings] = None
 
     @model_validator(mode="after")
     def validate_strategy_requirements(self) -> "StorageSettings":
@@ -290,6 +329,9 @@ class StorageSettings(BaseModel):
         elif self.strategy == StorageStrategy.LIBRECHAT:
             if not self.librechat:
                 raise ValueError("LibreChat settings are required for LIBRECHAT strategy")
+        elif self.strategy == StorageStrategy.PERSONAL_FILES:
+            if not self.personal_files:
+                raise ValueError("PersonalFiles settings are required for PERSONAL_FILES strategy")
         return self
 
 
@@ -434,6 +476,7 @@ class Config(BaseModel):
         azure_settings = None
         minio_settings = None
         librechat_settings = None
+        personal_files_settings = None
 
         if strategy == StorageStrategy.S3.value:
             s3_settings = S3Settings(
@@ -469,6 +512,12 @@ class Config(BaseModel):
                 service_url=os.environ.get("LIBRECHAT_SERVICE_URL", ""),
                 service_token=os.environ.get("LIBRECHAT_SERVICE_TOKEN", ""),
             )
+        elif strategy == StorageStrategy.PERSONAL_FILES.value:
+            personal_files_settings = PersonalFilesSettings(
+                url=os.environ.get("PERSONAL_FILES_URL", ""),
+                service_token=os.environ.get("PERSONAL_FILES_SERVICE_TOKEN", ""),
+                path_prefix=os.environ.get("PERSONAL_FILES_PATH_PREFIX", "office"),
+            )
 
         storage_settings = StorageSettings(
             strategy=StorageStrategy(strategy),
@@ -478,6 +527,7 @@ class Config(BaseModel):
             azure=azure_settings,
             minio=minio_settings,
             librechat=librechat_settings,
+            personal_files=personal_files_settings,
         )
 
         # API key authentication (optional – empty/missing means no auth)

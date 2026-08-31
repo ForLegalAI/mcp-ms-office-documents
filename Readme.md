@@ -102,7 +102,7 @@ The server is configured through environment variables in your `.env` file.
 |----------|-------------|---------|
 | `DEBUG` | Enable debug logging (`1`, `true`, `yes`) | _(off)_ |
 | `API_KEY` | Protect the server with an API key (see Authentication below) | _(disabled)_ |
-| `UPLOAD_STRATEGY` | Where to save files: `LOCAL`, `S3`, `GCS`, `AZURE`, `MINIO` | `LOCAL` |
+| `UPLOAD_STRATEGY` | Where to save files: `LOCAL`, `S3`, `GCS`, `AZURE`, `MINIO`, `LIBRECHAT`, `PERSONAL_FILES` | `LOCAL` |
 | `SIGNED_URL_EXPIRES_IN` | How long cloud download links stay valid (seconds) | `3600` |
 | `RUN_BLOCKING_BY_ASYNCIO_THREAD_ENABLED` | Offload blocking tool work to a thread pool, keeping the event loop free for health probes & concurrent requests | `true` |
 | `RUN_BLOCKING_MAX_WORKERS` | Maximum concurrent worker threads for blocking tool calls | `4` |
@@ -239,6 +239,35 @@ mcpServers:
 ```
 
 The `X-User-Id` and `X-User-Email` headers are automatically populated by LibreChat and used to associate uploaded files with the correct user.
+
+</details>
+
+<details>
+<summary><strong>📁 Personal-Files Integration</strong></summary>
+
+This fork adds a `PERSONAL_FILES` upload strategy that stores generated
+documents in a user's private storage via the
+[`librechat-personal-files-mcp`](https://github.com/martinriesel/librechat-personal-files-mcp)
+server. Set `UPLOAD_STRATEGY=PERSONAL_FILES`; every generated file is pushed
+(multipart) to the personal-files `POST /binary` endpoint and returned to the
+agent as a relative path + metadata (`path`, `mime_type`, `size_bytes`,
+`sha256`) — **not** auto-published. The agent can later call the
+personal-files tools (`publish_file`, `read_binary_file`, `list_files`, …).
+
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `PERSONAL_FILES_URL` | Base URL of the personal-files MCP server (e.g. `http://librechat-personal-files:8080`) | ✅ |
+| `PERSONAL_FILES_SERVICE_TOKEN` | Service token; must match `SERVICE_TOKEN` on the personal-files server | ✅ |
+| `PERSONAL_FILES_PATH_PREFIX` | Subfolder inside the user root (default `office`) | |
+
+**Filename uniqueness:** the `add_unique_prefix` parameter defaults to `False`
+for `PERSONAL_FILES` (clean filenames such as `office/Report.docx`), matching
+the `LIBRECHAT` behavior.
+
+The personal-files server needs `SERVICE_TOKEN` set and a writable
+`/data/private` volume. Generated Office files land in
+`/data/private/<userId>/office/` and can be published later with
+`publish_file` (public links work for binary files).
 
 </details>
 

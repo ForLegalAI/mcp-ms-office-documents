@@ -1,10 +1,13 @@
 """Unified file upload module supporting multiple storage backends.
 
 This module provides a centralized upload interface that dispatches to the
-configured storage backend (LOCAL, S3, GCS, AZURE, MINIO, or LIBRECHAT).
+configured storage backend (LOCAL, S3, GCS, AZURE, MINIO, LIBRECHAT, or
+PERSONAL_FILES).
 
 For LIBRECHAT strategy, uploads go to LibreChat's service endpoint and return
 file metadata for MCP file artifacts instead of URLs.
+For PERSONAL_FILES strategy, uploads go to the personal-files MCP server's
+``POST /binary`` endpoint and return path + metadata.
 """
 
 import logging
@@ -40,6 +43,8 @@ elif UPLOAD_STRATEGY == StorageStrategy.MINIO:
     logger.info("MinIO upload strategy set.")
 elif UPLOAD_STRATEGY == StorageStrategy.LIBRECHAT:
     logger.info("LibreChat upload strategy set.")
+elif UPLOAD_STRATEGY == StorageStrategy.PERSONAL_FILES:
+    logger.info("Personal-files upload strategy set.")
 
 
 def upload_file(
@@ -52,30 +57,35 @@ def upload_file(
     """Upload a file to configured backend and return appropriate response.
 
     For traditional backends (LOCAL, S3, GCS, AZURE, MINIO), returns a URL string.
-    For LIBRECHAT, this function raises an error - use upload_file_async instead.
+    For LIBRECHAT and PERSONAL_FILES, this function raises an error - use
+    upload_file_async instead.
 
     :param file_object: File-like object to upload
     :param suffix: File extension (e.g., 'pptx', 'docx', 'xlsx', 'eml')
     :param filename: Optional human-readable filename (without extension). When provided,
         the uploaded object will use this name (sanitized).
-    :param user_context: Optional dict with user info for LIBRECHAT strategy:
-        - user_id: Required for LIBRECHAT
+    :param user_context: Optional dict with user info:
+        - user_id: Required for LIBRECHAT and PERSONAL_FILES
         - user_email: Optional
         - conversation_id: Optional
     :param add_unique_prefix: If True, adds 8-char UUID prefix to filename for uniqueness.
         If None (default), uses True for traditional backends (to prevent collisions) and
         False for LIBRECHAT (which handles uniqueness with its own UUID prefix).
     :return: Status message with download URL or save location (str for traditional backends)
-    :raises RuntimeError: If upload fails or LIBRECHAT strategy used without async
+    :raises RuntimeError: If upload fails or LIBRECHAT/PERSONAL_FILES strategy used without async
     """
     # Resolve default based on strategy: traditional backends default to True for collision safety,
-    # LIBRECHAT defaults to False since it handles uniqueness with its own UUID prefix.
+    # LIBRECHAT and PERSONAL_FILES default to False.
     if add_unique_prefix is None:
-        add_unique_prefix = UPLOAD_STRATEGY != StorageStrategy.LIBRECHAT
-    # LIBRECHAT requires async - direct callers to upload_file_async
-    if UPLOAD_STRATEGY == StorageStrategy.LIBRECHAT:
+        add_unique_prefix = UPLOAD_STRATEGY not in (
+            StorageStrategy.LIBRECHAT,
+            StorageStrategy.PERSONAL_FILES,
+        )
+    # LIBRECHAT / PERSONAL_FILES require async - direct callers to upload_file_async
+    if UPLOAD_STRATEGY in (StorageStrategy.LIBRECHAT, StorageStrategy.PERSONAL_FILES):
         raise RuntimeError(
-            "LIBRECHAT strategy requires async upload. Use upload_file_async() instead."
+            "LIBRECHAT/PERSONAL_FILES strategies require async upload. "
+            "Use upload_file_async() instead."
         )
 
     try:
@@ -130,21 +140,25 @@ async def upload_file_async(
     :param suffix: File extension (e.g., 'pptx', 'docx', 'xlsx', 'eml')
     :param filename: Optional human-readable filename (without extension). When provided,
         the uploaded object will use this name (sanitized).
-    :param user_context: Dict with user info (required for LIBRECHAT):
-        - user_id: Required for LIBRECHAT
+    :param user_context: Dict with user info (required for LIBRECHAT and PERSONAL_FILES):
+        - user_id: Required
         - user_email: Optional
         - conversation_id: Optional
     :param add_unique_prefix: If True, adds 8-char UUID prefix to filename for uniqueness.
         If None (default), uses True for traditional backends (to prevent collisions) and
-        False for LIBRECHAT (which handles uniqueness with its own UUID prefix).
-    :return: URL string (traditional backends) or dict with file metadata (LIBRECHAT)
+        False for LIBRECHAT/PERSONAL_FILES.
+    :return: URL string (traditional backends), dict (LIBRECHAT artifact), or
+        path+metadata dict (PERSONAL_FILES)
     :raises RuntimeError: If upload fails
-    :raises ValueError: If LIBRECHAT used without user_context
+    :raises ValueError: If LIBRECHAT/PERSONAL_FILES used without user_context
     """
     # Resolve default based on strategy: traditional backends default to True for collision safety,
-    # LIBRECHAT defaults to False since it handles uniqueness with its own UUID prefix.
+    # LIBRECHAT and PERSONAL_FILES default to False.
     if add_unique_prefix is None:
-        add_unique_prefix = UPLOAD_STRATEGY != StorageStrategy.LIBRECHAT
+        add_unique_prefix = UPLOAD_STRATEGY not in (
+            StorageStrategy.LIBRECHAT,
+            StorageStrategy.PERSONAL_FILES,
+        )
 
     # Generate object name
     try:
@@ -179,6 +193,30 @@ async def upload_file_async(
         except Exception as e:
             logger.error("LibreChat upload failed: %s", e, exc_info=True)
             raise RuntimeError(f"Error uploading to LibreChat: {e}") from e
+
+    # Handle PERSONAL_FILES strategy (async)
+    if UPLOAD_STRATEGY == StorageStrategy.PERSONAL_FILES:
+        from .backends.personal_files import upload_to_personal_files
+
+        if not user_context:
+            raise ValueError(
+                "PERSONAL_FILES strategy requires user_context with user_id. "
+                "Ensure X-User-Id header is passed from LibreChat."
+            )
+
+        try:
+            result = await upload_to_personal_files(
+                file_object,
+                object_name,
+                user_context,
+                cfg.storage.personal_files,
+            )
+            return result
+        except (ValueError, RuntimeError):
+            raise
+        except Exception as e:
+            logger.error("personal-files upload failed: %s", e, exc_info=True)
+            raise RuntimeError(f"Error uploading to personal-files: {e}") from e
 
     # For non-LIBRECHAT strategies, use sync upload
     # (They don't need user_context and are not truly async)

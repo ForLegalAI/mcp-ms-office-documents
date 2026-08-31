@@ -66,11 +66,18 @@ class TestStorageStrategy:
         assert hasattr(StorageStrategy, "LIBRECHAT")
         assert StorageStrategy.LIBRECHAT.value == "LIBRECHAT"
 
+    def test_personal_files_in_storage_strategy(self):
+        """Test PERSONAL_FILES is a valid storage strategy."""
+        from config import StorageStrategy
+
+        assert hasattr(StorageStrategy, "PERSONAL_FILES")
+        assert StorageStrategy.PERSONAL_FILES.value == "PERSONAL_FILES"
+
     def test_all_strategies_present(self):
         """Test all expected strategies are present."""
         from config import StorageStrategy
 
-        expected = {"LOCAL", "S3", "GCS", "AZURE", "MINIO", "LIBRECHAT"}
+        expected = {"LOCAL", "S3", "GCS", "AZURE", "MINIO", "LIBRECHAT", "PERSONAL_FILES"}
         actual = {s.value for s in StorageStrategy}
         assert expected == actual
 

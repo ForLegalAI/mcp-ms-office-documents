@@ -10,14 +10,21 @@ from typing import Optional, Union
 
 from async_runner import run_blocking
 from upload_tools import upload_file_async, is_librechat_strategy
+from config import get_config, StorageStrategy
 
-# NOTE: upload_tools.backends.librechat is imported lazily inside the LIBRECHAT
-# branch below, not here. It pulls in httpx, and this module is imported by
-# main.py on every startup — an eager import would make an optional backend's
-# dependency mandatory for all strategies. The other backends follow the same
-# rule (see the boto3 comment in upload_tools/backends/s3.py).
+# NOTE: upload_tools.backends.librechat and upload_tools.backends.personal_files
+# are imported lazily inside the strategy branches below, not here. They pull
+# in httpx, and this module is imported by main.py on every startup — an eager
+# import would make an optional backend's dependency mandatory for all
+# strategies. The other backends follow the same rule (see the boto3 comment in
+# upload_tools/backends/s3.py).
 
 logger = logging.getLogger(__name__)
+
+
+def _is_personal_files_strategy() -> bool:
+    cfg = get_config()
+    return cfg.storage.strategy == StorageStrategy.PERSONAL_FILES
 
 
 def extract_user_context_from_request() -> dict:
@@ -92,7 +99,8 @@ async def upload_and_format_response(
             (True for traditional backends, False for LIBRECHAT).
 
     Returns:
-        str (URL) for traditional backends, or dict (file artifact) for LIBRECHAT
+        str (URL) for traditional backends, dict (file artifact) for LIBRECHAT,
+        or str (path + metadata) for PERSONAL_FILES.
     """
     if is_librechat_strategy():
         from upload_tools.backends.librechat import format_file_artifact
@@ -115,6 +123,26 @@ async def upload_and_format_response(
 
         # Format as MCP file artifact
         return format_file_artifact(file_info, success_message)
+    elif _is_personal_files_strategy():
+        from upload_tools.backends.personal_files import format_personal_files_result
+
+        # Validate user context for PERSONAL_FILES
+        if not user_context.get("user_id"):
+            raise ValueError(
+                "Personal-files upload requires X-User-Id header. "
+                "Ensure LibreChat is configured to send user headers to MCP server."
+            )
+
+        file_info = await upload_file_async(
+            file_buffer,
+            suffix,
+            filename=filename,
+            user_context=user_context,
+            add_unique_prefix=add_unique_prefix,
+        )
+
+        # Format as path + metadata string (the agent can publish_file later).
+        return format_personal_files_result(file_info, success_message)
     else:
         # Traditional upload - returns URL string.
         #
