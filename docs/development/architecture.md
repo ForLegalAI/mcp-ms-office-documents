@@ -74,11 +74,12 @@ Starlette / FastMCP
   ▼
 Tool handler                                  main.py
   │  Pydantic validates the Annotated params
-  │  (PowerPoint: SlidesInput → coerce_slides) pptx_tools/schema.py
+  │  (slides arrive as a loose list; see below)
   ▼
 await run_blocking(_<tool>_buffer, ...)       async_runner.py
   │  runs on a bounded worker thread; returns io.BytesIO
-  │  (PowerPoint returns (BytesIO, warnings))
+  │  (PowerPoint: coerce_slides() validates here, pptx_tools/schema.py,
+  │   and the build returns (BytesIO, warnings))
   ▼
 extract_user_context_from_request()           librechat_integration.py
   │  reads X-User-Id / X-User-Email / X-Conversation-Id
@@ -89,7 +90,7 @@ upload_and_format_response(buffer, suffix, file_name, ctx, message, add_unique_p
   │                  └► upload_to_librechat()  upload_tools/backends/librechat.py
   │                  └► format_file_artifact() → dict
   └─ otherwise ─► run_blocking(upload_file)   upload_tools/main.py
-                     └► upload_to_<backend>()  upload_tools/backends/*.py → URL or path
+                     └► upload_to_<backend>()  upload_tools/backends/*.py → message with URL or path
   ▼
 return str | dict                             main.py
   (PowerPoint: wraps in {"file", "slide_count", "warnings"} when there are warnings)
@@ -100,8 +101,9 @@ Stage by stage:
 | Stage | Module | Function | Notes |
 |-------|--------|----------|-------|
 | Authenticate | `middleware.py` | `ApiKeyAuthMiddleware.on_request` | Bearer, plain token, or `x-api-key`; constant-time compare; throttled warning log |
-| Validate input | `main.py` | Pydantic `Annotated[..., Field(...)]` | Field descriptions are what the calling model reads. PowerPoint validates slides through `coerce_slides()` and turns `ValueError` into a `ToolError` naming the slide and field |
-| Build document | `<type>_tools/base_<type>_tool.py` | `_markdown_to_word_buffer`, `_markdown_to_excel_buffer`, `_create_presentation_buffer`, `_create_eml_buffer`, `_create_xml_buffer` | Pure functions from input to bytes. No upload, no request context |
+| Validate input | `main.py` | Pydantic `Annotated[..., Field(...)]` | Field descriptions are what the calling model reads. Slides are deliberately typed loosely here (`SlidesInput` publishes a flat schema and accepts any list) so that clients which mangle `oneOf` schemas still reach the server |
+| Build document | `<type>_tools/base_<type>_tool.py` | `_markdown_to_word_buffer`, `_markdown_to_excel_buffer`, `_create_presentation_buffer`, `_create_eml_buffer`, `_create_xml_buffer` | Input to bytes. No upload, no request context. May fetch images over the network |
+| Validate slides | `pptx_tools/schema.py`, called from `pptx_tools/slide_builder.py` | `coerce_slides` | Runs inside the build step, on the worker thread. Raises `ValueError` with messages like `slide 2 -> rows.0: …`, which the handler passes through as a `ToolError` |
 | Offload | `async_runner.py` | `run_blocking` | See [Threading model](#threading-model) |
 | User context | `librechat_integration.py` | `extract_user_context_from_request` | Headers are trusted verbatim; see [Security boundaries](#security-boundaries) |
 | Upload | `librechat_integration.py` → `upload_tools/main.py` | `upload_and_format_response` → `upload_file` / `upload_file_async` | Chooses the backend from `UPLOAD_STRATEGY`; resolves the unique-prefix default |
@@ -174,7 +176,7 @@ Rules that follow from this:
 | Where | Raised | Reaches the client as |
 |-------|--------|-----------------------|
 | Tool handler in `main.py` | any `Exception` from build or upload | `fastmcp.exceptions.ToolError` with a message prefixed by the tool ("Error creating Word document: …") |
-| PowerPoint schema | `ValueError` from `coerce_slides()` | `ToolError` carrying the message verbatim, e.g. `slide 2 -> rows.0: …` |
+| PowerPoint slides | `ValueError` from `coerce_slides()`, raised inside the build step | `ToolError` carrying the message verbatim, e.g. `slide 2 -> rows.0: …` |
 | Upload dispatcher and backends | `RuntimeError` | wrapped by the handler as above |
 | LibreChat without `X-User-Id` | `ValueError` | wrapped by the handler as above |
 | Dynamic tool body | any `Exception` | `ToolError("Error generating document from template <name>: …")`, and `metrics.record_error()` is called |
