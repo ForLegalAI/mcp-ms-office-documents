@@ -289,6 +289,11 @@ def test_br_continuation_can_be_escaped_like_the_newline_spelling():
     ("1. A\n\n2. B\n\n1. X\n\nNote{}2. Y", ["A", "B", "X", "Y"]),
     # A number that continues nothing stays prose.
     ("1. Prvni\n\n2. Druhy\n\nNote{}23. brezna 2026", ["Prvni", "Druhy"]),
+    # A list sweeps up the line after it whatever its digits, so the count
+    # continues from that digit — chained inside one <br> group (PR #110
+    # third pass) and on plain lines, the same rule either way.
+    ("Note<br>1. First<br>5. Paty\n\nB{}6. Sedmy", ["First", "Paty", "Sedmy"]),
+    ("1. A\n5. B\n\nNote{}6. C", ["A", "B", "C"]),
 ])
 def test_br_run_count_tracks_the_renderer(body, expected):
     def numbered(doc):

@@ -172,13 +172,33 @@ def _segment_is_block(segments, idx, next_number=None) -> bool:
     if (HEADING_PATTERN.match(seg) or UNORDERED_LIST_PATTERN.match(seg)
             or BLOCKQUOTE_PATTERN.match(seg)):
         return True
-    match = ORDERED_LIST_CAPTURE_PATTERN.match(seg)
+    return ordered_item_number(segments, idx, next_number) is not None
+
+
+def ordered_item_number(lines, idx, next_number=None):
+    """The number ``lines[idx]`` contributes to a numbered run, or ``None``.
+
+    A numbered line joins the run when it continues the count *next_number*, when
+    it is genuine on its own (:func:`ordered_list_is_genuine`), or when the line
+    before it is a numbered item too — a list sweeps up the lines that follow it
+    whatever their digits, so ``"1. First"`` followed by ``"5. Paty"`` is a
+    two-item list whose count continues at 6.
+
+    One rule with one home: :func:`_segment_is_block` asks it whether a ``<br>``
+    segment is a list item, and :func:`expand_br_to_block_breaks` asks it what
+    the running count becomes. Deriving those separately let them disagree, and
+    a segment promoted under a rule the tracker did not share left the count
+    behind.
+    """
+    match = ORDERED_LIST_CAPTURE_PATTERN.match(lines[idx].strip())
     if not match:
-        return False
-    if next_number is not None and int(match.group(1)) == next_number:
-        return True
-    return bool(ordered_list_is_genuine(segments, idx)
-                or (idx and ORDERED_LIST_PATTERN.match(segments[idx - 1])))
+        return None
+    number = int(match.group(1))
+    if (number == next_number
+            or ordered_list_is_genuine(lines, idx)
+            or (idx and ORDERED_LIST_PATTERN.match(lines[idx - 1].strip()))):
+        return number
+    return None
 
 
 def expand_br_to_block_breaks(text: str) -> str:
@@ -226,21 +246,16 @@ def expand_br_to_block_breaks(text: str) -> str:
     def _remember(seq, idx):
         """Advance the count if ``seq[idx]`` would really render as a list item.
 
-        The renderer only counts a numbered line that its own rules turn into an
-        item — one that continues the run, or that is genuine on its own. A
-        standalone ``23. brezna 2026`` renders as prose and leaves the count
+        The renderer only counts a numbered line its own rules turn into an item;
+        a standalone ``23. brezna 2026`` renders as prose and leaves the count
         alone, so this must leave it alone too, or the two spellings of a later
         continuation would disagree about what number comes next.
         """
         nonlocal next_number
-        raw = seq[idx]
-        if raw[:1].isspace():
+        if seq[idx][:1].isspace():
             return  # a nested item's number is not the top-level run's
-        match = ORDERED_LIST_CAPTURE_PATTERN.match(raw.strip())
-        if not match:
-            return
-        number = int(match.group(1))
-        if number == next_number or ordered_list_is_genuine(seq, idx):
+        number = ordered_item_number(seq, idx, next_number)
+        if number is not None:
             next_number = number + 1
 
     lines = text.split('\n')
