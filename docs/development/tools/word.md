@@ -39,12 +39,10 @@ markdown_content
   ├─ style_map.load_global_style_map()        style names from config/docx_templates.yaml
   ▼
   markdown_processor.process_markdown_content(doc, content, style_map=…)
-  ├─ patterns.normalize_escaped_newlines()    literal "\n" typed as text → real newline
-  ├─ patterns.expand_br_to_block_breaks()     <br> next to a list/heading → real newline
+  ├─ patterns.normalize_newlines()            literal "\n", CR and CRLF → real newline
+  ├─ patterns.expand_br_to_block_breaks()     <br> before a list/heading/quote → real newline
   ├─ split into lines, then loop:
   │    blank runs        → n-1 spacer paragraphs for n ≥ 2 blanks; one blank is a separator
-  │    trailing "  "     → soft-break paragraph (lines joined with line breaks;
-  │                        a leading # or > still makes it a heading or quote)
   │    everything else   → process_markdown_block()
   ▼
   markdown_processor.process_markdown_block(doc, lines, i, …)   one block per call
@@ -57,14 +55,16 @@ markdown_content
   ├─ <center>/<div align> → block_elements.detect_alignment(), inline or multi-line block
   ├─ ordered list       → block_elements.process_list_items() (+ numbering.py)
   ├─ unordered list     → block_elements.process_list_items()
-  ├─ > quote            → _add_quote()
+  ├─ > quote            → _soft_break_run(strip_quote=True) → _add_quote()
   ├─ <!-- directive --> → collected, then applied to the next block
   ├─ other <!-- -->     → skipped
-  └─ anything else      → paragraph + inline parse
+  └─ anything else      → _soft_break_run() → paragraph + inline parse
+                          (a line ending in two spaces continues the paragraph,
+                           stopping before any line that starts a block)
   ▼
   inline_formatting.parse_inline_formatting(text, paragraph)   every text span
   ├─ decode a fixed list of safe HTML entities
-  ├─ <br> → soft-break marker
+  ├─ <br>, CR, literal "\n" → "\n"; split, rstrip, one <w:br/> per break
   ├─ backslash escapes → private-use placeholders, restored after tokenising
   └─ inline_markdown.build_inline_pattern().split() → runs, hyperlinks
   ▼
@@ -81,7 +81,7 @@ line by line and paragraphs are appended as they are recognised.
 |--------|------|
 | `base_docx_tool.py` | Template load, metadata, TOC, header/footer, then hands off to the processor. The three entry points |
 | `markdown_processor.py` | Line walker (`process_markdown_content`), block dispatcher (`process_markdown_block`), soft breaks, code blocks, alignment blocks, comment directives, the running ordered-list count |
-| `patterns.py` | Every compiled regex for block detection, plus `ordered_list_is_genuine()`, `normalize_escaped_newlines()`, `expand_br_to_block_breaks()`, `contains_block_markdown()` |
+| `patterns.py` | Every compiled regex for block detection, plus `ordered_list_is_genuine()`, `normalize_newlines()`, `expand_br_to_block_breaks()`, `line_starts_block()`, `contains_block_markdown()` |
 | `inline_formatting.py` | `parse_inline_formatting()`: entities, escapes, soft breaks, run creation, hyperlinks |
 | `block_elements.py` | Tables, lists, images, horizontal lines, alignment detection |
 | `numbering.py` | Ordered-list restart through fresh `<w:num>` instances; style-aware numbering resolution; indent re-assertion |
@@ -188,13 +188,43 @@ spans create a run directly. Links become real `w:hyperlink` elements with
 the relationship registered on the part; on failure the label is written as
 plain text and a warning logged.
 
+### One line-break model
+
+Since #110 there is one rule for every entry point: the block layer decides
+which newlines separate blocks, and **every newline that reaches the inline
+layer is a soft break** (`<w:br/>`). `parse_inline_formatting()` folds
+`<br>`, a CR and a literal `\n` into `\n`, splits on it and strips the
+trailing-space marker from each segment. A line ending in two spaces is the
+source spelling of the same break: `_soft_break_run()` in the block
+dispatcher joins such lines with real newlines, for prose and for quotes,
+and stops before any line for which `patterns.line_starts_block()` is true
+so a list or table on the next line is never swallowed into the paragraph.
+`line_starts_block()` is also the predicate behind `contains_block_markdown()`,
+which routes template placeholder values.
+
+`expand_br_to_block_breaks()` promotes a `<br>` to a real newline only when
+a segment **after the first** begins a block, so `- item<br>second line`
+keeps its break inside the item. It reads nothing but the line being split.
+Do not give it the renderer's numbering state so that `Note<br>3. Third`
+can resume an earlier list; that was tried and removed in #110 because the
+copy of the running count drifted from `process_list_items()` in several
+ways. A continuation written on its own line still works, since the
+dispatcher has the live count there.
+
+Inside a table cell, whose row is one physical line, `<br><br>` stands in
+for the blank line and splits the cell into paragraphs
+(`_BR_PARAGRAPH_RE` in `add_table_to_doc()`); a single `<br>` is a soft
+break like everywhere else.
+
 ### Headers, footers, TOC
 
 `set_header_footer()` rewrites the first paragraph of every section's default
 header or footer, plus the first-page and even-page variants where the
 template uses them, keeping the paragraph's alignment and replacing only the
-runs. `{page}` and `{pages}` become PAGE and NUMPAGES fields. `add_toc()`
-inserts a TOC field with `w:updateFields` set so Word refreshes it on open.
+runs. `{page}` and `{pages}` become PAGE and NUMPAGES fields, and `<br>` or a
+newline breaks the line; the text is otherwise plain, not Markdown.
+`add_toc()` inserts a TOC field with `w:updateFields` set so Word refreshes
+it on open.
 
 ## Extension points
 
@@ -216,9 +246,13 @@ inserts a TOC field with `w:updateFields` set so Word refreshes it on open.
   reading `[Image could not be loaded: <url>]` and logs a warning. The caller
   never sees an error, and the Word tool has no warnings channel to report it.
 - **Never hold a `StyleMap` in module state.** See style mapping above.
-- **`normalize_escaped_newlines()` and `expand_br_to_block_breaks()` are
+- **`normalize_newlines()` and `expand_br_to_block_breaks()` are
   idempotent.** The template path calls them for routing and the processor
   calls them again. Keep both idempotent if you change them.
+- **Do not reintroduce the old `'  \n'` soft-break marker** in the inline
+  layer, and do not move `_soft_break_run()` out of `process_markdown_block()`:
+  it sits there so prose, quotes, alignment blocks, the base tool and template
+  placeholders all get the same behaviour. See "One line-break model".
 - **Do not add `Optional[...]` types to dynamic-tool arguments.** Optionality
   is expressed by the default alone. Several MCP clients drop the sibling
   description when they see `anyOf`. This rule lives in
@@ -238,6 +272,7 @@ inserts a TOC field with `w:updateFields` set so Word refreshes it on open.
 | `tests/test_docx_list_indentation.py`, `test_docx_list_restart.py`, `test_docx_list_continuation_and_br.py`, `test_docx_ordered_list_date.py`, `test_docx_list_infinite_loop_regression.py` | Lists: nesting, restarts, running count, date disambiguation, forward-progress guard |
 | `tests/test_docx_style_map.py`, `test_docx_style_numbering.py`, `test_docx_style_tag.py` | Style mapping, style-aware numbering, the `style` directive |
 | `tests/test_docx_escaped_newlines.py` | Literal `\n` and backslash escapes |
+| `tests/test_docx_soft_breaks.py` | The line-break model: `<br>`, trailing spaces, CR, runs stopping before blocks, quotes, cells, headers |
 | `tests/test_docx_templates.py`, `test_docx_placeholder_formatting.py`, `test_docx_conditionals.py` | Dynamic templates: placeholder replacement across runs, formatting preservation, conditionals |
 | `tests/test_inline_markdown.py` | The shared inline grammar |
 

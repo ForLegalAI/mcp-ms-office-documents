@@ -73,6 +73,13 @@ backend → URL string or LibreChat artifact dict. Details:
   `PowerpointPresentation.warnings`; anything else that grows a warnings
   channel returns `(BytesIO, warnings)` the same way.
 
+**Word**
+- One line-break model: every newline reaching the inline layer is a soft
+  break; two-space runs are assembled by `_soft_break_run()` in the block
+  dispatcher and stop before any block. Never give `expand_br_to_block_breaks()`
+  the renderer's numbering state (#110). Details in
+  [word.md](docs/development/tools/word.md#one-line-break-model).
+
 **PowerPoint**
 - Never index `slide_layouts[N]` in a builder; go through `_new_slide()`.
 - Keep the published slide schema flat (no `oneOf`/`$ref`/`discriminator`);

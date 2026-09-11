@@ -10,8 +10,9 @@ lost (it also corrupted ``\\t``, Windows paths like ``C:\\new``, etc.).
 The fix:
   * ``_ESCAPE_RE`` now only escapes ASCII punctuation (CommonMark behaviour), so a
     backslash before a letter/digit is preserved instead of silently dropped.
-  * ``normalize_escaped_newlines`` converts literal ``\\n``/``\\r\\n``/``\\r`` to
-    real newlines so they render as genuine line/paragraph breaks.
+  * ``normalize_newlines`` converts literal ``\\n``/``\\r\\n``/``\\r`` — and real
+    CR/CRLF line endings — to real newlines so they render as genuine
+    line/paragraph breaks.
 """
 import sys
 from pathlib import Path
@@ -26,7 +27,7 @@ sys.path.insert(0, str(project_root))
 
 from docx_tools.inline_formatting import parse_inline_formatting  # noqa: E402
 from docx_tools.markdown_processor import process_markdown_content  # noqa: E402
-from docx_tools.patterns import normalize_escaped_newlines  # noqa: E402
+from docx_tools.patterns import normalize_newlines  # noqa: E402
 from docx_tools.dynamic_docx_tools import (  # noqa: E402
     _replace_placeholders_in_document,
 )
@@ -49,28 +50,28 @@ def _default_doc():
     return Document(str(default))
 
 
-# --- normalize_escaped_newlines (unit) --------------------------------------
+# --- normalize_newlines (unit) ----------------------------------------------
 
 def test_normalize_literal_n():
-    assert normalize_escaped_newlines(r"a\nb") == "a\nb"
+    assert normalize_newlines(r"a\nb") == "a\nb"
 
 
 def test_normalize_literal_crlf_is_single_break():
-    assert normalize_escaped_newlines(r"a\r\nb") == "a\nb"
+    assert normalize_newlines(r"a\r\nb") == "a\nb"
 
 
 def test_normalize_literal_cr():
-    assert normalize_escaped_newlines(r"a\rb") == "a\nb"
+    assert normalize_newlines(r"a\rb") == "a\nb"
 
 
 def test_normalize_leaves_real_newline_untouched():
-    assert normalize_escaped_newlines("a\nb") == "a\nb"
+    assert normalize_newlines("a\nb") == "a\nb"
 
 
 def test_normalize_does_not_touch_other_backslash_letters():
     # \t / \d are not newline escapes — they must be left for the (punctuation-
     # only) escape handler, which now preserves the backslash.
-    assert normalize_escaped_newlines(r"a\tb") == r"a\tb"
+    assert normalize_newlines(r"a\tb") == r"a\tb"
 
 
 # --- the reported failure: literal \n collapsing to "n" ---------------------

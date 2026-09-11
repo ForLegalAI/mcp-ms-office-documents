@@ -6,7 +6,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.opc.constants import RELATIONSHIP_TYPE
 from .patterns import (
-    _INLINE_FORMAT_RE, _LINK_RE, _ESCAPE_RE, _BR_RE, normalize_escaped_newlines,
+    _INLINE_FORMAT_RE, _LINK_RE, _ESCAPE_RE, _BR_RE, normalize_newlines,
 )
 
 logger = logging.getLogger(__name__)
@@ -98,22 +98,28 @@ def parse_inline_formatting(text, paragraph, bold=False, italic=False):
     for entity, char in _SAFE_HTML_ENTITIES:
         if entity in text:
             text = text.replace(entity, char)
-    # Treat a literal "\n"/"\r\n" (backslash+n typed as text, not a real newline)
-    # as a genuine newline so it renders as a line break instead of a stray "n".
-    text = normalize_escaped_newlines(text)
-    # Normalize <br>, <br/>, <br /> tags to the two-space soft-break marker
-    # so they produce line breaks (common in table cells where real newlines
-    # would break the row).
-    text = _BR_RE.sub('  \n', text)
+    # Fold every newline spelling (a literal "\n", a CR) into a real newline, and
+    # <br> with them: by the time text reaches this layer the block parser has
+    # already taken out the newlines that separate paragraphs, so every one left
+    # here is a soft break. One rule, one marker.
+    text = normalize_newlines(text)
+    text = _BR_RE.sub('\n', text)
     escape_ctx = {"map": {}, "counter": 0}
     text = _handle_escapes(text, escape_ctx)
-    line_parts = text.split('  \n')
-    for line_idx, line_part in enumerate(line_parts):
-        if not line_part and line_idx == len(line_parts) - 1:
-            continue
-        _parse_formatting_segment(line_part, paragraph, bold, italic, escape_ctx)
-        if line_idx < len(line_parts) - 1:
+    segments = text.split('\n')
+    if len(segments) > 1 and not segments[-1].strip():
+        segments.pop()  # a trailing newline ends the text; it is not a break
+    # Spaces before a break are the *marker* of a trailing-space soft break, not
+    # content — they would otherwise be drawn at the end of the line. Only the
+    # segments that are followed by a break carry one; the last segment is plain
+    # text and keeps whatever it ends with. Strip the marker characters only: a
+    # deliberate &nbsp; before a break is content and must survive.
+    segments = [seg.rstrip(' \t') for seg in segments[:-1]] + segments[-1:]
+    for idx, segment in enumerate(segments):
+        if idx:
             paragraph.add_run().add_break()
+        if segment:
+            _parse_formatting_segment(segment, paragraph, bold, italic, escape_ctx)
 
 
 def _parse_formatting_segment(text, paragraph, bold=False, italic=False, escape_ctx=None):
