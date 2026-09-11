@@ -17,9 +17,11 @@ from .patterns import (
     UNORDERED_LIST_PATTERN,
     COMMENT_DIRECTIVE_PATTERN,
     CODE_FENCE_PATTERN,
+    SOFT_BREAK_SUFFIX,
     _ALIGN_CLOSE_RE,
+    line_starts_block,
     ordered_list_is_genuine,
-    normalize_escaped_newlines,
+    normalize_newlines,
     expand_br_to_block_breaks,
 )
 from .inline_formatting import parse_inline_formatting
@@ -79,10 +81,10 @@ def process_markdown_content(doc, content, return_elements=False,
     Returns:
         List of XML elements if return_elements is True, otherwise an empty list.
     """
-    # Treat literal "\n"/"\r\n" sequences (typed as text rather than real
-    # newlines) as genuine newlines so they split into paragraphs/blocks instead
-    # of being mangled into stray "n" characters downstream.
-    content = normalize_escaped_newlines(content)
+    # Fold CR/CRLF line endings and literal "\n"/"\r\n" sequences (typed as text
+    # rather than real newlines) into genuine newlines so they split into
+    # paragraphs/blocks instead of leaving stray characters downstream.
+    content = normalize_newlines(content)
     # Promote <br> that borders block content (lists/headings) to real newlines
     # so such blocks are detected; a prose <br> stays an inline soft break.
     content = expand_br_to_block_breaks(content)
@@ -116,37 +118,9 @@ def process_markdown_content(doc, content, return_elements=False,
                         all_elements.append(p._p)
                         doc._body._body.remove(p._p)
             continue
-        # --- Soft line breaks (trailing two spaces) ---
-        # A complete <!-- --> comment line is exempt: trailing spaces after the
-        # closing marker must not turn a directive (or a comment to be skipped)
-        # into soft-break prose that renders the comment text literally.
-        if line.endswith('  ') and not _is_complete_comment(line):
-            paragraph_lines = []
-            while i < n:
-                current_line = lines[i]
-                if not current_line.strip():
-                    break
-                paragraph_lines.append(current_line)
-                i += 1
-                if not current_line.endswith('  '):
-                    break
-            full_text = '  \n'.join(paragraph_lines)
-            first_line = paragraph_lines[0].strip()
-            if first_line.startswith('#'):
-                stripped_hashes = first_line.lstrip('#')
-                level = len(first_line) - len(stripped_hashes)
-                elem = _add_heading(doc, level, stripped_hashes.strip(), style_map)._p
-            elif first_line.startswith('>'):
-                elem = _add_quote(doc, full_text[1:].strip(), style_map)._p
-            else:
-                para = doc.add_paragraph()
-                parse_inline_formatting(full_text, para)
-                elem = para._p
-            if return_elements:
-                all_elements.append(elem)
-                doc._body._body.remove(elem)
-            continue
-        # --- All other block elements: delegate to block processor ---
+        # --- Block elements (soft-break runs included): delegate to the block
+        # processor, so prose, quotes and the insides of an alignment block all
+        # get the same treatment on every entry point into the renderer. ---
         # Nothing here resets the running count: interposed content of ANY kind
         # (a centred section heading, an evidence note, a bullet list of
         # exhibits, a table, a quote …) is an interruption of a numbered run,
@@ -175,9 +149,64 @@ def _add_heading(doc, level, content, style_map):
     return heading
 
 
-def _is_complete_comment(line):
-    """True if *line* (ignoring surrounding whitespace) is a whole ``<!-- -->``."""
-    stripped = line.strip()
+def _soft_break_run(lines, start_idx, ordered_run=None, strip_quote=False):
+    """Collect the soft-break run that starts at ``lines[start_idx]``.
+
+    A line ending in two spaces continues into the next one *within the same
+    paragraph*. The run stops at a blank line, at a line that does not itself end
+    in the marker, and — crucially — before any line that begins a block element:
+    a list, table, heading, image, page break, alignment tag or comment. Without
+    that guard the block would be swallowed into the paragraph and rendered as
+    literal text (its first list item, its header row, its ``---``).
+
+    The marker spaces are stripped from every line; the caller gets the lines
+    joined by plain newlines, which the inline layer renders as ``<w:br/>``.
+
+    *strip_quote* drops the leading ``>`` of each line, for a block quote whose
+    lines are joined by soft breaks. A continuation line may omit its ``>``
+    (markdown's lazy continuation) — the marker on the previous line already
+    said the paragraph goes on.
+
+    Returns ``(text, next_index)``.
+    """
+    collected = []
+    idx = start_idx
+    n = len(lines)
+    while idx < n:
+        raw = lines[idx]
+        line = raw.strip()
+        collected.append(line.lstrip('>').strip() if strip_quote else line)
+        idx += 1
+        if not raw.endswith(SOFT_BREAK_SUFFIX):
+            break
+        if idx >= n or not lines[idx].strip():
+            break
+        if _ends_soft_break_run(lines, idx, ordered_run):
+            break
+    return '\n'.join(collected), idx
+
+
+def _ends_soft_break_run(lines, idx, ordered_run) -> bool:
+    """True if ``lines[idx]`` must start its own block rather than continue a run.
+
+    :func:`docx_tools.patterns.line_starts_block` answers that for markdown
+    blocks; two more cases belong to this parser rather than to the pattern set —
+    a numbered line that continues the running ordered count (a list even though
+    it is not locally genuine), and the ``</center>``/``</div>`` that closes an
+    alignment block (swallowing it would leave the block unterminated).
+    """
+    stripped = lines[idx].strip()
+    return bool(
+        line_starts_block(lines, idx)
+        or _continues_ordered_run(stripped, ordered_run)
+        or COMMENT_DIRECTIVE_PATTERN.match(stripped)
+        or _is_comment_line(stripped)
+        or _ALIGN_CLOSE_RE.match(stripped)
+    )
+
+
+def _is_comment_line(stripped) -> bool:
+    """True if the already-stripped *stripped* line is a whole ``<!-- … -->``."""
     return stripped.startswith('<!--') and stripped.endswith('-->')
 
 
@@ -369,11 +398,13 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
                 lines, start_idx, doc, is_ordered=False, level=0, return_elements=return_element,
                 number_styles=style_map.list_number, bullet_styles=style_map.list_bullet,
             )
-        # Blockquote (> text)
+        # Blockquote (> text), continuing across soft breaks
         if stripped.startswith('>'):
-            quote_para = _add_quote(doc, stripped[1:].strip(), style_map)
+            text, next_idx = _soft_break_run(lines, start_idx, ordered_run,
+                                             strip_quote=True)
+            quote_para = _add_quote(doc, text, style_map)
             _collect(quote_para._p)
-            return start_idx + 1, elements
+            return next_idx, elements
         # Comment directives: <!-- borderless -->, <!-- widths: … -->, <!-- style: … -->.
         # Collect consecutive directive lines and attach them to the next block
         # (single look-ahead mechanism for all block directives).
@@ -439,13 +470,14 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
                 elements.extend(block_elems)
             return new_idx, elements
         # Other HTML comments (not a recognised directive) — skip silently.
-        if stripped.startswith('<!--') and stripped.endswith('-->'):
+        if _is_comment_line(stripped):
             return start_idx + 1, elements
-        # Regular paragraph
+        # Regular paragraph, continuing across soft breaks
+        text, next_idx = _soft_break_run(lines, start_idx, ordered_run)
         para = doc.add_paragraph()
-        parse_inline_formatting(stripped, para)
+        parse_inline_formatting(text, para)
         _collect(para._p)
-        return start_idx + 1, elements
+        return next_idx, elements
     except Exception as e:
         logger.error("Failed to process markdown block at line %d: %s", start_idx, e, exc_info=True)
         return start_idx + 1, elements

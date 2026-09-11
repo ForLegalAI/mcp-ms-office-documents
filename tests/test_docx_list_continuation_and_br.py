@@ -114,11 +114,14 @@ def test_prose_br_stays_single_soft_break_paragraph():
 
 
 def test_br_inside_table_cell_is_preserved():
+    # Never promoted to a block break (a row is one line); it renders as the
+    # in-cell soft break it is, exactly like a <br> in prose.
     md = "| H1 | H2 |\n| --- | --- |\n| a<br>b | c |"
     doc, _ = _render(md)
     assert len(doc.tables) == 1
     cell = doc.tables[0].rows[1].cells[0]
-    assert [p.text for p in cell.paragraphs] == ["a", "b"]
+    assert [p.text for p in cell.paragraphs] == ["a\nb"]
+    assert cell.paragraphs[0]._p.xpath('.//w:br')
 
 
 # ---------------------------------------------------------------------------

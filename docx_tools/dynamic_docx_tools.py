@@ -51,7 +51,7 @@ import metrics
 from .conditionals import resolve_conditionals
 from .inline_formatting import parse_inline_formatting
 from .patterns import (
-    contains_block_markdown, normalize_escaped_newlines, expand_br_to_block_breaks,
+    contains_block_markdown, normalize_newlines, expand_br_to_block_breaks,
 )
 from .markdown_processor import process_markdown_content
 from .style_map import DEFAULT_STYLE_MAP, build_style_map
@@ -281,12 +281,12 @@ def _replace_placeholder_in_paragraph(
         if placeholder not in full_text:
             return False
 
-        # Normalise literal "\n"/"\r\n" the model may have written as text (not
-        # real newlines) BEFORE routing, so block detection and the multi-line
-        # check below see genuine line breaks. process_markdown_content /
-        # parse_inline_formatting normalise again downstream (idempotent — that is
-        # what the base tool relies on), so this early pass is for routing only.
-        value = normalize_escaped_newlines(value)
+        # Normalise every newline spelling (a literal "\n" the model wrote as
+        # text, a CR line ending) BEFORE routing, so block detection and the
+        # multi-line check below see genuine line breaks. process_markdown_content
+        # / parse_inline_formatting normalise again downstream (idempotent — that
+        # is what the base tool relies on), so this early pass is for routing only.
+        value = normalize_newlines(value)
         # Likewise promote a <br> that borders block content (a list/heading) to a
         # real newline up front, so contains_block_markdown / the multi-line check
         # route such values to the block pipeline instead of inline-only (where the

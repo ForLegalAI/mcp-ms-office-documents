@@ -213,7 +213,7 @@ async def create_word_document(
         "- Unordered lists: - item (or * or +); nest by indenting child items (2-4 spaces or a tab)\n"
         "- Ordered lists: 1. item, 2. item; nest by indenting child items. The count continues across anything written between the items (a section title, an explanatory paragraph, a bullet list of exhibits, a table) as long as the numbers run consecutively, so keep numbering 3., 4., … instead of restarting; numbering restarts only where a list begins again at 1.\n"
         "  Because of that, escape the dot of a date that starts a line and would land on a list number — a day-1 date (1\\. ledna 2026) or one whose day is the next number in the running count (3\\. září 2026 written after item 2.) — otherwise it is read as the next list item.\n"
-        "- Tables: put each row on its own line — a header row, then a separator row (|---|---|), then data rows; cells support inline formatting and <br> for a new paragraph; use :---|:---:|---: in the separator for left/center/right alignment\n"
+        "- Tables: put each row on its own line — a header row, then a separator row (|---|---|), then data rows; cells support inline formatting, <br> for a line break inside the cell and <br><br> for a new paragraph in it; use :---|:---:|---: in the separator for left/center/right alignment\n"
         "- Borderless table: add <!-- borderless --> on the line before the table (useful for bilingual/parallel layouts)\n"
         "- Column widths: add <!-- widths: 30 70 --> before the table (proportional values, any number of columns)\n"
         "- Block quotes: > text (supports inline formatting)\n"
@@ -238,7 +238,7 @@ async def create_word_document(
         "- <center>text</center> for a single line; for multiple lines put <center> and </center> each on their own line with the content on the lines between\n"
         "- <div align=\"right|center|justify|left\">text</div> (single or multi-line)\n"
         "\n"
-        "LINE BREAKS: Use real newlines in the text — separate paragraphs/blocks with a blank line, and end a line with two trailing spaces for a soft break within the same paragraph. Do NOT type the two literal characters backslash-n to mean a newline.\n"
+        "LINE BREAKS: Use real newlines in the text — separate paragraphs and blocks with a blank line. For a soft break (a new line inside the SAME paragraph, e.g. an address block) write <br>: Street<br>City. Ending a line with two trailing spaces does the same, but the spaces are invisible and many editors strip them, so prefer <br>. Both work anywhere text is written — prose, headings, list items, quotes, table cells. Do NOT type the two literal characters backslash-n to mean a newline.\n"
         "\n"
         "CONVENTIONS:\n"
         "- Do NOT confuse --- (page break) with *** (horizontal line).\n"
@@ -249,8 +249,8 @@ async def create_word_document(
     title: Annotated[Optional[str], Field(description="Document title (shown in file properties)", default=None)] = None,
     author: Annotated[Optional[str], Field(description="Document author name (shown in file properties)", default=None)] = None,
     subject: Annotated[Optional[str], Field(description="Document subject/description (shown in file properties)", default=None)] = None,
-    header_text: Annotated[Optional[str], Field(description="Text for document header (top of every page). Use {page} for auto page number, {pages} for total pages.", default=None)] = None,
-    footer_text: Annotated[Optional[str], Field(description="Text for document footer (bottom of every page). Use {page} for auto page number, {pages} for total pages.", default=None)] = None,
+    header_text: Annotated[Optional[str], Field(description="Text for document header (top of every page). Use {page} for auto page number, {pages} for total pages, and <br> for a second line. Plain text — markdown is not parsed here.", default=None)] = None,
+    footer_text: Annotated[Optional[str], Field(description="Text for document footer (bottom of every page). Use {page} for auto page number, {pages} for total pages, and <br> for a second line. Plain text — markdown is not parsed here.", default=None)] = None,
     include_toc: Annotated[Optional[bool], Field(description="If true, inserts a Table of Contents at the beginning of the document. The TOC updates automatically when opened in Word.", default=False)] = False,
     file_name: Annotated[Optional[str], Field(description="Custom filename for the output file (without extension). If not provided, a unique identifier will be used.", default=None)] = None,
     add_unique_prefix: Annotated[Optional[bool], Field(description="If true, adds 8-char UUID prefix to filename for uniqueness. If not set, defaults to True for traditional storage backends (LOCAL/S3/GCS/AZURE/MINIO) and False for LibreChat.", default=None)] = None,

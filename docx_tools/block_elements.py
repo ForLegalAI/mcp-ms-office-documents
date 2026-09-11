@@ -12,9 +12,9 @@ from .patterns import (
     UNORDERED_LIST_CAPTURE_PATTERN,
     _ALIGN_INLINE_RE,
     _ALIGN_OPEN_RE,
+    _BR_PARAGRAPH_RE,
 )
 from .inline_formatting import parse_inline_formatting
-from .patterns import _BR_RE
 from .numbering import (
     resolve_ordered_numbering,
     new_restarted_num,
@@ -146,8 +146,11 @@ def add_table_to_doc(table_data, doc, col_alignments=None, borderless=False,
             if j < cols:
                 try:
                     cell = word_table.cell(i, j)
-                    # Split on <br> variants to create multiple paragraphs in cell
-                    segments = _BR_RE.split(cell_text)
+                    # A row is one physical line, so a cell has no blank line to
+                    # separate paragraphs with: <br><br> stands in for it. A
+                    # single <br> is a soft break like everywhere else, handled
+                    # by parse_inline_formatting.
+                    segments = _BR_PARAGRAPH_RE.split(cell_text)
                     if cell.paragraphs:
                         cell.paragraphs[0].clear()
                     parse_inline_formatting(segments[0], cell.paragraphs[0])
