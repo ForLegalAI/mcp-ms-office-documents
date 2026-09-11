@@ -315,6 +315,10 @@ _RUN_PREFIXES = [
     "1. A\n\n5. B\n", "1. A\n2. B\n\n## H\n", "1. A\n\n23. brezna 2026\n",
     "1. A\n2. B\n\n## H\n\n23. brezna 2026\n", "```\n3. code\n```\n",
     "1. A\n   2. nested\n", "1. A\n   2. nested\n5. B\n", "- x\n- y\n",
+    # A nested *bullet* detour does not end the top-level run, while a
+    # same-indent bullet does — the look-back has to tell those apart.
+    "1. A\n  - nested bullet\n9. B\n", "1. A\n  - nested bullet\n",
+    "1. A\n2. B\n\n- bullet\n",
     "- x\n   1. nested\n", "- x\n   1. nested\n5. B\n", "1. A\n      9. deep\n",
     "> q\n", "Just prose\n", "1. A\n2. B\n\n1. X\n",
 ]
