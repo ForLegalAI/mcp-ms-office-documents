@@ -1,3 +1,13 @@
+"""Template file resolution shared by every document tool.
+
+Templates are searched in four directories, most specific first: the
+container's ``/app/custom_templates``, the checkout's ``custom_templates/``,
+then the same pair for ``default_templates/``. A custom file therefore always
+wins over the shipped default of the same name, and the same code runs in the
+container and in a local checkout. Never hard-code a template path; call
+``find_file_in_template_dirs`` or one of the ``find_*_template`` helpers.
+See docs/development/shared-modules.md.
+"""
 from __future__ import annotations
 
 from pathlib import Path
