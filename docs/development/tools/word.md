@@ -15,7 +15,7 @@ path around the build step, see [`../architecture.md`](../architecture.md).
 | `markdown_to_word()` | `docx_tools/base_docx_tool.py` | direct library use; builds and uploads synchronously |
 | `process_markdown_content()` | `docx_tools/markdown_processor.py` | the base tool **and** the dynamic template tools |
 
-The tool wrapper in `main.py` passes `markdown_content`, the four metadata
+The tool wrapper in `main.py` passes `markdown_content`, the three metadata
 fields (`title`, `author`, `subject`), `header_text`, `footer_text` and
 `include_toc` to the buffer function. `file_name` and `add_unique_prefix` go
 to the upload step, not the builder.
@@ -42,8 +42,9 @@ markdown_content
   ├─ patterns.normalize_escaped_newlines()    literal "\n" typed as text → real newline
   ├─ patterns.expand_br_to_block_breaks()     <br> next to a list/heading → real newline
   ├─ split into lines, then loop:
-  │    blank runs        → spacer paragraphs (n-1 for n blanks)
-  │    trailing "  "     → soft-break paragraph (lines joined with line breaks)
+  │    blank runs        → n-1 spacer paragraphs for n ≥ 2 blanks; one blank is a separator
+  │    trailing "  "     → soft-break paragraph (lines joined with line breaks;
+  │                        a leading # or > still makes it a heading or quote)
   │    everything else   → process_markdown_block()
   ▼
   markdown_processor.process_markdown_block(doc, lines, i, …)   one block per call
@@ -76,18 +77,18 @@ line by line and paragraphs are appended as they are recognised.
 
 ## Module map
 
-| Module | Lines | Owns |
-|--------|------:|------|
-| `base_docx_tool.py` | 128 | Template load, metadata, TOC, header/footer, then hands off to the processor. The three entry points |
-| `markdown_processor.py` | 490 | Line walker (`process_markdown_content`), block dispatcher (`process_markdown_block`), soft breaks, code blocks, alignment blocks, comment directives, the running ordered-list count |
-| `patterns.py` | 217 | Every compiled regex for block detection, plus `ordered_list_is_genuine()`, `normalize_escaped_newlines()`, `expand_br_to_block_breaks()`, `contains_block_markdown()` |
-| `inline_formatting.py` | 162 | `parse_inline_formatting()`: entities, escapes, soft breaks, run creation, hyperlinks |
-| `block_elements.py` | 370 | Tables, lists, images, horizontal lines, alignment detection |
-| `numbering.py` | 270 | Ordered-list restart through fresh `<w:num>` instances; style-aware numbering resolution; indent re-assertion |
-| `style_map.py` | 186 | `StyleMap` dataclass, config merging, `apply_style()` with fallback, the global map loaded from `config/docx_templates.yaml` |
-| `document_features.py` | 115 | Template resolution, header/footer with PAGE/NUMPAGES fields, TOC field |
-| `conditionals.py` | 180 | `{{#if}}`/`{{^if}}`/`{{/if}}` marker paragraphs for dynamic templates |
-| `dynamic_docx_tools.py` | 796 | YAML-driven template tools, placeholder replacement across split runs, live registration. See [`../dynamic-templates.md`](../dynamic-templates.md) |
+| Module | Owns |
+|--------|------|
+| `base_docx_tool.py` | Template load, metadata, TOC, header/footer, then hands off to the processor. The three entry points |
+| `markdown_processor.py` | Line walker (`process_markdown_content`), block dispatcher (`process_markdown_block`), soft breaks, code blocks, alignment blocks, comment directives, the running ordered-list count |
+| `patterns.py` | Every compiled regex for block detection, plus `ordered_list_is_genuine()`, `normalize_escaped_newlines()`, `expand_br_to_block_breaks()`, `contains_block_markdown()` |
+| `inline_formatting.py` | `parse_inline_formatting()`: entities, escapes, soft breaks, run creation, hyperlinks |
+| `block_elements.py` | Tables, lists, images, horizontal lines, alignment detection |
+| `numbering.py` | Ordered-list restart through fresh `<w:num>` instances; style-aware numbering resolution; indent re-assertion |
+| `style_map.py` | `StyleMap` dataclass, config merging, `apply_style()` with fallback, the global map loaded from `config/docx_templates.yaml` |
+| `document_features.py` | Template resolution, header/footer with PAGE/NUMPAGES fields, TOC field |
+| `conditionals.py` | `{{#if}}`/`{{^if}}`/`{{/if}}` marker paragraphs for dynamic templates |
+| `dynamic_docx_tools.py` | YAML-driven template tools, placeholder replacement across split runs, live registration. See [`../dynamic-templates.md`](../dynamic-templates.md) |
 
 Two root modules are part of this pipeline:
 
@@ -211,6 +212,9 @@ inserts a TOC field with `w:updateFields` set so Word refreshes it on open.
   every exception, logs it at ERROR with the line number, and advances one
   line. The document is still produced, minus that block. Keep this when
   editing: a rendering bug must not cost the user the whole document.
+- **A failing image becomes text.** `add_image_to_doc()` writes a paragraph
+  reading `[Image could not be loaded: <url>]` and logs a warning. The caller
+  never sees an error, and the Word tool has no warnings channel to report it.
 - **Never hold a `StyleMap` in module state.** See style mapping above.
 - **`normalize_escaped_newlines()` and `expand_br_to_block_breaks()` are
   idempotent.** The template path calls them for routing and the processor
