@@ -112,8 +112,9 @@ def parse_inline_formatting(text, paragraph, bold=False, italic=False):
     # Spaces before a break are the *marker* of a trailing-space soft break, not
     # content — they would otherwise be drawn at the end of the line. Only the
     # segments that are followed by a break carry one; the last segment is plain
-    # text and keeps whatever it ends with.
-    segments = [seg.rstrip() for seg in segments[:-1]] + segments[-1:]
+    # text and keeps whatever it ends with. Strip the marker characters only: a
+    # deliberate &nbsp; before a break is content and must survive.
+    segments = [seg.rstrip(' \t') for seg in segments[:-1]] + segments[-1:]
     for idx, segment in enumerate(segments):
         if idx:
             paragraph.add_run().add_break()

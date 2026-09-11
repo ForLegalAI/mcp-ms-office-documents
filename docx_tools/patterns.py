@@ -27,6 +27,7 @@ UNORDERED_LIST_CAPTURE_PATTERN = re.compile(r'^[-*+]\s+(.*)')
 COMMENT_DIRECTIVE_PATTERN = re.compile(r'^<!--\s*([\w-]+)(?:\s*:\s*(.*?))?\s*-->$',
                                        re.IGNORECASE)
 HEADING_PATTERN = re.compile(r'^(#{1,6})\s+(.+)$')
+BLOCKQUOTE_PATTERN = re.compile(r'^>')
 PAGE_BREAK_PATTERN = re.compile(r'^-{3,}\s*$')
 HORIZONTAL_LINE_PATTERN = re.compile(r'^\*{3,}\s*$')
 IMAGE_PATTERN = re.compile(r'^!\[([^\]]*)\]\(([^)]+)\)$')
@@ -38,8 +39,8 @@ CODE_FENCE_PATTERN = re.compile(r'^(`{3,}|~{3,})(.*)$')
 # All block-level patterns checked by contains_block_markdown
 _BLOCK_PATTERNS = [
     ORDERED_LIST_PATTERN, UNORDERED_LIST_PATTERN, HEADING_PATTERN,
-    PAGE_BREAK_PATTERN, HORIZONTAL_LINE_PATTERN, IMAGE_PATTERN,
-    TABLE_LINE_PATTERN, CODE_FENCE_PATTERN,
+    BLOCKQUOTE_PATTERN, PAGE_BREAK_PATTERN, HORIZONTAL_LINE_PATTERN,
+    IMAGE_PATTERN, TABLE_LINE_PATTERN, CODE_FENCE_PATTERN,
 ]
 
 # ---------------------------------------------------------------------------
@@ -157,20 +158,25 @@ def ordered_list_is_genuine(lines, idx) -> bool:
     return False
 
 
-def _segment_is_block(segments, idx) -> bool:
+def _segment_is_block(segments, idx, next_number=None) -> bool:
     """Return True if ``segments[idx]`` begins a block element.
 
-    A heading or unordered-list marker always counts; an ordered-list marker
-    counts when :func:`ordered_list_is_genuine` accepts it within the *segments*
-    list (so a lone number that is really a date does not), or when the previous
-    segment is an ordered marker too — ``"1. a<br>2. b"`` is a list even though
-    neither ``2.`` on its own nor anything after it says so.
+    A heading, unordered-list or quote marker always counts; an ordered-list
+    marker counts when :func:`ordered_list_is_genuine` accepts it within the
+    *segments* list (so a lone number that is really a date does not), when the
+    previous segment is an ordered marker too — ``"1. a<br>2. b"`` is a list even
+    though neither ``2.`` on its own nor anything after it says so — or when it
+    matches *next_number*, the count a running ordered list would continue with.
     """
     seg = segments[idx]
-    if HEADING_PATTERN.match(seg) or UNORDERED_LIST_PATTERN.match(seg):
+    if (HEADING_PATTERN.match(seg) or UNORDERED_LIST_PATTERN.match(seg)
+            or BLOCKQUOTE_PATTERN.match(seg)):
         return True
-    if not ORDERED_LIST_PATTERN.match(seg):
+    match = ORDERED_LIST_CAPTURE_PATTERN.match(seg)
+    if not match:
         return False
+    if next_number is not None and int(match.group(1)) == next_number:
+        return True
     return bool(ordered_list_is_genuine(segments, idx)
                 or (idx and ORDERED_LIST_PATTERN.match(segments[idx - 1])))
 
@@ -195,6 +201,14 @@ def expand_br_to_block_breaks(text: str) -> str:
     segment begins, by contrast, is invisible to the line-based parser unless it
     is promoted here.
 
+    A numbered segment is also a block when it continues a numbered run already
+    under way (``next_number`` below), so ``"Note<br>3. Treti"`` after a list that
+    reached ``2.`` renders as the third item — the same thing the equivalent
+    newline spelling does through the renderer's own running count. It inherits
+    that rule's documented ambiguity: a date whose day happens to be the next
+    number needs its dot escaped (``3\\. zari 2026``), exactly as it does when
+    written on its own line.
+
     Table rows (``| ... |``) and fenced code blocks are never touched: a row is
     one physical line, so a ``<br>`` in a cell is an in-cell break (rendered by
     the inline layer, with ``<br><br>`` splitting the cell into paragraphs in
@@ -205,6 +219,19 @@ def expand_br_to_block_breaks(text: str) -> str:
         return text
     out = []
     in_code = False
+    # The number that would continue the ordered run seen so far, tracked from
+    # top-level numbered lines only (a nested item's number is not the run's).
+    next_number = None
+
+    def _remember(emitted):
+        nonlocal next_number
+        for produced in emitted:
+            if produced[:1].isspace():
+                continue
+            match = ORDERED_LIST_CAPTURE_PATTERN.match(produced.strip())
+            if match:
+                next_number = int(match.group(1)) + 1
+
     for line in text.split('\n'):
         stripped = line.strip()
         if CODE_FENCE_PATTERN.match(stripped):
@@ -213,13 +240,16 @@ def expand_br_to_block_breaks(text: str) -> str:
             continue
         if in_code or TABLE_LINE_PATTERN.match(stripped) or not _BR_RE.search(line):
             out.append(line)
+            _remember([line])
             continue
         segments = [seg.strip() for seg in _BR_RE.split(line)]
-        if len(segments) > 1 and any(_segment_is_block(segments, idx)
+        if len(segments) > 1 and any(_segment_is_block(segments, idx, next_number)
                                      for idx in range(1, len(segments))):
             out.extend(segments)
+            _remember(segments)
         else:
             out.append(line)
+            _remember([line])
     return '\n'.join(out)
 
 

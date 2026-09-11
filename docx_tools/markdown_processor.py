@@ -15,6 +15,7 @@ from .patterns import (
     ORDERED_LIST_PATTERN,
     ORDERED_LIST_CAPTURE_PATTERN,
     UNORDERED_LIST_PATTERN,
+    BLOCKQUOTE_PATTERN,
     COMMENT_DIRECTIVE_PATTERN,
     CODE_FENCE_PATTERN,
     SOFT_BREAK_SUFFIX,
@@ -155,7 +156,7 @@ def _soft_break_run(lines, start_idx, ordered_run=None, strip_quote=False):
     A line ending in two spaces continues into the next one *within the same
     paragraph*. The run stops at a blank line, at a line that does not itself end
     in the marker, and — crucially — before any line that begins a block element:
-    a list, table, heading, image, page break, alignment tag or comment. Without
+    a list, table, heading, quote, image, page break, alignment tag or comment. Without
     that guard the block would be swallowed into the paragraph and rendered as
     literal text (its first list item, its header row, its ``---``).
 
@@ -181,12 +182,12 @@ def _soft_break_run(lines, start_idx, ordered_run=None, strip_quote=False):
             break
         if idx >= n or not lines[idx].strip():
             break
-        if _ends_soft_break_run(lines, idx, ordered_run):
+        if _ends_soft_break_run(lines, idx, ordered_run, in_quote=strip_quote):
             break
     return '\n'.join(collected), idx
 
 
-def _ends_soft_break_run(lines, idx, ordered_run) -> bool:
+def _ends_soft_break_run(lines, idx, ordered_run, in_quote=False) -> bool:
     """True if ``lines[idx]`` must start its own block rather than continue a run.
 
     :func:`docx_tools.patterns.line_starts_block` answers that for markdown
@@ -194,8 +195,13 @@ def _ends_soft_break_run(lines, idx, ordered_run) -> bool:
     a numbered line that continues the running ordered count (a list even though
     it is not locally genuine), and the ``</center>``/``</div>`` that closes an
     alignment block (swallowing it would leave the block unterminated).
+
+    *in_quote* marks a run that is already inside a block quote, where a further
+    ``>`` line is that quote's next line rather than a new block.
     """
     stripped = lines[idx].strip()
+    if in_quote and BLOCKQUOTE_PATTERN.match(stripped):
+        return False
     return bool(
         line_starts_block(lines, idx)
         or _continues_ordered_run(stripped, ordered_run)
@@ -399,7 +405,7 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
                 number_styles=style_map.list_number, bullet_styles=style_map.list_bullet,
             )
         # Blockquote (> text), continuing across soft breaks
-        if stripped.startswith('>'):
+        if BLOCKQUOTE_PATTERN.match(stripped):
             text, next_idx = _soft_break_run(lines, start_idx, ordered_run,
                                              strip_quote=True)
             quote_para = _add_quote(doc, text, style_map)

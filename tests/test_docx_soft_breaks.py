@@ -15,6 +15,11 @@ The failures pinned here were all live before the fix:
 * soft breaks were ignored inside ``<center>`` / ``<div align>``;
 * a ``<br>`` inside a list item tore the item's second line into a paragraph;
 * CRLF input lost every soft break.
+
+Three more came out of the review on PR #110 and are pinned here too: a run
+swallowed a blockquote line (the one block ``line_starts_block()`` did not
+know), ``<br>`` could not continue a numbered run the way a real newline can,
+and the marker strip took a deliberate ``&nbsp;`` with it.
 """
 import sys
 from pathlib import Path
@@ -138,6 +143,14 @@ def test_soft_break_before_page_break_does_not_print_the_dashes():
     assert [p.text for p in _bodies(doc)] == ["Intro"]
 
 
+@pytest.mark.parametrize("value", ["Intro  \n> quote", "Intro<br>> quote"])
+def test_soft_break_before_blockquote_keeps_the_quote(value):
+    # A quote is a block like any other: the run stops before it instead of
+    # printing its ">" as literal text (PR #110 review, finding 1).
+    doc = _render(value)
+    assert _signature(doc) == [("Normal", "Intro"), ("Quote", "quote")]
+
+
 def test_soft_break_before_directive_still_applies_the_style():
     doc = _render("Intro  \n<!-- style: Quote -->\nStyled")
     assert _signature(doc) == [("Normal", "Intro"), ("Quote", "Styled")]
@@ -238,6 +251,32 @@ def test_br_inside_a_heading_stays_in_the_heading():
     assert _signature(doc) == [("Heading 1", "Heading\ncontinuation")]
 
 
+def test_br_continues_a_running_ordered_list():
+    # The newline spelling continues a numbered run through interposed prose via
+    # the renderer's running count; <br> must reach the same result (PR #110
+    # review, finding 2).
+    value = "1. Prvni\n\n2. Druhy\n\nNote{}3. Treti"
+    br_doc = _render(value.format("<br>"))
+    newline_doc = _render(value.format("\n\n"))
+    assert _signature(br_doc) == _signature(newline_doc)
+    assert _signature(br_doc) == [
+        ("List Number", "Prvni"),
+        ("List Number", "Druhy"),
+        ("Normal", "Note"),
+        ("List Number", "Treti"),
+    ]
+
+
+def test_br_does_not_sweep_in_a_number_that_does_not_continue_the_run():
+    doc = _render("1. Prvni\n\n2. Druhy\n\nNote<br>23. brezna 2026")
+    assert _signature(doc)[-1] == ("Normal", "Note\n23. brezna 2026")
+
+
+def test_br_continuation_can_be_escaped_like_the_newline_spelling():
+    doc = _render("1. Prvni\n\n2. Druhy\n\nNote<br>3\\. zari 2026")
+    assert _signature(doc)[-1] == ("Normal", "Note\n3. zari 2026")
+
+
 def test_br_before_a_list_is_still_promoted():
     # The rescue that the narrowed promotion rule must keep: a list a model
     # separated from its lead-in with <br> is still a list.
@@ -247,6 +286,16 @@ def test_br_before_a_list_is_still_promoted():
         ("List Number", "A"),
         ("List Number", "B"),
     ]
+
+
+def test_nbsp_before_a_break_is_content_and_survives():
+    # Only the marker characters are stripped from a breaking segment; a
+    # deliberate &nbsp; is content (PR #110 review, finding 3).
+    doc = Document()
+    para = doc.add_paragraph()
+    from docx_tools.inline_formatting import parse_inline_formatting
+    parse_inline_formatting("a&nbsp;<br>b", para)
+    assert [r.text for r in para.runs] == ["a\u00a0", "\n", "b"]
 
 
 # ---------------------------------------------------------------------------
