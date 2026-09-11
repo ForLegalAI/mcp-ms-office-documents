@@ -16,10 +16,15 @@ The failures pinned here were all live before the fix:
 * a ``<br>`` inside a list item tore the item's second line into a paragraph;
 * CRLF input lost every soft break.
 
-Three more came out of the review on PR #110 and are pinned here too: a run
+Two more came out of the review on PR #110 and are pinned here too: a run
 swallowed a blockquote line (the one block ``line_starts_block()`` did not
-know), ``<br>`` could not continue a numbered run the way a real newline can,
-and the marker strip took a deliberate ``&nbsp;`` with it.
+know), and the marker strip took a deliberate ``&nbsp;`` with it.
+
+The deliberate limitation is pinned as well: ``<br>`` does not resume a numbered
+list that began earlier in the document. Deciding that needs the renderer's own
+running count, which does not exist yet when ``<br>`` is expanded; predicting it
+drifted from the real one in seven distinct ways before the attempt was removed.
+A continuation written with real newlines is unaffected.
 """
 import sys
 from pathlib import Path
@@ -252,98 +257,65 @@ def test_br_inside_a_heading_stays_in_the_heading():
     assert _signature(doc) == [("Heading 1", "Heading\ncontinuation")]
 
 
-def test_br_continues_a_running_ordered_list():
-    # The newline spelling continues a numbered run through interposed prose via
-    # the renderer's running count; <br> must reach the same result (PR #110
-    # review, finding 2).
-    value = "1. Prvni\n\n2. Druhy\n\nNote{}3. Treti"
-    br_doc = _render(value.format("<br>"))
-    newline_doc = _render(value.format("\n\n"))
-    assert _signature(br_doc) == _signature(newline_doc)
-    assert _signature(br_doc) == [
-        ("List Number", "Prvni"),
-        ("List Number", "Druhy"),
-        ("Normal", "Note"),
-        ("List Number", "Treti"),
-    ]
+# ---------------------------------------------------------------------------
+# what <br> promotion deliberately does not do
+# ---------------------------------------------------------------------------
 
-
-def test_br_does_not_sweep_in_a_number_that_does_not_continue_the_run():
-    doc = _render("1. Prvni\n\n2. Druhy\n\nNote<br>23. brezna 2026")
-    assert _signature(doc)[-1] == ("Normal", "Note\n23. brezna 2026")
-
-
-def test_br_continuation_can_be_escaped_like_the_newline_spelling():
-    doc = _render("1. Prvni\n\n2. Druhy\n\nNote<br>3\\. zari 2026")
-    assert _signature(doc)[-1] == ("Normal", "Note\n3. zari 2026")
-
-
-@pytest.mark.parametrize("body,expected", [
-    # A number that renders as prose (a date under a heading) must not advance
-    # the count in the pre-pass either, or the <br> spelling would look for the
-    # wrong next number (PR #110 re-review).
-    ("1. Prvni\n\n2. Druhy\n\n## II\n\n23. brezna 2026\n\nNote{}3. Treti",
-     ["Prvni", "Druhy", "Treti"]),
-    # A list that legitimately starts above 1 (a sibling follows) does count.
-    ("5. Paty\n6. Sesty\n\nNote{}7. Sedmy", ["Paty", "Sesty", "Sedmy"]),
-    # A restart at 1. re-bases the count for the <br> spelling too.
-    ("1. A\n\n2. B\n\n1. X\n\nNote{}2. Y", ["A", "B", "X", "Y"]),
-    # A number that continues nothing stays prose.
-    ("1. Prvni\n\n2. Druhy\n\nNote{}23. brezna 2026", ["Prvni", "Druhy"]),
-    # A list sweeps up the line after it whatever its digits, so the count
-    # continues from that digit — chained inside one <br> group (PR #110
-    # third pass) and on plain lines, the same rule either way.
-    ("Note<br>1. First<br>5. Paty\n\nB{}6. Sedmy", ["First", "Paty", "Sedmy"]),
-    ("1. A\n5. B\n\nNote{}6. C", ["A", "B", "C"]),
-])
-def test_br_run_count_tracks_the_renderer(body, expected):
-    def numbered(doc):
-        return [p.text for p in doc.paragraphs if p.style.name.startswith("List Number")]
-
-    br_doc = _render(body.format("<br>"))
-    newline_doc = _render(body.format("\n\n"))
-    assert numbered(br_doc) == expected
-    assert numbered(br_doc) == numbered(newline_doc)
-
-
-# Documents that establish (or deliberately fail to establish) a numbered run,
-# crossed with the number a <br>-joined continuation might carry. The two
-# spellings must decide identically in every combination — the invariant the
-# pre-pass count exists to hold, checked broadly rather than case by case.
-_RUN_PREFIXES = [
-    "", "1. A\n", "1. A\n2. B\n", "1. A\n\n2. B\n", "1. A\n5. B\n",
-    "1. A\n\n5. B\n", "1. A\n2. B\n\n## H\n", "1. A\n\n23. brezna 2026\n",
-    "1. A\n2. B\n\n## H\n\n23. brezna 2026\n", "```\n3. code\n```\n",
-    "1. A\n   2. nested\n", "1. A\n   2. nested\n5. B\n", "- x\n- y\n",
-    # A nested *bullet* detour does not end the top-level run, while a
-    # same-indent bullet does — the look-back has to tell those apart.
-    "1. A\n  - nested bullet\n9. B\n", "1. A\n  - nested bullet\n",
-    "1. A\n2. B\n\n- bullet\n",
-    "- x\n   1. nested\n", "- x\n   1. nested\n5. B\n", "1. A\n      9. deep\n",
-    "> q\n", "Just prose\n", "1. A\n2. B\n\n1. X\n",
-    # A list can be indented and still be the outermost one, so "indented" does
-    # not mean "nested": the pre-pass tracks the open list's own level rather
-    # than assuming the outermost list sits at column 0.
-    "  1. A\n", "  1. A\n  2. B\n", "  1. A\n1. X\n", "1. A\n\n  1. X\n",
-    "- x\n   1. n1\n   2. n2\n", "1. A\n2. B\n\nprose\n",
-    # Lookalikes that never become a list: each is prose on its own, and they
-    # must not bootstrap each other into a run the renderer never had.
-    "4. X\n\n5. Y\n", "4. X\n\n5. Y\n\n6. Z\n", "9. X\n",
-    "23. brezna 2026\n\n24. dubna 2026\n", "1. A\n2. B\n\n9. X\n\n10. Y\n",
-]
-
-
-@pytest.mark.parametrize("prefix", _RUN_PREFIXES)
-@pytest.mark.parametrize("number", [1, 2, 3, 5, 6, 23, 24])
-def test_both_spellings_decide_numbering_identically(prefix, number):
-    body = prefix + "\nNote{}" + f"{number}. Tail"
+def test_br_does_not_continue_a_run_that_started_earlier():
+    """The documented limitation (#110): a <br>-joined number does not resume a
+    numbered list that began earlier in the document, because deciding that
+    would mean predicting the renderer's own count before parsing. Written with
+    a real newline, the same text continues the list.
+    """
+    body = "1. Prvni\n\n2. Druhy\n\nPoznamka{}3. Treti"
 
     def numbered(markdown):
         doc = _render(markdown)
         return [p.text for p in doc.paragraphs
                 if p.style.name.startswith("List Number")]
 
-    assert numbered(body.format("<br>")) == numbered(body.format("\n\n"))
+    # <br>: one paragraph, the number kept as text.
+    assert _signature(_render(body.format("<br>")))[-1] == ("Normal", "Poznamka\n3. Treti")
+    assert numbered(body.format("<br>")) == ["Prvni", "Druhy"]
+    # real newline: the renderer's own running count continues the list.
+    assert numbered(body.format("\n\n")) == ["Prvni", "Druhy", "Treti"]
+
+
+@pytest.mark.parametrize("markdown,expected", [
+    # The general continuation feature (#95) is untouched by any of this: a run
+    # resumes across anything written between its items, written with newlines.
+    ("1. Prvni\n\n2. Druhy\n\nNejaky odstavec.\n\n3. Treti",
+     ["Prvni", "Druhy", "Treti"]),
+    ("1. Prvni\n\n2. Druhy\n\n## II\n\n3. Treti", ["Prvni", "Druhy", "Treti"]),
+    ("1. Prvni\n\n2. Druhy\n\n> Citace\n\n3. Treti", ["Prvni", "Druhy", "Treti"]),
+    ("1. Prvni\n\n<center>**II.**</center>\n\n2. Druhy", ["Prvni", "Druhy"]),
+    ("1. Prvni\n\n*Dukaz:*\n\n- Smlouva\n\n2. Druhy", ["Prvni", "Druhy"]),
+])
+def test_newline_list_continuation_still_works(markdown, expected):
+    doc = _render(markdown)
+    assert [p.text for p in doc.paragraphs
+            if p.style.name.startswith("List Number")] == expected
+
+
+
+_RUN_PREFIXES = [
+    "", "1. A\n", "1. A\n2. B\n", "1. A\n\n2. B\n", "1. A\n5. B\n",
+    "1. A\n\n5. B\n", "1. A\n2. B\n\n## H\n", "1. A\n\n23. brezna 2026\n",
+    "1. A\n2. B\n\n## H\n\n23. brezna 2026\n", "```\n3. code\n```\n",
+    "1. A\n   2. nested\n", "1. A\n   2. nested\n5. B\n", "- x\n- y\n",
+    # Nested and same-indent bullet detours around a numbered run.
+    "1. A\n  - nested bullet\n9. B\n", "1. A\n  - nested bullet\n",
+    "1. A\n2. B\n\n- bullet\n",
+    "- x\n   1. nested\n", "- x\n   1. nested\n5. B\n", "1. A\n      9. deep\n",
+    "> q\n", "Just prose\n", "1. A\n2. B\n\n1. X\n",
+    # Indented, nested and restarted lists: none of them may sway a decision
+    # that is supposed to depend on the split line alone.
+    "  1. A\n", "  1. A\n  2. B\n", "  1. A\n1. X\n", "1. A\n\n  1. X\n",
+    "- x\n   1. n1\n   2. n2\n", "1. A\n2. B\n\nprose\n",
+    # Lookalikes that never become a list: each is prose on its own.
+    "4. X\n\n5. Y\n", "4. X\n\n5. Y\n\n6. Z\n", "9. X\n",
+    "23. brezna 2026\n\n24. dubna 2026\n", "1. A\n2. B\n\n9. X\n\n10. Y\n",
+]
 
 
 @pytest.mark.parametrize("prefix", _RUN_PREFIXES)
@@ -365,15 +337,6 @@ def test_a_br_line_is_promoted_only_when_the_number_becomes_an_item(prefix, numb
     assert promoted == became_item
     if not promoted:
         assert any(text == f"Note\n{number}. Tail" for _, text in signature)
-
-
-def test_a_number_inside_a_code_block_does_not_feed_the_run():
-    # Code is verbatim, so a "3." in it is not part of any numbered run: the
-    # prose after it must render the same as it would on its own.
-    plain = _render("Note<br>4. Y")
-    after_code = _render("```\n3. not a list\n```\n\nNote<br>4. Y")
-    assert _signature(plain) == [("Normal", "Note\n4. Y")]
-    assert _signature(after_code)[-1:] == _signature(plain)
 
 
 def test_br_before_a_list_is_still_promoted():

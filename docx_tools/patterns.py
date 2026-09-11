@@ -158,82 +158,29 @@ def ordered_list_is_genuine(lines, idx) -> bool:
     return False
 
 
-def _segment_is_block(segments, idx, next_number=None) -> bool:
+def _segment_is_block(segments, idx) -> bool:
     """Return True if ``segments[idx]`` begins a block element.
 
     A heading, unordered-list or quote marker always counts; an ordered-list
     marker counts when :func:`ordered_list_is_genuine` accepts it within the
-    *segments* list (so a lone number that is really a date does not), when the
+    *segments* list (so a lone number that is really a date does not), or when the
     previous segment is an ordered marker too — ``"1. a<br>2. b"`` is a list even
-    though neither ``2.`` on its own nor anything after it says so — or when it
-    matches *next_number*, the count a running ordered list would continue with.
+    though neither ``2.`` on its own nor anything after it says so.
+
+    Every rule here reads only the line being split. Deciding whether a number
+    continues a list that started earlier in the document would mean predicting,
+    before parsing, what :func:`docx_tools.block_elements.process_list_items`
+    will later compute — a second copy of the renderer's state, which is exactly
+    what this deliberately does not do (see #110).
     """
     seg = segments[idx]
     if (HEADING_PATTERN.match(seg) or UNORDERED_LIST_PATTERN.match(seg)
             or BLOCKQUOTE_PATTERN.match(seg)):
         return True
-    return ordered_item_number(segments, idx, next_number) is not None
-
-
-def ordered_item_number(lines, idx, next_number=None):
-    """The number ``lines[idx]`` contributes to a numbered run, or ``None``.
-
-    A numbered line joins the run when it continues the count *next_number* or is
-    genuine on its own (:func:`ordered_list_is_genuine`) — or when the line above
-    it at its own level does, because once a list has started
-    :func:`docx_tools.block_elements.process_list_items` sweeps up every further
-    numbered line at that indent whatever its digits, skipping blank lines and
-    the nested items of deeper levels on the way. So ``"1. First"`` followed by
-    ``"5. Paty"`` — with or without a blank line between them — is a two-item
-    list whose count continues at 6.
-
-    That last rule walks the chain to its root rather than trusting the line
-    immediately above to look like an item: a number only belongs to a run if the
-    chain ends at a line that is genuine or continues the count. Two lookalikes
-    in a row (``"4. X"``, ``"5. Y"``, each alone between blank lines) are prose
-    to the renderer, and must be prose here too — otherwise they bootstrap each
-    other into a run that never existed.
-
-    One rule with one home: :func:`_segment_is_block` asks it whether a ``<br>``
-    segment is a list item, and :func:`expand_br_to_block_breaks` asks it what
-    the running count becomes. Deriving those separately let them disagree, and
-    a segment promoted under a rule the tracker did not share left the count
-    behind.
-    """
-    match = ORDERED_LIST_CAPTURE_PATTERN.match(lines[idx].strip())
-    if not match:
-        return None
-    number = int(match.group(1))
-    # Walk back along the chain of numbered lines at this level. Iterative rather
-    # than recursive: a filing's numbered paragraphs can run into the hundreds.
-    cursor = idx
-    while True:
-        current = ORDERED_LIST_CAPTURE_PATTERN.match(lines[cursor].strip())
-        if not current:
-            return None  # the chain reached a line that is not a numbered item
-        if int(current.group(1)) == next_number or ordered_list_is_genuine(lines, cursor):
-            return number  # grounded: a real run starts here
-        cursor = _previous_at_level(lines, cursor)
-        if cursor is None:
-            return None  # nothing above it: the chain never grounds out
-
-
-def _previous_at_level(lines, idx):
-    """Index of the line above ``lines[idx]`` at its own level, or ``None``.
-
-    Mirrors the sweep's look-ahead: blank lines and the more-indented items of a
-    nested list are transparent, and the first line at this line's own indent (or
-    shallower, where a list has ended) is what decides.
-    """
-    indent = len(lines[idx]) - len(lines[idx].lstrip())
-    for position in range(idx - 1, -1, -1):
-        previous = lines[position]
-        if not previous.strip():
-            continue
-        if len(previous) - len(previous.lstrip()) > indent:
-            continue  # a deeper level's item belongs to its own run
-        return position
-    return None
+    if not ORDERED_LIST_PATTERN.match(seg):
+        return False
+    return bool(ordered_list_is_genuine(segments, idx)
+                or (idx and ORDERED_LIST_PATTERN.match(segments[idx - 1])))
 
 
 def expand_br_to_block_breaks(text: str) -> str:
@@ -256,13 +203,15 @@ def expand_br_to_block_breaks(text: str) -> str:
     segment begins, by contrast, is invisible to the line-based parser unless it
     is promoted here.
 
-    A numbered segment is also a block when it continues a numbered run already
-    under way (``next_number`` below), so ``"Note<br>3. Treti"`` after a list that
-    reached ``2.`` renders as the third item — the same thing the equivalent
-    newline spelling does through the renderer's own running count. It inherits
-    that rule's documented ambiguity: a date whose day happens to be the next
-    number needs its dot escaped (``3\\. zari 2026``), exactly as it does when
-    written on its own line.
+    What this deliberately does NOT do is continue a numbered run that started
+    earlier in the document: ``"Note<br>3. Treti"``, after a list that reached
+    ``2.``, stays one paragraph with a soft break, where the same text written on
+    its own line becomes item 3. Deciding otherwise means predicting, before
+    parsing, what ``process_list_items`` will later compute — a second copy of
+    the renderer's numbering state, which drifted from the original in seven
+    distinct ways before it was removed (see #110). A run continued across
+    interposed content is written with real newlines; the renderer's own count
+    handles that, and is untouched by any of this.
 
     Table rows (``| ... |``) and fenced code blocks are never touched: a row is
     one physical line, so a ``<br>`` in a cell is an in-cell break (rendered by
@@ -274,72 +223,21 @@ def expand_br_to_block_breaks(text: str) -> str:
         return text
     out = []
     in_code = False
-    # The number that would continue the ordered run seen so far, and the indent
-    # of the outermost list currently open — the renderer records a run only for
-    # that outermost level, so the tracker has to know which lines belong to it.
-    next_number = None
-    open_indent = None
-
-    def _remember(seq, idx):
-        """Advance the count if ``seq[idx]`` would really render as a list item.
-
-        The renderer only counts a numbered line its own rules turn into an item
-        *at the outermost list level*: a standalone ``23. brezna 2026`` renders as
-        prose, and an item nested under another list carries its own numbering.
-        Both must leave the count alone, or the two spellings of a later
-        continuation would disagree about what number comes next.
-
-        Indentation alone does not say which is which — a list whose first item
-        is indented is still the outermost one — so the open list's own indent is
-        tracked as lines go by, the way ``process_list_items`` tracks
-        ``base_indent``.
-        """
-        nonlocal next_number, open_indent
-        raw = seq[idx]
-        stripped = raw.strip()
-        if not stripped:
-            return  # the sweep skips blank lines; they close nothing
-        indent = len(raw) - len(raw.lstrip())
-        is_item = bool(ORDERED_LIST_PATTERN.match(stripped)
-                       or UNORDERED_LIST_PATTERN.match(stripped))
-        if open_indent is not None and indent > open_indent:
-            # Deeper than the open list: a nested item (its own numbering), or a
-            # line that is not an item at all, which ends the sweep.
-            if not is_item:
-                open_indent = None
-            return
-        if not is_item:
-            open_indent = None  # a non-item at this level ends the list
-            return
-        open_indent = indent  # this line is the outermost list's own level
-        number = ordered_item_number(seq, idx, next_number)
-        if number is not None:
-            next_number = number + 1
-
-    lines = text.split('\n')
-    for i, line in enumerate(lines):
+    for line in text.split('\n'):
         stripped = line.strip()
         if CODE_FENCE_PATTERN.match(stripped):
             in_code = not in_code
             out.append(line)
             continue
-        if in_code:
+        if in_code or TABLE_LINE_PATTERN.match(stripped) or not _BR_RE.search(line):
             out.append(line)
-            continue  # code is verbatim: a "3." in it is not part of any run
-        if TABLE_LINE_PATTERN.match(stripped) or not _BR_RE.search(line):
-            out.append(line)
-            _remember(lines, i)
             continue
         segments = [seg.strip() for seg in _BR_RE.split(line)]
-        if len(segments) > 1 and any(_segment_is_block(segments, idx, next_number)
+        if len(segments) > 1 and any(_segment_is_block(segments, idx)
                                      for idx in range(1, len(segments))):
             out.extend(segments)
-            # The segments are lines of their own now; count them as such.
-            for idx in range(len(segments)):
-                _remember(segments, idx)
         else:
             out.append(line)
-            _remember(lines, i)
     return '\n'.join(out)
 
 

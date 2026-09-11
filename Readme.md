@@ -432,7 +432,9 @@ Nesting and combinations work, e.g. `**bold with *italic* inside**`, `**~~bold s
 | two trailing spaces | The same soft break. Invisible, and many editors strip them — prefer `<br>` |
 | a literal `\n` typed as text | Read as a real newline, but never write it deliberately |
 
-A soft break never swallows what follows it: a list, table, heading, quote or page break on the next line is still that block. A `<br>` that a model wrote *before* a list (`Intro:<br>1. A<br>2. B`) is promoted to a real line break so the list renders as one — and so is one that continues a numbered run already under way (`Note<br>3. …` after item `2.`), matching what the same text does written on its own line. That is why a line-leading number which is really text (`1. máje 5`, `3. září 2026` right after item `2.`) needs the documented `1\.` / `3\.` escape either way.
+A soft break never swallows what follows it: a list, table, heading, quote or page break on the next line is still that block. A `<br>` written *before* a list (`Intro:<br>1. A<br>2. B`) is promoted to a real line break so the list renders as one — which is why a line-leading number that is really text (`1. máje 5`) needs the documented `1\.` escape.
+
+> ⚠️ **One thing `<br>` cannot do:** resume a numbered list that started earlier in the document. `Poznámka<br>3. Třetí`, after a list that reached `2.`, stays one paragraph with "3." as text. Write that continuation on its own line (a blank line, or a line ending in two spaces) and it becomes item 3 — [list continuation](#-word-markdown--full-syntax) across intervening content is unaffected, it just needs a real line break rather than a `<br>`.
 
 `header_text` / `footer_text` take `<br>` too; they are plain text, not markdown.
 
