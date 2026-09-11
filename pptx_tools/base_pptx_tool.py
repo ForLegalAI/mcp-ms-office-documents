@@ -1,3 +1,12 @@
+"""Slides → PowerPoint (.pptx): the entry points of the PowerPoint tool.
+
+``_create_presentation_buffer`` builds a deck through
+:class:`pptx_tools.slide_builder.PowerpointPresentation` and returns
+``(BytesIO, warnings)`` — what ``main.py`` calls, so the warnings ride back to
+the caller alongside the file. ``create_presentation`` builds and uploads
+synchronously for direct library use and drops the warnings. See
+docs/development/tools/powerpoint.md.
+"""
 import io
 import logging
 from typing import Any, List, Optional, Sequence, Tuple
