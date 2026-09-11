@@ -198,10 +198,18 @@ def ordered_item_number(lines, idx, next_number=None):
     number = int(match.group(1))
     if number == next_number or ordered_list_is_genuine(lines, idx):
         return number
+    # Otherwise this line only joins a run that the line above already started.
+    # "Above" means at this line's own indent: the sweep walks past blank lines
+    # and past the nested items of a deeper level, and stops at the first line of
+    # its own level — which must be a numbered item for the run to exist. A
+    # nested "1." under a bullet list, say, starts no run at this level.
+    indent = len(lines[idx]) - len(lines[idx].lstrip())
     for previous in reversed(lines[:idx]):
         stripped = previous.strip()
         if not stripped:
-            continue  # the sweep skips blank lines between items
+            continue
+        if len(previous) - len(previous.lstrip()) > indent:
+            continue  # a deeper level's item belongs to its own run
         return number if ORDERED_LIST_PATTERN.match(stripped) else None
     return None
 

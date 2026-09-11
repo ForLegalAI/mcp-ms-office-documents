@@ -31,6 +31,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from docx_tools.markdown_processor import process_markdown_content  # noqa: E402
+from docx_tools.patterns import expand_br_to_block_breaks  # noqa: E402
 from docx_tools.document_features import set_header_footer  # noqa: E402
 from docx_tools.dynamic_docx_tools import (  # noqa: E402
     _replace_placeholders_in_document,
@@ -313,7 +314,9 @@ _RUN_PREFIXES = [
     "", "1. A\n", "1. A\n2. B\n", "1. A\n\n2. B\n", "1. A\n5. B\n",
     "1. A\n\n5. B\n", "1. A\n2. B\n\n## H\n", "1. A\n\n23. brezna 2026\n",
     "1. A\n2. B\n\n## H\n\n23. brezna 2026\n", "```\n3. code\n```\n",
-    "1. A\n   2. nested\n", "- x\n- y\n", "> q\n", "1. A\n2. B\n\n1. X\n",
+    "1. A\n   2. nested\n", "1. A\n   2. nested\n5. B\n", "- x\n- y\n",
+    "- x\n   1. nested\n", "- x\n   1. nested\n5. B\n", "1. A\n      9. deep\n",
+    "> q\n", "Just prose\n", "1. A\n2. B\n\n1. X\n",
 ]
 
 
@@ -328,6 +331,27 @@ def test_both_spellings_decide_numbering_identically(prefix, number):
                 if p.style.name.startswith("List Number")]
 
     assert numbered(body.format("<br>")) == numbered(body.format("\n\n"))
+
+
+@pytest.mark.parametrize("prefix", _RUN_PREFIXES)
+@pytest.mark.parametrize("number", [1, 2, 5, 6, 9, 10, 24])
+def test_a_br_line_is_promoted_only_when_the_number_becomes_an_item(prefix, number):
+    """Promotion and rendering must agree.
+
+    Splitting a <br> line is only right if the segment really renders as a list
+    item; if it does not, the line must stay one paragraph with a soft break.
+    A promotion that no list takes turns a soft break into a paragraph break —
+    the failure mode a count-only check does not see, because no list item
+    appears either way.
+    """
+    markdown = prefix + f"\nNote<br>{number}. Tail"
+    promoted = expand_br_to_block_breaks(markdown).splitlines()[-1].strip() == f"{number}. Tail"
+    signature = _signature(_render(markdown))
+    became_item = any(style.startswith("List Number") and text == "Tail"
+                      for style, text in signature)
+    assert promoted == became_item
+    if not promoted:
+        assert any(text == f"Note\n{number}. Tail" for _, text in signature)
 
 
 def test_a_number_inside_a_code_block_does_not_feed_the_run():
