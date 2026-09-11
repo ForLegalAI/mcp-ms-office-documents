@@ -238,7 +238,10 @@ def expand_br_to_block_breaks(text: str) -> str:
             in_code = not in_code
             out.append(line)
             continue
-        if in_code or TABLE_LINE_PATTERN.match(stripped) or not _BR_RE.search(line):
+        if in_code:
+            out.append(line)
+            continue  # code is verbatim: a "3." in it is not part of any run
+        if TABLE_LINE_PATTERN.match(stripped) or not _BR_RE.search(line):
             out.append(line)
             _remember([line])
             continue

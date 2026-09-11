@@ -277,6 +277,15 @@ def test_br_continuation_can_be_escaped_like_the_newline_spelling():
     assert _signature(doc)[-1] == ("Normal", "Note\n3. zari 2026")
 
 
+def test_a_number_inside_a_code_block_does_not_feed_the_run():
+    # Code is verbatim, so a "3." in it is not part of any numbered run: the
+    # prose after it must render the same as it would on its own.
+    plain = _render("Note<br>4. Y")
+    after_code = _render("```\n3. not a list\n```\n\nNote<br>4. Y")
+    assert _signature(plain) == [("Normal", "Note\n4. Y")]
+    assert _signature(after_code)[-1:] == _signature(plain)
+
+
 def test_br_before_a_list_is_still_promoted():
     # The rescue that the narrowed promotion rule must keep: a list a model
     # separated from its lead-in with <br> is still a list.
