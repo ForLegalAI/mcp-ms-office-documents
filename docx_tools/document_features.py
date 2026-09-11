@@ -4,7 +4,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from template_utils import find_docx_template
-from .patterns import _PAGE_TOKEN_RE
+from .patterns import _BR_RE, _PAGE_TOKEN_RE, normalize_newlines
 logger = logging.getLogger(__name__)
 def load_templates():
     """Resolve Word template path from custom/default template directories.
@@ -39,12 +39,19 @@ def set_header_footer(doc, text, kind='header'):
     header/footer - that variant is updated as well.
     Pre-existing paragraph formatting (alignment, style) from the template is
     preserved; only run content is replaced.
+    A header/footer is a single paragraph and carries no markdown, but it takes
+    line breaks the same way as the rest of the renderer: ``<br>`` (or a real
+    newline, or a literal ``\\n``) breaks the line within the paragraph.
+
     Args:
         doc: The Word document.
         text: Content string.  Use ``{page}`` / ``{pages}`` for field tokens.
         kind: ``'header'`` or ``'footer'``.
     """
     _TOKEN_MAP = {'{page}': 'PAGE', '{pages}': 'NUMPAGES'}
+    # python-docx turns a "\n" inside run text into a <w:br/>, so folding every
+    # break spelling into a newline is all this needs.
+    text = _BR_RE.sub('\n', normalize_newlines(text or ''))
     def _fill_paragraph(p, content):
         """Clear existing runs/fields and write *content* into paragraph *p*."""
         existing_alignment = p.alignment

@@ -305,30 +305,38 @@ class TestTables:
         assert table.cell(0, 1).width > table.cell(0, 0).width
 
     def test_table_cell_line_breaks(self):
-        """Test that <br> in table cells creates multiple paragraphs."""
+        """<br> is a soft break inside a cell; <br><br> starts a new paragraph.
+
+        A table row is one physical line, so a cell has no blank line to separate
+        paragraphs with — a doubled <br> stands in for it, and a single one means
+        the same thing in a cell as everywhere else in the renderer.
+        """
         markdown = """| Header 1 | Header 2 |
 |----------|----------|
 | Line one<br>Line two | Single line |
 | **Bold**<br>*Italic* | A<br/>B<br>C |
+| First para<br><br>Second para | x |
 """
         doc = save_test_document(markdown, "table_cell_line_breaks.docx")
         assert doc is not None
         # Find the table
         table = doc.tables[0]
-        # First data row, first cell should have 2 paragraphs
+        # First data row, first cell: one paragraph holding a soft break
         cell_0_0 = table.cell(1, 0)
-        assert len(cell_0_0.paragraphs) == 2
-        assert cell_0_0.paragraphs[0].text == "Line one"
-        assert cell_0_0.paragraphs[1].text == "Line two"
+        assert len(cell_0_0.paragraphs) == 1
+        assert cell_0_0.paragraphs[0].text == "Line one\nLine two"
+        assert cell_0_0.paragraphs[0]._p.xml.count("<w:br") == 1
         # First data row, second cell should have 1 paragraph
         cell_0_1 = table.cell(1, 1)
         assert len(cell_0_1.paragraphs) == 1
-        # Second data row, second cell should have 3 paragraphs (A, B, C)
+        # Second data row, second cell: one paragraph, two breaks (A, B, C)
         cell_1_1 = table.cell(2, 1)
-        assert len(cell_1_1.paragraphs) == 3
-        assert cell_1_1.paragraphs[0].text == "A"
-        assert cell_1_1.paragraphs[1].text == "B"
-        assert cell_1_1.paragraphs[2].text == "C"
+        assert len(cell_1_1.paragraphs) == 1
+        assert cell_1_1.paragraphs[0].text == "A\nB\nC"
+        assert cell_1_1.paragraphs[0]._p.xml.count("<w:br") == 2
+        # Third data row: a doubled <br> does split the cell into paragraphs
+        cell_2_0 = table.cell(3, 0)
+        assert [p.text for p in cell_2_0.paragraphs] == ["First para", "Second para"]
 
 
 # =============================================================================

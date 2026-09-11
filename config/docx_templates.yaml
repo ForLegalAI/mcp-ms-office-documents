@@ -111,7 +111,8 @@
 #     Alignment:      |:---|:---:|---:|   -> left / center / right
 #     Borderless:     put <!-- borderless --> on the line above the table
 #     Column widths:  put <!-- widths: 30 70 --> on the line above the table
-#     Cell newline:   use <br> inside a cell for a new paragraph
+#     Cell newline:   <br> breaks the line inside a cell, <br><br> starts a new
+#                     paragraph in it (a row is one line, so there is no blank line)
 #
 #   Images:           ![alt text](url)
 #   Page break:       --- (three+ dashes alone on a line — starts a new page)
@@ -126,14 +127,21 @@
 # LINE BREAKS — three cases (the same in the base tool and in templates)
 # =============================================================================
 #   New paragraph        -> leave a BLANK LINE between the blocks.
-#   Soft break / newline -> use <br>  (a line break inside the same paragraph,
+#   Soft break           -> use <br>  (a line break inside the same paragraph,
 #                           e.g. an address block: Street<br>City).
-#                           Two trailing spaces also work but are invisible and
-#                           editors strip them — prefer <br>.
+#                           Two trailing spaces at the end of a line do the same
+#                           but are invisible and editors strip them — prefer <br>.
+#                           Both work in prose, headings, list items, quotes and
+#                           table cells, and in header/footer text.
 #   Literal "\n"         -> NEVER. The two characters backslash-n are text, not a
 #                           newline; the model copies whatever it sees. (We now
 #                           convert a stray literal "\n" to a real newline rather
 #                           than corrupt it, but don't rely on or teach it.)
+#
+#   One caveat, shared by both soft-break spellings: a line that BEGINS with a
+#   number and a dot reads as a list item (that is what makes "Intro:<br>1. A<br>
+#   2. B" a real numbered list). An address line such as "1. máje 5" therefore
+#   needs its dot escaped — "1\. máje 5" — to stay part of the block.
 #
 # Writing the `description:` of an argument:
 #   * Never put the two characters backslash-n in a description — the model will
@@ -298,9 +306,14 @@ templates:
         required: false
         default: " "   # a space keeps the placeholder from rendering as-is when omitted
         description: |
-          Attachment list; if none, send a single space. Bold heading, each
-          attachment on its own line via <br>. Example:
+          Attachment list; if none, send a single space. Bold heading, then the
+          attachments. Numbering them makes a real Word numbered list (Word draws
+          the numbers), which is usually what you want:
           **Přílohy:**<br>1. Plná moc<br>2. Výzva k zaplacení
+          To keep the whole block as ONE paragraph of plain lines instead, do not
+          start a line with a number and a dot — write the numbers as text
+          ("1\." ) or drop them:
+          **Přílohy:**<br>plná moc<br>výzva k zaplacení
       - name: file_name
         type: string
         required: false

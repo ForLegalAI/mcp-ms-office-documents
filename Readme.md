@@ -412,7 +412,8 @@ Nesting and combinations work, e.g. `**bold with *italic* inside**`, `**~~bold s
 | `\|:---\|:---:\|---:\|` separator | Column alignment: left / center / right |
 | `<!-- borderless -->` | Remove all borders (great for bilingual/parallel layouts) |
 | `<!-- widths: 30 70 -->` | Proportional column widths (any number of columns) |
-| `<br>` inside a cell | New paragraph within the cell |
+| `<br>` inside a cell | Line break within the cell (same paragraph) |
+| `<br><br>` inside a cell | New paragraph within the cell |
 
 **Text alignment** (HTML tags, single- or multi-line):
 
@@ -422,7 +423,20 @@ Nesting and combinations work, e.g. `**bold with *italic* inside**`, `**~~bold s
 <div align="justify">justified paragraph…</div>
 ```
 
-**Soft line break:** end a line with **two trailing spaces** to break within the same paragraph.
+**Line breaks** — one rule everywhere (prose, headings, list items, quotes, table cells, and the same in [template placeholders](#-custom-templates)):
+
+| Syntax | Result |
+|--------|--------|
+| blank line | New paragraph / next block |
+| `<br>` | **Soft line break** — a new line inside the *same* paragraph (`Street<br>City`) |
+| two trailing spaces | The same soft break. Invisible, and many editors strip them — prefer `<br>` |
+| a literal `\n` typed as text | Read as a real newline, but never write it deliberately |
+
+A soft break never swallows what follows it: a list, table, heading, quote or page break on the next line is still that block. A `<br>` written *before* a list (`Intro:<br>1. A<br>2. B`) is promoted to a real line break so the list renders as one — which is why a line-leading number that is really text (`1. máje 5`) needs the documented `1\.` escape.
+
+> ⚠️ **One thing `<br>` cannot do:** resume a numbered list that started earlier in the document. `Poznámka<br>3. Třetí`, after a list that reached `2.`, stays one paragraph with "3." as text. Write that continuation on its own line (a blank line, or a line ending in two spaces) and it becomes item 3 — [list continuation](#-word-markdown--full-syntax) across intervening content is unaffected, it just needs a real line break rather than a `<br>`.
+
+`header_text` / `footer_text` take `<br>` too; they are plain text, not markdown.
 
 **Custom styles** (issue #66) — remap built-in styles or apply an ad-hoc one:
 
