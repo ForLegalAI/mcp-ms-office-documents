@@ -208,7 +208,7 @@ inserts a TOC field with `w:updateFields` set so Word refreshes it on open.
 
 ## Invariants and gotchas
 
-- **A failing block is skipped, not fatal.** `process_markdown_block()` catches
+- **A failing block is skipped, not fatal** ([#114](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/114)). `process_markdown_block()` catches
   every exception, logs it at ERROR with the line number, and advances one
   line. The document is still produced, minus that block. Keep this when
   editing: a rendering bug must not cost the user the whole document.
@@ -246,6 +246,8 @@ returned `Document`, which avoids the upload step entirely. See
 [`../testing.md`](../testing.md).
 
 ## Known limitations
+
+The first three are tracked in [#115](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/115); the missing warnings channel in [#114](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/114).
 
 - **Table widths assume US Letter with 1-inch margins.** `add_table_to_doc()`
   distributes `<!-- widths -->` over a fixed 6.5 inches, while

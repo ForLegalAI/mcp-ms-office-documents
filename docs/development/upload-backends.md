@@ -43,7 +43,8 @@ traditional backend from the event loop.
   cloud backends and **raises `ValueError` for an unknown extension**. A new
   document type must be added here or every cloud upload of it fails.
   Matching is by substring, so a name such as `notes.pptx_v2.docx` is
-  detected as PowerPoint; the sanitiser keeps dots, so this can happen.
+  detected as PowerPoint; the sanitiser keeps dots, so this can happen
+  ([#116](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/116)).
 
 The unique-prefix default lives in the dispatcher: `None` becomes `True` for
 traditional backends and `False` for LibreChat, which prefixes files itself.

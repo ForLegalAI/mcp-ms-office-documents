@@ -138,7 +138,7 @@ so it is never dispatched twice.
 Consequence worth knowing: `upload_file()` is the synchronous entry point and
 refuses the `LIBRECHAT` strategy with a `RuntimeError`. Dynamic template tools
 therefore do not work under `UPLOAD_STRATEGY=LIBRECHAT` today. The static tools
-do. See [`dynamic-templates.md`](dynamic-templates.md).
+do. Tracked in [#113](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/113); see [`dynamic-templates.md`](dynamic-templates.md).
 
 ## Threading model
 

@@ -103,12 +103,12 @@ exercised indirectly by `tests/test_run_blocking.py`,
 `tests/test_upload_unique_prefix.py` and `tests/test_librechat_integration.py`.
 The dynamic email tools are covered by `tests/test_dynamic_args_schema.py`
 and `tests/test_template_registry.py`. A direct test of `_create_eml_buffer()`
-asserting on the headers and body would close the gap.
+asserting on the headers and body would close the gap; tracked in [#112](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/112).
 
 ## Known limitations
 
 - **No HTML sanitisation.** The body fragment is trusted as sent.
-- **Czech default locale** for proofing, as above.
+- **Czech default locale** for proofing, as above ([#116](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/116)).
 - **Dynamic drafts carry fewer headers** than static ones, as above.
 - **One template variable set.** The static wrapper knows only `language`,
   `subject` and `content`.

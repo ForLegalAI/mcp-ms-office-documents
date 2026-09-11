@@ -263,4 +263,4 @@ assert on shapes and XML. See [`../testing.md`](../testing.md).
   it needs a different data object; bubble and combo charts are not offered.
 - **`coerce_indent_level()` and `_add_image_from_url()` in `helpers.py` have
   no callers** outside tests. They are backwards-compatibility leftovers and
-  candidates for removal.
+  candidates for removal ([#116](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/116)).

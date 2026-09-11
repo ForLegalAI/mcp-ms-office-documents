@@ -134,14 +134,14 @@ template name, for the filename.
 
 ## Known limitations
 
-- **Unavailable under `UPLOAD_STRATEGY=LIBRECHAT`.** The tool body calls the
+- **Unavailable under `UPLOAD_STRATEGY=LIBRECHAT`** ([#113](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/113)). The tool body calls the
   synchronous `upload_file()`, which refuses that strategy. Fixing this means
   reading the user context on the event loop before dispatch and calling
   `upload_file_async()` from an async body, mirroring the static tools.
 - **Single instance.** Live registration assumes one process owns the
   template files. With replicas, use shared storage and restart.
 - **Block content is body-only** in Word templates; see rendering above.
-- **The `promo_code` special case** in the email body, as above.
+- **The `promo_code` special case** in the email body, as above ([#116](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/116)).
 
 ## Tests
 

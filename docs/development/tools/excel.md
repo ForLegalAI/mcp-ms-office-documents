@@ -232,7 +232,7 @@ the log. It never raises.
   their matches.
 - **`resolve_cell()` is called twice per cell** once for the value and again
   for column-width estimation. Keep it cheap and side-effect free.
-- **`TABLE_BOTTOM_SPACING` is defined in two modules** and must stay equal.
+- **`TABLE_BOTTOM_SPACING` is defined in two modules** and must stay equal ([#116](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/116)).
   See row bookkeeping above.
 
 ## Tests
@@ -256,7 +256,7 @@ it with `openpyxl.load_workbook` so assertions see what Excel would see. See
   cross-sheet range.
 - **Inline formatting is whole-cell.** `**Total**` bolds a cell; `**Total**
   revenue` is written literally with the asterisks.
-- **No warnings channel.** See the invariants above.
+- **No warnings channel.** See the invariants above; tracked in [#114](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/114).
 - **Column widths are estimated from text length**, clamped to 12–25
   characters, and do not account for proportional fonts.
 - **The Excel template is not listed in the user docs.** `custom_xlsx_template.xlsx`
