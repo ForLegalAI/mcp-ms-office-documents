@@ -252,21 +252,44 @@ def expand_br_to_block_breaks(text: str) -> str:
         return text
     out = []
     in_code = False
-    # The number that would continue the ordered run seen so far, tracked from
-    # top-level numbered lines only (a nested item's number is not the run's).
+    # The number that would continue the ordered run seen so far, and the indent
+    # of the outermost list currently open — the renderer records a run only for
+    # that outermost level, so the tracker has to know which lines belong to it.
     next_number = None
+    open_indent = None
 
     def _remember(seq, idx):
         """Advance the count if ``seq[idx]`` would really render as a list item.
 
-        The renderer only counts a numbered line its own rules turn into an item;
-        a standalone ``23. brezna 2026`` renders as prose and leaves the count
-        alone, so this must leave it alone too, or the two spellings of a later
+        The renderer only counts a numbered line its own rules turn into an item
+        *at the outermost list level*: a standalone ``23. brezna 2026`` renders as
+        prose, and an item nested under another list carries its own numbering.
+        Both must leave the count alone, or the two spellings of a later
         continuation would disagree about what number comes next.
+
+        Indentation alone does not say which is which — a list whose first item
+        is indented is still the outermost one — so the open list's own indent is
+        tracked as lines go by, the way ``process_list_items`` tracks
+        ``base_indent``.
         """
-        nonlocal next_number
-        if seq[idx][:1].isspace():
-            return  # a nested item's number is not the top-level run's
+        nonlocal next_number, open_indent
+        raw = seq[idx]
+        stripped = raw.strip()
+        if not stripped:
+            return  # the sweep skips blank lines; they close nothing
+        indent = len(raw) - len(raw.lstrip())
+        is_item = bool(ORDERED_LIST_PATTERN.match(stripped)
+                       or UNORDERED_LIST_PATTERN.match(stripped))
+        if open_indent is not None and indent > open_indent:
+            # Deeper than the open list: a nested item (its own numbering), or a
+            # line that is not an item at all, which ends the sweep.
+            if not is_item:
+                open_indent = None
+            return
+        if not is_item:
+            open_indent = None  # a non-item at this level ends the list
+            return
+        open_indent = indent  # this line is the outermost list's own level
         number = ordered_item_number(seq, idx, next_number)
         if number is not None:
             next_number = number + 1

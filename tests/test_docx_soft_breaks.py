@@ -321,6 +321,11 @@ _RUN_PREFIXES = [
     "1. A\n2. B\n\n- bullet\n",
     "- x\n   1. nested\n", "- x\n   1. nested\n5. B\n", "1. A\n      9. deep\n",
     "> q\n", "Just prose\n", "1. A\n2. B\n\n1. X\n",
+    # A list can be indented and still be the outermost one, so "indented" does
+    # not mean "nested": the pre-pass tracks the open list's own level rather
+    # than assuming the outermost list sits at column 0.
+    "  1. A\n", "  1. A\n  2. B\n", "  1. A\n1. X\n", "1. A\n\n  1. X\n",
+    "- x\n   1. n1\n   2. n2\n", "1. A\n2. B\n\nprose\n",
 ]
 
 
