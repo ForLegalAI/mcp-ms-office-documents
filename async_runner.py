@@ -27,15 +27,15 @@ Whether blocking work is offloaded to a worker thread is controlled by
 the ``RUN_BLOCKING_BY_ASYNCIO_THREAD_ENABLED`` environment variable
 (see ``config.Config.run_blocking_by_asyncio_thread_enabled``):
 
-  * Disabled (default) — call the sync function inline on the event
-    loop. The loop is blocked until the call returns. This is the
-    legacy behaviour for static tools; dynamic tools (previously
-    registered as sync ``def`` and auto-threaded by FastMCP) will also
-    run on the event loop in this mode, since the dynamic handlers are
-    now ``async def`` wrappers around ``run_blocking``.
-  * Enabled — dispatch the sync function to asyncio's default thread
-    pool via ``asyncio.to_thread``. The event loop stays free to serve
-    health probes and concurrent requests. Recommended for EKS.
+  * Enabled (default) — dispatch the sync function to a bounded,
+    process-wide ``ThreadPoolExecutor`` (sized by
+    ``RUN_BLOCKING_MAX_WORKERS``, see below). The event loop stays free
+    to serve health probes and concurrent requests.
+  * Disabled — call the sync function inline on the event loop. The
+    loop is blocked until the call returns. Only useful for local
+    debugging or to rule threading out of a regression. Dynamic tools
+    run on the event loop in this mode too, since their handlers are
+    ``async def`` wrappers around ``run_blocking``.
 
 All tool call sites uniformly write ``await run_blocking(func, *args,
 **kwargs)`` — the helper internally chooses the dispatch strategy based
@@ -124,16 +124,16 @@ async def run_blocking(func: Callable[..., T], /, *args, **kwargs) -> T:
     Dispatch is governed by ``config.run_blocking_by_asyncio_thread_enabled``
     (env var ``RUN_BLOCKING_BY_ASYNCIO_THREAD_ENABLED``):
 
-    * **Enabled** — the call is submitted to a process-wide
+    * **Enabled (default)** — the call is submitted to a process-wide
       ``ThreadPoolExecutor`` whose size is controlled by
       ``config.run_blocking_max_workers`` (default 4). The event loop
       remains responsive to health probes and concurrent requests while
       ``func`` runs; when the pool is full, additional calls queue
       cleanly instead of spawning unbounded threads that would all
       contend for the GIL.
-    * **Disabled (default)** — the call runs inline on the event loop,
-      preserving the original blocking behaviour. ``func``'s return
-      value is returned without ever yielding to the loop.
+    * **Disabled** — the call runs inline on the event loop, the
+      original blocking behaviour. ``func``'s return value is returned
+      without ever yielding to the loop.
 
     The signature is identical in both modes — call sites always write
     ``await run_blocking(func, *args, **kwargs)``.
@@ -162,5 +162,5 @@ async def run_blocking(func: Callable[..., T], /, *args, **kwargs) -> T:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(_get_executor(), bound)
 
-    # Legacy path: call inline on the event loop (blocks until done).
+    # Offload disabled: call inline on the event loop (blocks until done).
     return func(*args, **kwargs)

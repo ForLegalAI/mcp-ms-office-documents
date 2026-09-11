@@ -722,8 +722,8 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
     # substitution, and synchronous upload to the configured backend.
     # It is wrapped in an `async def` (`tool_impl`) that dispatches the
     # call through `run_blocking()`, so the work either runs on a
-    # worker thread (when RUN_BLOCKING_BY_ASYNCIO_THREAD_ENABLED is
-    # truthy) or inline on the event loop (default, legacy behaviour).
+    # bounded worker thread (the default) or inline on the event loop
+    # (when RUN_BLOCKING_BY_ASYNCIO_THREAD_ENABLED is false).
     # FastMCP awaits the async tool directly, leaving dispatch entirely
     # to our helper — keeping behaviour consistent with the static tools
     # in main.py.

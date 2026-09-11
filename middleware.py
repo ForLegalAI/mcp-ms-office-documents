@@ -36,7 +36,7 @@ class ApiKeyAuthMiddleware(Middleware):
       3. ``x-api-key`` header
 
     If the key is missing or does not match, the request is rejected with
-    an ``McpError`` (error code ``-32001``).
+    ``fastmcp.exceptions.AuthorizationError`` before any tool runs.
     """
 
     # Throttle window (seconds) for WARNING-level auth failure messages
