@@ -179,10 +179,12 @@ def ordered_item_number(lines, idx, next_number=None):
     """The number ``lines[idx]`` contributes to a numbered run, or ``None``.
 
     A numbered line joins the run when it continues the count *next_number*, when
-    it is genuine on its own (:func:`ordered_list_is_genuine`), or when the line
-    before it is a numbered item too — a list sweeps up the lines that follow it
-    whatever their digits, so ``"1. First"`` followed by ``"5. Paty"`` is a
-    two-item list whose count continues at 6.
+    it is genuine on its own (:func:`ordered_list_is_genuine`), or when the last
+    non-blank line before it is a numbered item too: once a list has started,
+    :func:`docx_tools.block_elements.process_list_items` sweeps up every further
+    numbered line at the same indent whatever its digits, skipping blank lines on
+    the way. So ``"1. First"`` followed by ``"5. Paty"`` — with or without a blank
+    line between them — is a two-item list whose count continues at 6.
 
     One rule with one home: :func:`_segment_is_block` asks it whether a ``<br>``
     segment is a list item, and :func:`expand_br_to_block_breaks` asks it what
@@ -194,10 +196,13 @@ def ordered_item_number(lines, idx, next_number=None):
     if not match:
         return None
     number = int(match.group(1))
-    if (number == next_number
-            or ordered_list_is_genuine(lines, idx)
-            or (idx and ORDERED_LIST_PATTERN.match(lines[idx - 1].strip()))):
+    if number == next_number or ordered_list_is_genuine(lines, idx):
         return number
+    for previous in reversed(lines[:idx]):
+        stripped = previous.strip()
+        if not stripped:
+            continue  # the sweep skips blank lines between items
+        return number if ORDERED_LIST_PATTERN.match(stripped) else None
     return None
 
 

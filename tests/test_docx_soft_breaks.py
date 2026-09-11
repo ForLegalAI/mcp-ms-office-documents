@@ -305,6 +305,31 @@ def test_br_run_count_tracks_the_renderer(body, expected):
     assert numbered(br_doc) == numbered(newline_doc)
 
 
+# Documents that establish (or deliberately fail to establish) a numbered run,
+# crossed with the number a <br>-joined continuation might carry. The two
+# spellings must decide identically in every combination — the invariant the
+# pre-pass count exists to hold, checked broadly rather than case by case.
+_RUN_PREFIXES = [
+    "", "1. A\n", "1. A\n2. B\n", "1. A\n\n2. B\n", "1. A\n5. B\n",
+    "1. A\n\n5. B\n", "1. A\n2. B\n\n## H\n", "1. A\n\n23. brezna 2026\n",
+    "1. A\n2. B\n\n## H\n\n23. brezna 2026\n", "```\n3. code\n```\n",
+    "1. A\n   2. nested\n", "- x\n- y\n", "> q\n", "1. A\n2. B\n\n1. X\n",
+]
+
+
+@pytest.mark.parametrize("prefix", _RUN_PREFIXES)
+@pytest.mark.parametrize("number", [1, 2, 3, 5, 6, 23, 24])
+def test_both_spellings_decide_numbering_identically(prefix, number):
+    body = prefix + "\nNote{}" + f"{number}. Tail"
+
+    def numbered(markdown):
+        doc = _render(markdown)
+        return [p.text for p in doc.paragraphs
+                if p.style.name.startswith("List Number")]
+
+    assert numbered(body.format("<br>")) == numbered(body.format("\n\n"))
+
+
 def test_a_number_inside_a_code_block_does_not_feed_the_run():
     # Code is verbatim, so a "3." in it is not part of any numbered run: the
     # prose after it must render the same as it would on its own.
