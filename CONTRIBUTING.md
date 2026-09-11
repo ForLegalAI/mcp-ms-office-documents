@@ -42,6 +42,13 @@ patterns each package uses.
   the reasoning that would otherwise live in a code comment goes.
 - **A bug fix comes with a regression test** in the file that covers that
   behaviour, and a docstring note naming the issue if one exists.
+- **Documentation is part of the change, not a follow-up.** Every pull
+  request updates, in the same commits, each page under `docs/` that
+  describes what it touched: the developer page for the package
+  (`docs/development/tools/*.md`, `docs/development/*.md`) for internal
+  changes, and the user reference under `docs/` for anything a user or the
+  calling model sees. If nothing described what you touched, say so in the
+  commit message.
 - **A user-visible change touches three places together**: the tool
   description in `main.py` (what the calling model reads), the reference
   page under `docs/`, and the tests. They drift otherwise.

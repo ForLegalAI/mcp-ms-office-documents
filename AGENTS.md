@@ -91,9 +91,26 @@ backend → URL string or LibreChat artifact dict. Details:
 - Do not give `add_unique_prefix` a default in a dynamic tool body; it must
   reach `upload_file()` as `None`.
 
-**Docs**
-- A user-visible change touches the tool description in `main.py`, the
-  reference page in `docs/`, and the tests together.
+**Docs — part of every change, never a follow-up**
+- Before you finish any change, find every page under `docs/` that describes
+  what you touched and update it in the same commit. Concretely:
+  - **Internal change** (new, renamed, moved or removed module or function; a
+    pipeline step added or reordered; a new invariant, gotcha or extension
+    point): the package's page under `docs/development/tools/` or the
+    relevant `docs/development/*.md` — its pipeline diagram, module map,
+    "how it works", extension points and invariants. Change this file too if
+    a rule here changes.
+  - **User-visible change** (input format, parameter, output shape,
+    behaviour): the tool description in `main.py`, the reference page under
+    `docs/`, and the tests, together.
+  - **New environment variable**: `config.py`, `.env.example`,
+    `docs/configuration.md`; `tests/test_config_docs.py` enforces this.
+  - **A limitation you fixed**: remove it from the page's "Known limitations"
+    and close or update the issue it links to.
+  - **A new package or backend**: a new page in the same shape as the others,
+    linked from `docs/README.md`.
+- A change with no doc update is only correct if you checked and nothing
+  described what you touched. Say so in the commit message.
 - Each package's module docstring names what it owns and which entry point
   `main.py` uses. Keep it true.
 
