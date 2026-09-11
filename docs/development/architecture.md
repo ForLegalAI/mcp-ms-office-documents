@@ -231,13 +231,19 @@ The full variable list with defaults is in [`../configuration.md`](../configurat
 
 ## Templates and directories
 
-Two directory pairs are resolved with the container path tried first, then the
-local checkout:
+Document templates are searched in four directories, custom before default
+and, within each, the container mount before the local checkout:
 
-| Purpose | Container | Local | Resolver |
-|---------|-----------|-------|----------|
-| Document templates | `/app/custom_templates`, then `/app/default_templates` | `./custom_templates`, then `./default_templates` | `template_utils.find_file_in_template_dirs()` |
-| YAML config and admin-written specs | `/app/config` | `./config` | `main.py` (`_CONFIG_DIR`) |
+| Order | Directory | Resolver |
+|------:|-----------|----------|
+| 1 | `/app/custom_templates` | `template_utils.find_file_in_template_dirs()` |
+| 2 | `./custom_templates` | |
+| 3 | `/app/default_templates` | |
+| 4 | `./default_templates` | |
+
+So a custom template in the local checkout beats a shipped default in the
+container. The config directory is simpler: `/app/config` if it exists,
+otherwise `./config` (`_CONFIG_DIR` in `main.py`).
 
 Never hard-code a template path; go through `template_utils`.
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from .helpers import parse_table
+from .helpers import TABLE_BOTTOM_SPACING, parse_table
 
 
 # Pattern for multi-sheet heading: ## Sheet: Name
@@ -20,8 +20,8 @@ DIRECTIVE_PATTERN = re.compile(r'^<!--\s*(\w[\w-]*)(?:\s*:\s*(.*?))?\s*-->$')
 
 # Spacing inserted after a header row (rows)
 HEADER_ROW_SPACING = 2
-# Spacing inserted after a table (rows)
-TABLE_BOTTOM_SPACING = 2
+# Spacing inserted after a table (rows) is TABLE_BOTTOM_SPACING, imported from
+# helpers so the writer and the row bookkeeping here can never disagree.
 # Maximum allowed Excel sheet name length
 MAX_SHEET_NAME_LENGTH = 31
 

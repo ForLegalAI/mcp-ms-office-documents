@@ -13,6 +13,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 _ENV_READ_RE = re.compile(r"""os\.environ\.get\(\s*["']([A-Z][A-Z0-9_]*)["']""")
+# Any way of reaching the environment: attribute access, or an aliased import
+# such as ``from os import environ`` / ``from os import getenv as _g``.
+_ENV_ACCESS_RE = re.compile(r"\bos\.(?:environ|getenv)\b|^\s*from\s+os\s+import\b[^\n]*\b(?:environ|getenv)\b", re.M)
 
 
 def _read(path: str) -> str:
@@ -32,7 +35,7 @@ def test_config_is_the_only_env_reader():
         if rel == "config.py" or rel.startswith("tests/") or "/.venv/" in f"/{rel}":
             continue
         text = path.read_text(encoding="utf-8")
-        if "os.environ" in text or "os.getenv" in text:
+        if _ENV_ACCESS_RE.search(text):
             offenders.append(rel)
     assert not offenders, f"read the environment through get_config(), not directly: {offenders}"
 

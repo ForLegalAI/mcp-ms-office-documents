@@ -90,9 +90,9 @@ Rows are assigned by the parser, not by the writer. A header occupies one row
 and advances the cursor by two. A table occupies one row per line including
 the header and advances by its length plus two. `add_table_to_sheet()` returns
 the next free row for API symmetry, but `_build_workbook()` ignores it and
-trusts the event's `start_row`. The `TABLE_BOTTOM_SPACING` constant therefore
-exists in both `parser.py` and `helpers.py` and the two must stay equal; the
-parser cannot import it from helpers without a cycle.
+trusts the event's `start_row`. Both use the same `TABLE_BOTTOM_SPACING`,
+defined in `helpers.py` and imported by `parser.py`, so the writer and the
+bookkeeping cannot disagree.
 
 ### Sheets and table numbering
 
@@ -232,8 +232,6 @@ the log. It never raises.
   their matches.
 - **`resolve_cell()` is called twice per cell** once for the value and again
   for column-width estimation. Keep it cheap and side-effect free.
-- **`TABLE_BOTTOM_SPACING` is defined in two modules** and must stay equal ([#116](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/116)).
-  See row bookkeeping above.
 
 ## Tests
 
@@ -259,7 +257,3 @@ it with `openpyxl.load_workbook` so assertions see what Excel would see. See
 - **No warnings channel.** See the invariants above; tracked in [#114](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/114).
 - **Column widths are estimated from text length**, clamped to 12–25
   characters, and do not account for proportional fonts.
-- **The Excel template is not listed in the user docs.** `custom_xlsx_template.xlsx`
-  is resolved through the same directories as the other templates but the
-  README's static-templates table omits it. To be fixed in
-  [`../../templates.md`](../../templates.md).
