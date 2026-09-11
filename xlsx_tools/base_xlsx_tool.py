@@ -1,3 +1,12 @@
+"""Markdown → Excel (.xlsx) conversion: the entry points of the Excel tool.
+
+``_build_workbook`` turns the parser's events into an openpyxl ``Workbook``;
+``_markdown_to_excel_buffer`` saves it to ``BytesIO`` and runs the
+circular-reference check (what ``main.py`` calls, so upload is dispatched
+uniformly); ``markdown_to_excel`` builds and uploads synchronously for direct
+library use. Line walking lives in ``parser``, cell and formula handling in
+``helpers``. See docs/development/tools/excel.md.
+"""
 import io
 import logging
 

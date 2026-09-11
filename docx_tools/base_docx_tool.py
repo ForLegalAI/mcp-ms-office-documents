@@ -1,3 +1,11 @@
+"""Markdown → Word (.docx) conversion: the three entry points of the Word tool.
+
+``_markdown_to_doc`` builds a python-docx ``Document``; ``_markdown_to_word_buffer``
+saves it to ``BytesIO`` (what ``main.py`` calls, so upload is dispatched
+uniformly); ``markdown_to_word`` builds and uploads synchronously for direct
+library use. The Markdown pipeline itself lives in ``markdown_processor``.
+See docs/development/tools/word.md.
+"""
 import io
 import logging
 from docx import Document

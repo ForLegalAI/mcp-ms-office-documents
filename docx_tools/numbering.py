@@ -10,7 +10,8 @@ but overrides its start value, then attach that instance to the paragraph via an
 ``<w:numPr>``. That overrides the style's shared numbering for just that run of items, so
 each logical list counts independently.
 
-See ``docs/plan-issues-66-67.md`` (Issue #67) for the design rationale.
+See docs/development/tools/word.md ("Ordered lists") for the design rationale;
+the original discussion is issue #67.
 """
 import logging
 

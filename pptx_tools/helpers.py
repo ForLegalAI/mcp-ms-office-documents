@@ -1,8 +1,12 @@
 """PowerPoint helper utilities and slide-building mixin.
 
-This module provides a single SlideHelpers mixin class that consolidates
-all common slide operations (text, tables, images) and standalone utility
-functions for template loading and data parsing.
+The :class:`SlideHelpers` mixin holds the slide-level operations the builder
+shares across slide types (titles, placeholders, bullets, tables, images,
+notes). The free functions handle data shaping and fit: ``body_to_bullets``,
+``parse_table_data``, ``estimate_text_fill``, ``apply_autofit``,
+``fit_table_font_size``, ``set_runs_language``, ``resolve_fill``. Template
+loading lives in :mod:`pptx_tools.templates`, layout choice in
+:mod:`pptx_tools.layouts`. See docs/development/tools/powerpoint.md.
 """
 
 import logging

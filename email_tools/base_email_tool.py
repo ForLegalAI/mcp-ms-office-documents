@@ -1,3 +1,13 @@
+"""HTML fragment → unsent email draft (.eml): the entry points of the email tool.
+
+``_create_eml_buffer`` wraps the caller's HTML in the Mustache email template,
+assembles a base64 ``MIMEText`` with the draft headers (``X-Unsent: 1`` is
+what makes Outlook open it as editable) and returns ``BytesIO`` — what
+``main.py`` calls. ``create_eml`` builds and uploads synchronously for direct
+library use. The renderer runs with escaping disabled; the subject is escaped
+by hand and the body is inserted raw on purpose. See
+docs/development/tools/email.md.
+"""
 import io
 from email.mime.text import MIMEText  # fixed module path
 from email.utils import formatdate

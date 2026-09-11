@@ -1,73 +1,134 @@
 # AGENTS.md
 
-## Project Overview
+Operational brief for coding agents and humans alike. Rules here, reasons in
+[`docs/development/`](docs/development/architecture.md).
 
-MCP (Model Context Protocol) server built with **FastMCP 3.0** that exposes Office document generation as MCP tools. Runs as a Docker container (Python 3.12, Alpine) on port **8958** at `/mcp` using streamable-HTTP transport. Entry point: `main.py`.
+## What this is
 
-## Architecture
+An MCP server (FastMCP 3, Python 3.12) that turns Markdown or structured
+input into Office files. Runs in Docker on port 8958, endpoint `/mcp`,
+streamable-HTTP. Entry point `main.py`. Six static tools (Word, Excel,
+PowerPoint, template listing, email, XML) plus dynamic tools registered from
+YAML templates.
+
+## Commands
+
+```bash
+pip install -r requirements-dev.txt
+ruff check .                     # lint (CI)
+pytest -m "not network"          # tests (CI); plain `pytest` includes network tests
+pytest tests/test_docx_base.py   # one module
+python main.py                   # run locally, no .env needed
+```
+
+## Layout
 
 ```
-main.py                  ← Registers all MCP tools on a single FastMCP instance
-├── {docx,xlsx,pptx,email,xml}_tools/
-│   ├── __init__.py      ← Re-exports the public function (e.g. markdown_to_word)
-│   ├── base_*_tool.py   ← Core conversion logic (markdown → document bytes)
-│   ├── helpers.py        ← Parsing, formatting, shared utilities
-│   └── dynamic_*_tools.py  ← YAML-driven tool registration (docx, email only)
-├── upload_tools/
-│   ├── main.py          ← upload_file() dispatches to strategy backend
-│   └── backends/{local,s3,gcs,azure,minio}.py
-├── config.py            ← Singleton Config from env vars (Pydantic v2), logging setup
-├── template_utils.py    ← Template resolution: custom_templates/ → default_templates/
-└── middleware.py         ← Optional API key auth (Bearer / x-api-key header)
+main.py             tool handlers, startup order, health routes, server launch
+config.py           the only module that reads os.environ; get_config() singleton
+async_runner.py     run_blocking(): bounded thread pool for every blocking call
+librechat_integration.py   request-header user context; upload_and_format_response()
+upload_tools/       upload_file() / upload_file_async() dispatch; backends/<strategy>.py
+template_utils.py   template file resolution (custom → default, container → local)
+template_registry.py  YAML spec merging (master + *.d/) and live tool removal
+inline_markdown.py  the inline-emphasis grammar shared by Word and PowerPoint
+image_utils.py      image download/decode with the SSRF guard
+metrics.py          in-process counters for the admin Status page
+docx_tools/ xlsx_tools/ pptx_tools/ email_tools/ xml_tools/   one package per type
+admin/              optional FastHTML admin UI (ADMIN_ENABLED)
+docs/               user reference (docs/*.md) and development docs (docs/development/)
 ```
 
-**Data flow:** Every tool converts input → in-memory bytes → calls `upload_file(file_obj, suffix)` → backend saves/uploads → returns URL or path string to the MCP client.
+Request path: handler in `main.py` → `await run_blocking(_<type>_buffer, …)`
+→ `extract_user_context_from_request()` → `upload_and_format_response()` →
+backend → URL string or LibreChat artifact dict. Details:
+[architecture.md](docs/development/architecture.md).
 
-## Key Conventions
+## Rules
 
-- **Config is centralized in `config.py`** — no module reads `os.environ` directly. Access via `get_config()` singleton.
-- **Template resolution** (`template_utils.py`): searches `custom_templates/` before `default_templates/`, with `/app/*` container paths tried first, then local paths. Never hardcode template paths.
-  - **PowerPoint templates** additionally go through `pptx_tools/templates.py`: an optional registry (`config/pptx_templates.yaml` merged with `config/pptx_templates.d/`) naming one or more templates, each selectable by the tool's `template` argument. With no registry the two historical filename slots are synthesised as specs named `16_9` and `4_3`, so existing deployments are unchanged. The registry is cached against an mtime fingerprint of the config and template directories rather than for the process lifetime, so a new template is picked up without a restart. `.potx` is accepted by rewriting its content type in memory, since python-pptx rejects the template flavour outright.
-  - **Layouts are resolved by name and placeholder signature, never by index** (`pptx_tools/layouts.py`). Addressing `slide_layouts[N]` positionally silently mis-laid decks built on any template whose layouts were reordered, and raised on any template with fewer layouts. `classify_layout()` reads placeholder *types* (so it is language-independent) to assign each layout a role — title, section, content, two_column, comparison, image_text, title_only, blank. Order: the slide's own `layout` name, then the registry's `layouts:` mapping, then detection, then the positional index with a warning. Do not reintroduce a bare `slide_layouts[...]` lookup in a builder; go through `_new_slide()`.
-- **The slide schema is modelled as a union and published flat** (`pptx_tools/schema.py`): validation uses the discriminated union of the fourteen slide models, but the tool parameter declares `flat_slide_schema()` — one object with every field of every type, each field's description naming the types that accept it — via `WithJsonSchema`. `oneOf`/`$ref`/`discriminator` do not survive clients that bridge MCP to a provider without them: they show the model `slides: array of string` while still validating against the union, so every call fails client-side before reaching the server. Keep the published schema inside that keyword subset (`_simplify()` strips the rest), and keep validation in `coerce_slides()`, which is reached through `PowerpointPresentation` and produces `slide 2 -> rows.0: …` messages that `main.py` turns into a `ToolError`. A slide arriving as a string (JSON, or markdown for one slide) is read by `slide_from_text()` rather than rejected — a fallback for those same clients, deliberately not documented as a second spelling in the tool description.
-- **One line-break model across the docx renderer** (issue #109): the block layer decides which newlines separate paragraphs; **every newline that reaches the inline layer is a soft break** (`<w:br/>`). So `parse_inline_formatting()` folds `<br>`, a CR and a literal `\n` into `\n`, splits on it and rstrips each segment — do not reintroduce the old `'  \n'` marker, which left its two spaces in the run. A line ending in two spaces is the *source* spelling of the same thing, assembled by `_soft_break_run()` in `markdown_processor.py`; it lives in `process_markdown_block()` (not in `process_markdown_content()`) so prose, quotes, alignment blocks, the base tool and template placeholders all get it. A run always stops before a line that starts a block (`patterns.line_starts_block()`, also the one predicate behind `contains_block_markdown()`) — otherwise the block is swallowed and rendered as literal text. `expand_br_to_block_breaks()` promotes a `<br>` to a real newline only when a segment **after the first** is a block, so a `<br>` inside a list item or heading stays a break within it. Every rule it applies reads only the line being split: do not give it the renderer's numbering state so a `<br>`-joined number can resume an earlier run. That was tried and removed in #110 — a pre-pass copy of `ordered_run` drifted from `process_list_items` in seven distinct ways (genuineness, blank-line skipping, indent transparency, which list is outermost, chain grounding). A run continued across interposed content is written with real newlines, where the dispatcher has the live count.
-- **Dynamic tool registration**: YAML files in `config/` define parameterized email/docx templates. Each entry becomes a separate MCP tool at startup via `register_*_template_tools_from_yaml(mcp, path)`. Placeholders use Mustache syntax `{{name}}`. See `config/docx_templates.yaml` for the canonical example.
-  - **Merged loading**: the master `config/<kind>_templates.yaml` is merged with UI-managed per-template files in `config/<kind>_templates.d/<name>.yaml` (the `.d` file wins on a name clash). The documented master files are never rewritten by tooling. Merge logic lives in `template_registry.py`.
-  - **Live (un)registration**: `register_docx_template` / `register_email_template` (and their `unregister_*` counterparts) can add/replace/remove tools on a running `FastMCP` instance via `local_provider`, so the admin UI applies template edits without a restart. A module-level registry tracks live dynamic tool names.
-- **Admin UI** (`admin/`, opt-in via `ADMIN_ENABLED`): a FastHTML template-admin for creating/editing dynamic docx+email templates without YAML. When enabled, `main.py` runs the **combined ASGI app** (`admin.app.build_combined_app`) under uvicorn — the MCP endpoint mounted at `/` and the admin UI under `ADMIN_PATH` (default `/admin`) in one process, so saving a template registers its MCP tool live. Modules: `store.py` (`TemplateStore` + `FileTemplateStore`, abstracted for a future shared backend), `analysis.py` (placeholder/conditional/style detection on uploaded assets), `preview.py` (render with sample values, no upload backend), `auth.py` (shared-password gate), `app.py` (views + app factory, including the Status page and document re-upload/re-scan). When `ADMIN_ENABLED` is unset, `main.py` keeps the original `mcp.run()` path unchanged.
-- **Metrics** (`metrics.py`, project root): tiny always-on in-process counters (per-template calls/errors/last-used, recorded by the dynamic tool wrappers) plus a bounded recent-log ring buffer (installed by the admin app at startup). Surfaced on the admin Status page. No external deps; safe to import from the core tool modules.
-- **Pydantic models** for tool arguments are created dynamically with `create_model()` in `dynamic_*_tools.py`. The `TYPE_MAP` dict maps YAML type strings to Python types.
-- **Error handling in tools**: raise `fastmcp.exceptions.ToolError` for user-facing errors; use `RuntimeError` in upload/backend layers.
-- **Logging**: use `logging.getLogger(__name__)` everywhere. Level controlled by `DEBUG` env var only.
+**Structure**
+- Every tool package exposes a private `_…_buffer()` that returns `BytesIO`
+  and a public wrapper that also uploads. `main.py` calls the buffer function
+  only. New tool: follow [adding-a-tool.md](docs/development/adding-a-tool.md).
+- Blocking work goes through `await run_blocking(...)`, always. Never call
+  a buffer function or `upload_file()` directly from an `async def` handler.
+- Read request headers on the event loop, before dispatch; never inside a
+  buffer function.
+- Dynamic template tools call `upload_file()` inside their own offloaded
+  body and do **not** go through `upload_and_format_response()`.
+- Config: read via `get_config()`; never `os.environ` outside `config.py`.
+  A new variable goes into `config.py`, `.env.example` and
+  `docs/configuration.md`; `tests/test_config_docs.py` enforces it.
+- Templates: resolve through `template_utils`; never hard-code a path.
+- Images: `image_utils.load_image()`; never `requests` directly.
+- Logging: `logging.getLogger(__name__)`. Level comes from `DEBUG` only.
 
-## Filename Generation
+**Errors**
+- Raise `fastmcp.exceptions.ToolError` only at the handler boundary in
+  `main.py` or a dynamic tool body. `RuntimeError` in the upload layer.
+  `ValueError` for input the caller can fix.
+- A backend returns a string on success, `None` or raises on failure. Never
+  return an error message as a string.
+- PowerPoint reports anything it worked around on
+  `PowerpointPresentation.warnings`; anything else that grows a warnings
+  channel returns `(BytesIO, warnings)` the same way.
 
-**UUID prefix control** (`add_unique_prefix` parameter):
-- All MCP tools accept an optional `add_unique_prefix: bool` parameter.
-- The **default behavior depends on the storage strategy**:
-  - **Traditional backends** (LOCAL, S3, GCS, AZURE, MINIO): defaults to `True` for collision safety in shared storage.
-  - **LIBRECHAT**: defaults to `False` because LibreChat adds its own UUID prefix during file storage (`3deca384-6c9a-492a-ae2b-08ce22122cba__My_Report.docx`).
-- When `True`: adds an 8-character UUID prefix for server-side uniqueness (e.g., `ff8ae81d_My_Report.docx`).
-- When `False`: filenames are clean without UUID prefix (e.g., `My_Report.docx`).
-- **Implementation**: The parameter flows through `upload_file_async()` → `upload_file()` → `generate_named_object_name()` in `upload_tools/`. When the parameter is `None` (not explicitly set), the default is resolved based on the storage strategy.
-- **Dynamic tools**: YAML-defined tools may declare `add_unique_prefix` as an argument. `dynamic_docx_tools.py` and `dynamic_email_tools.py` read it with `.get("add_unique_prefix")` — deliberately **without** a default — so a template that does not declare it yields `None` and inherits the strategy-based default, exactly like the static tools. Do not reintroduce a `False` default there: the payload is built solely from the template's declared args, so `False` would reach `upload_file()` for every template, satisfy its `is None` guard, and silently suppress the prefix on every backend.
+**Word**
+- One line-break model: every newline reaching the inline layer is a soft
+  break; two-space runs are assembled by `_soft_break_run()` in the block
+  dispatcher and stop before any block. Never give `expand_br_to_block_breaks()`
+  the renderer's numbering state (#110). Details in
+  [word.md](docs/development/tools/word.md#one-line-break-model).
 
-## Adding a New Document Tool
+**PowerPoint**
+- Never index `slide_layouts[N]` in a builder; go through `_new_slide()`.
+- Keep the published slide schema flat (no `oneOf`/`$ref`/`discriminator`);
+  validation is `coerce_slides()` in the build step.
 
-1. Create `<type>_tools/` package with `__init__.py`, `base_<type>_tool.py`, and optional `helpers.py`.
-2. The base tool function should: accept content → produce an `io.BytesIO` → call `upload_file(buffer, "<ext>")` → return the result string.
-   - **Exception, deliberate:** `pptx_tools._create_presentation_buffer` returns `(BytesIO, warnings)`. The PowerPoint builder collects everything it had to work around (an image that would not load, body text shrunk to fit, a footer dropped because the layout has no placeholder) on `PowerpointPresentation.warnings`, and `main.py` returns those alongside the file so the model can correct its next call. Anything else that grows a warnings channel should follow the same shape.
-3. Register the async wrapper in `main.py` using `@mcp.tool(name=..., description=..., tags=..., annotations=...)`.
-4. Use `Annotated[<type>, Field(description=...)]` for all tool parameters — the descriptions are critical because MCP clients (AI models) rely on them.
+**Dynamic tools and schemas**
+- Never `Optional[...]` on a dynamic-tool argument; optionality is the
+  default alone. Descriptions must be siblings of a flat type.
+- Do not give `add_unique_prefix` a default in a dynamic tool body; it must
+  reach `upload_file()` as `None`.
+
+**Docs — part of every change, never a follow-up**
+- Before you finish any change, find every page under `docs/` that describes
+  what you touched and update it in the same commit. Concretely:
+  - **Internal change** (new, renamed, moved or removed module or function; a
+    pipeline step added or reordered; a new invariant, gotcha or extension
+    point): the package's page under `docs/development/tools/` or the
+    relevant `docs/development/*.md` — its pipeline diagram, module map,
+    "how it works", extension points and invariants. Change this file too if
+    a rule here changes.
+  - **User-visible change** (input format, parameter, output shape,
+    behaviour): the tool description in `main.py`, the reference page under
+    `docs/`, and the tests, together.
+  - **New environment variable**: `config.py`, `.env.example`,
+    `docs/configuration.md`; `tests/test_config_docs.py` enforces this.
+  - **A limitation you fixed**: remove it from the page's "Known limitations"
+    and close or update the issue it links to.
+  - **A new package or backend**: a new page in the same shape as the others,
+    linked from `docs/README.md`.
+- A change with no doc update is only correct if you checked and nothing
+  described what you touched. Say so in the commit message.
+- Each package's module docstring names what it owns and which entry point
+  `main.py` uses. Keep it true.
 
 ## Tests
 
-```bash
-pytest                        # Run all tests (asyncio_mode=auto in pytest.ini)
-pytest tests/test_docx_base.py  # Single module
-```
+- One file per behaviour under `tests/`. Regression tests name the issue.
+- Build without uploading: patch `upload_file` where it is looked up
+  (`<pkg>.base_<type>_tool.upload_file`), or call the buffer function.
+  PowerPoint tests instantiate `PowerpointPresentation` and call `.save()`.
+- Output for manual inspection goes to `tests/output/{docx,pptx,xlsx}/`.
+- Config is a singleton read at import; see
+  [testing.md](docs/development/testing.md) for the reload pattern.
 
-- Tests live in `tests/` and output generated files to `tests/output/{docx,pptx,xlsx}/` for manual inspection.
-- Upload is mocked in tests — patch `upload_file` or the specific `*_tool.upload_file` to capture bytes without needing a real backend. See `test_xlsx_creation.py::_create_workbook_from_markdown` for the pattern.
-- PPTX tests instantiate `PowerpointPresentation` directly and call `.save()` to get a buffer, bypassing upload entirely.
-- No `.env` required for tests — `config.py` defaults to `LOCAL` strategy and INFO logging.
+## Where to read more
+
+[architecture](docs/development/architecture.md) ·
+[word](docs/development/tools/word.md) · [excel](docs/development/tools/excel.md) ·
+[powerpoint](docs/development/tools/powerpoint.md) · [email](docs/development/tools/email.md) ·
+[xml](docs/development/tools/xml.md) · [dynamic templates](docs/development/dynamic-templates.md) ·
+[upload backends](docs/development/upload-backends.md) · [shared modules](docs/development/shared-modules.md) ·
+[testing](docs/development/testing.md) · [CONTRIBUTING](CONTRIBUTING.md)
