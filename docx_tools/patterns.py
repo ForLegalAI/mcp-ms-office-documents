@@ -178,13 +178,21 @@ def _segment_is_block(segments, idx, next_number=None) -> bool:
 def ordered_item_number(lines, idx, next_number=None):
     """The number ``lines[idx]`` contributes to a numbered run, or ``None``.
 
-    A numbered line joins the run when it continues the count *next_number*, when
-    it is genuine on its own (:func:`ordered_list_is_genuine`), or when the last
-    non-blank line before it is a numbered item too: once a list has started,
+    A numbered line joins the run when it continues the count *next_number* or is
+    genuine on its own (:func:`ordered_list_is_genuine`) — or when the line above
+    it at its own level does, because once a list has started
     :func:`docx_tools.block_elements.process_list_items` sweeps up every further
-    numbered line at the same indent whatever its digits, skipping blank lines on
-    the way. So ``"1. First"`` followed by ``"5. Paty"`` — with or without a blank
-    line between them — is a two-item list whose count continues at 6.
+    numbered line at that indent whatever its digits, skipping blank lines and
+    the nested items of deeper levels on the way. So ``"1. First"`` followed by
+    ``"5. Paty"`` — with or without a blank line between them — is a two-item
+    list whose count continues at 6.
+
+    That last rule walks the chain to its root rather than trusting the line
+    immediately above to look like an item: a number only belongs to a run if the
+    chain ends at a line that is genuine or continues the count. Two lookalikes
+    in a row (``"4. X"``, ``"5. Y"``, each alone between blank lines) are prose
+    to the renderer, and must be prose here too — otherwise they bootstrap each
+    other into a run that never existed.
 
     One rule with one home: :func:`_segment_is_block` asks it whether a ``<br>``
     segment is a list item, and :func:`expand_br_to_block_breaks` asks it what
@@ -196,21 +204,35 @@ def ordered_item_number(lines, idx, next_number=None):
     if not match:
         return None
     number = int(match.group(1))
-    if number == next_number or ordered_list_is_genuine(lines, idx):
-        return number
-    # Otherwise this line only joins a run that the line above already started.
-    # "Above" means at this line's own indent: the sweep walks past blank lines
-    # and past the nested items of a deeper level, and stops at the first line of
-    # its own level — which must be a numbered item for the run to exist. A
-    # nested "1." under a bullet list, say, starts no run at this level.
+    # Walk back along the chain of numbered lines at this level. Iterative rather
+    # than recursive: a filing's numbered paragraphs can run into the hundreds.
+    cursor = idx
+    while True:
+        current = ORDERED_LIST_CAPTURE_PATTERN.match(lines[cursor].strip())
+        if not current:
+            return None  # the chain reached a line that is not a numbered item
+        if int(current.group(1)) == next_number or ordered_list_is_genuine(lines, cursor):
+            return number  # grounded: a real run starts here
+        cursor = _previous_at_level(lines, cursor)
+        if cursor is None:
+            return None  # nothing above it: the chain never grounds out
+
+
+def _previous_at_level(lines, idx):
+    """Index of the line above ``lines[idx]`` at its own level, or ``None``.
+
+    Mirrors the sweep's look-ahead: blank lines and the more-indented items of a
+    nested list are transparent, and the first line at this line's own indent (or
+    shallower, where a list has ended) is what decides.
+    """
     indent = len(lines[idx]) - len(lines[idx].lstrip())
-    for previous in reversed(lines[:idx]):
-        stripped = previous.strip()
-        if not stripped:
+    for position in range(idx - 1, -1, -1):
+        previous = lines[position]
+        if not previous.strip():
             continue
         if len(previous) - len(previous.lstrip()) > indent:
             continue  # a deeper level's item belongs to its own run
-        return number if ORDERED_LIST_PATTERN.match(stripped) else None
+        return position
     return None
 
 

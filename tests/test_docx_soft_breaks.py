@@ -326,6 +326,10 @@ _RUN_PREFIXES = [
     # than assuming the outermost list sits at column 0.
     "  1. A\n", "  1. A\n  2. B\n", "  1. A\n1. X\n", "1. A\n\n  1. X\n",
     "- x\n   1. n1\n   2. n2\n", "1. A\n2. B\n\nprose\n",
+    # Lookalikes that never become a list: each is prose on its own, and they
+    # must not bootstrap each other into a run the renderer never had.
+    "4. X\n\n5. Y\n", "4. X\n\n5. Y\n\n6. Z\n", "9. X\n",
+    "23. brezna 2026\n\n24. dubna 2026\n", "1. A\n2. B\n\n9. X\n\n10. Y\n",
 ]
 
 
@@ -343,7 +347,7 @@ def test_both_spellings_decide_numbering_identically(prefix, number):
 
 
 @pytest.mark.parametrize("prefix", _RUN_PREFIXES)
-@pytest.mark.parametrize("number", [1, 2, 5, 6, 9, 10, 24])
+@pytest.mark.parametrize("number", [1, 2, 5, 6, 9, 10, 11, 24, 25])
 def test_a_br_line_is_promoted_only_when_the_number_becomes_an_item(prefix, number):
     """Promotion and rendering must agree.
 
