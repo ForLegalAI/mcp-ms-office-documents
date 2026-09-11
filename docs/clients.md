@@ -56,7 +56,7 @@ networks:
 
 ## Cursor / Other MCP Clients
 
-Use the SSE/streamable HTTP transport and set the endpoint URL to:
+Use the streamable-HTTP transport and set the endpoint URL to:
 
 ```
 http://localhost:8958/mcp

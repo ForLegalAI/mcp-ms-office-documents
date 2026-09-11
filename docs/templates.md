@@ -4,8 +4,6 @@ Customise the look of generated documents by providing your own templates,
 register several PowerPoint designs by name, and turn a Word or email file
 with placeholders into a tool of its own.
 
-You can customize the look of generated documents by providing your own templates.
-
 ## Static Templates
 
 Place files in the `custom_templates/` folder:
@@ -102,7 +100,7 @@ templates:
         required: true
       - name: promo_code
         type: string
-        description: Optional promotional code (HTML formatted)
+        description: Optional promotional code
         required: false
 ```
 
@@ -187,7 +185,7 @@ Subject: {{subject}}
 **How it works:**
 - Each template becomes a separate AI tool at startup
 - Placeholders can be in the document body, tables, headers, and footers
-- Placeholder values support full Markdown (bold, italic, lists, headings…)
+- Placeholder values support full Markdown (bold, italic, lists, headings…). Block-level Markdown (lists, headings, tables) renders only for placeholders in the body; placeholders in table cells, headers and footers take inline formatting
 - The placeholder's own formatting — font, size, colour, **bold, italic, underline, highlight** — is captured and applied to the replacement text (markdown in the value, e.g. `**bold**`, still wins where it sets formatting)
 - Formatting of the surrounding text in the same paragraph (before/after the placeholder) is preserved
 

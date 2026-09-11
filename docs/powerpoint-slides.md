@@ -15,6 +15,7 @@ the [developer page](development/tools/powerpoint.md).
 | `footer_text` | Shown on every slide whose layout has a footer placeholder. |
 | `show_slide_numbers` | Slide numbers on every slide. |
 | `language` | BCP-47 proofing tag, e.g. `cs-CZ`. Set it when the deck is not in the template's language, or Word/PowerPoint flags every word as misspelled. |
+| `template` | Name of a registered template to build on; overrides `format`. Call `list_presentation_templates` to see the names. See [Templates](templates.md). |
 | `file_name` | Output filename without extension. |
 
 Every slide takes `type` plus optional `title`, `notes` (speaker notes) and `layout`.

@@ -42,7 +42,7 @@ The server exposes health-check endpoints that Kubernetes (or any orchestrator) 
 | `GET /readyz` | `readinessProbe` — the pod can receive traffic | `ready` |
 | `GET /livez` | `livenessProbe` — the event loop is responsive; restart on failure | `alive` |
 
-> **These three routes are not protected by `API_KEY`.** They are registered at the Starlette layer (via FastMCP's `@custom_route`), so they sit outside the MCP middleware stack and deliberately bypass the API-key check described under **🔐 Authentication** above — this lets kubelet poll them without credentials. They expose no data beyond the static strings above.
+> **These three routes are not protected by `API_KEY`.** They are registered at the Starlette layer (via FastMCP's `@custom_route`), so they sit outside the MCP middleware stack and deliberately bypass the API-key check described under [Authentication](configuration.md#authentication) — this lets kubelet poll them without credentials. They expose no data beyond the static strings above.
 
 Use HTTP probes rather than TCP ones: a TCP probe only proves the socket still accepts connections, so a wedged Python process with a bound listener would never be restarted. An HTTP probe forces the application itself to answer.
 
@@ -74,7 +74,7 @@ experimental and requires a LibreChat build with MCP file artifact support;
 the variables and the `librechat.yaml` snippet are in
 [Configuration](configuration.md#librechat-integration-experimental). Note
 that YAML-defined template tools are not available under this strategy
-today; the five built-in tools are.
+today; the built-in tools are.
 
 ## Security checklist
 

@@ -8,9 +8,9 @@ start). Every variable below is read once at startup.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `DEBUG` | Enable debug logging (`1`, `true`, `yes`) | _(off)_ |
+| `DEBUG` | Enable debug logging (`1`, `true`, `yes`, `on`) | _(off)_ |
 | `API_KEY` | Protect the server with an API key (see Authentication below) | _(disabled)_ |
-| `UPLOAD_STRATEGY` | Where to save files: `LOCAL`, `S3`, `GCS`, `AZURE`, `MINIO` | `LOCAL` |
+| `UPLOAD_STRATEGY` | Where to save files: `LOCAL`, `S3`, `GCS`, `AZURE`, `MINIO`, `LIBRECHAT` | `LOCAL` |
 | `SIGNED_URL_EXPIRES_IN` | How long cloud download links stay valid (seconds) | `3600` |
 | `RUN_BLOCKING_BY_ASYNCIO_THREAD_ENABLED` | Offload blocking tool work to a thread pool, keeping the event loop free for health probes & concurrent requests | `true` |
 | `RUN_BLOCKING_MAX_WORKERS` | Maximum concurrent worker threads for blocking tool calls | `4` |
