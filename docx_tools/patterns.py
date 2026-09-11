@@ -223,16 +223,28 @@ def expand_br_to_block_breaks(text: str) -> str:
     # top-level numbered lines only (a nested item's number is not the run's).
     next_number = None
 
-    def _remember(emitted):
-        nonlocal next_number
-        for produced in emitted:
-            if produced[:1].isspace():
-                continue
-            match = ORDERED_LIST_CAPTURE_PATTERN.match(produced.strip())
-            if match:
-                next_number = int(match.group(1)) + 1
+    def _remember(seq, idx):
+        """Advance the count if ``seq[idx]`` would really render as a list item.
 
-    for line in text.split('\n'):
+        The renderer only counts a numbered line that its own rules turn into an
+        item — one that continues the run, or that is genuine on its own. A
+        standalone ``23. brezna 2026`` renders as prose and leaves the count
+        alone, so this must leave it alone too, or the two spellings of a later
+        continuation would disagree about what number comes next.
+        """
+        nonlocal next_number
+        raw = seq[idx]
+        if raw[:1].isspace():
+            return  # a nested item's number is not the top-level run's
+        match = ORDERED_LIST_CAPTURE_PATTERN.match(raw.strip())
+        if not match:
+            return
+        number = int(match.group(1))
+        if number == next_number or ordered_list_is_genuine(seq, idx):
+            next_number = number + 1
+
+    lines = text.split('\n')
+    for i, line in enumerate(lines):
         stripped = line.strip()
         if CODE_FENCE_PATTERN.match(stripped):
             in_code = not in_code
@@ -243,16 +255,18 @@ def expand_br_to_block_breaks(text: str) -> str:
             continue  # code is verbatim: a "3." in it is not part of any run
         if TABLE_LINE_PATTERN.match(stripped) or not _BR_RE.search(line):
             out.append(line)
-            _remember([line])
+            _remember(lines, i)
             continue
         segments = [seg.strip() for seg in _BR_RE.split(line)]
         if len(segments) > 1 and any(_segment_is_block(segments, idx, next_number)
                                      for idx in range(1, len(segments))):
             out.extend(segments)
-            _remember(segments)
+            # The segments are lines of their own now; count them as such.
+            for idx in range(len(segments)):
+                _remember(segments, idx)
         else:
             out.append(line)
-            _remember([line])
+            _remember(lines, i)
     return '\n'.join(out)
 
 

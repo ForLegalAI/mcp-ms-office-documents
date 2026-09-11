@@ -277,6 +277,29 @@ def test_br_continuation_can_be_escaped_like_the_newline_spelling():
     assert _signature(doc)[-1] == ("Normal", "Note\n3. zari 2026")
 
 
+@pytest.mark.parametrize("body,expected", [
+    # A number that renders as prose (a date under a heading) must not advance
+    # the count in the pre-pass either, or the <br> spelling would look for the
+    # wrong next number (PR #110 re-review).
+    ("1. Prvni\n\n2. Druhy\n\n## II\n\n23. brezna 2026\n\nNote{}3. Treti",
+     ["Prvni", "Druhy", "Treti"]),
+    # A list that legitimately starts above 1 (a sibling follows) does count.
+    ("5. Paty\n6. Sesty\n\nNote{}7. Sedmy", ["Paty", "Sesty", "Sedmy"]),
+    # A restart at 1. re-bases the count for the <br> spelling too.
+    ("1. A\n\n2. B\n\n1. X\n\nNote{}2. Y", ["A", "B", "X", "Y"]),
+    # A number that continues nothing stays prose.
+    ("1. Prvni\n\n2. Druhy\n\nNote{}23. brezna 2026", ["Prvni", "Druhy"]),
+])
+def test_br_run_count_tracks_the_renderer(body, expected):
+    def numbered(doc):
+        return [p.text for p in doc.paragraphs if p.style.name.startswith("List Number")]
+
+    br_doc = _render(body.format("<br>"))
+    newline_doc = _render(body.format("\n\n"))
+    assert numbered(br_doc) == expected
+    assert numbered(br_doc) == numbered(newline_doc)
+
+
 def test_a_number_inside_a_code_block_does_not_feed_the_run():
     # Code is verbatim, so a "3." in it is not part of any numbered run: the
     # prose after it must render the same as it would on its own.
