@@ -9,7 +9,8 @@ A map is threaded explicitly through the processors (not held in global state) s
 concurrent conversions on worker threads never share mutable mapping state. Config
 overrides come from the ``style_mapping`` section of ``config/docx_templates.yaml``
 (global) and each template's own ``style_mapping`` (per-template, wins over global).
-See ``docs/plan-issues-66-67.md`` (Issue #66) for the design rationale.
+See docs/development/tools/word.md ("Style mapping") for the design rationale;
+the original discussion is issue #66.
 """
 import logging
 from dataclasses import dataclass, replace
