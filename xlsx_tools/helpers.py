@@ -1,3 +1,17 @@
+"""Cell-level machinery for the Excel tool.
+
+Everything that happens inside one table once the parser has placed it:
+``parse_table`` splits the Markdown rows; ``resolve_cell`` decides whether a
+cell is a formula, percent, number, date or text; ``adjust_formula_references``
+rewrites the table-relative formula syntax (``T1.B[0]``, ``B[-1]``,
+``Sheet!T1.SUM(...)``) to real cell references; the ``types`` directive
+coerces typed columns; ``add_table_to_sheet`` writes the table with fonts,
+borders, alignment, number formats, column widths, the ``styles`` directive
+and an optional Excel Table object.
+
+The substitution order inside ``adjust_formula_references`` is load-bearing;
+see docs/development/tools/excel.md ("Formula reference rewriting").
+"""
 import math
 import re
 import logging
