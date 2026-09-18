@@ -761,6 +761,38 @@ class SlideHelpers:
         )
         return picture
 
+    def _fill_picture_placeholder(self, placeholder, source: str):
+        """Put an image in a PICTURE placeholder, letting the template frame it.
+
+        ``insert_picture()`` crops the image to the placeholder's own frame,
+        which is the point: the designer chose that shape, position and crop.
+        The computed-rectangle path scales a picture into a box the builder
+        invented instead, and left every template's photo layouts unusable
+        (#120).
+
+        Returns ``(picture, None)`` or ``(None, reason)``, like
+        :meth:`_add_image`.
+        """
+        if not source:
+            return None, "no image source given"
+        try:
+            image_data, _ = load_image(source)
+            picture = placeholder.insert_picture(image_data)
+            logger.debug("Filled picture placeholder from %s", source[:80])
+            return picture, None
+        except (ImageDownloadError, ImageValidationError) as e:
+            logger.error("Failed to load image: %s", e)
+            return None, str(e)
+        except Exception as e:
+            logger.error("Failed to fill picture placeholder from %r: %s",
+                         source[:80], e, exc_info=True)
+            return None, str(e)
+
+    def _remove_placeholder(self, placeholder) -> None:
+        """Drop an unused placeholder so it does not show its prompt text."""
+        element = placeholder._element
+        element.getparent().remove(element)
+
     def _add_image_placeholder(self, slide, message: str, left: int, top: int, width: int):
         """Add a placeholder text when image cannot be loaded.
 

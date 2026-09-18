@@ -87,7 +87,8 @@ ROLE_FALLBACK_INDEX = {
 }
 
 # Which role each slide type wants. two_column picks between two roles
-# depending on whether its columns carry headings, so it is resolved in
+# depending on whether its columns carry headings, and image prefers a picture
+# layout when the template has one, so both are resolved in
 # :func:`role_for_slide` rather than listed here.
 SLIDE_TYPE_ROLE = {
     "title": ROLE_TITLE,
@@ -210,11 +211,22 @@ def classify_layout(layout) -> Optional[str]:
     return None
 
 
-def role_for_slide(slide) -> str:
-    """The layout role a validated slide model wants."""
+def role_for_slide(slide, resolver: Optional["LayoutResolver"] = None) -> str:
+    """The layout role a validated slide model wants.
+
+    *resolver* is the template it will be built on, where the answer depends
+    on what the template offers. Without one the role is the type's default,
+    which is what the positional fallbacks assume.
+    """
     if slide.type == "two_column":
         has_headings = bool(slide.left.heading or slide.right.heading)
         return ROLE_COMPARISON if has_headings else ROLE_TWO_COLUMN
+    if slide.type == "image" and resolver is not None and resolver.provides(ROLE_IMAGE_TEXT):
+        # A picture layout frames, crops and positions the image the way the
+        # designer meant it to be framed. Without one the builder computes a
+        # rectangle and scales the picture into it, which is the fallback,
+        # not the intent (#120).
+        return ROLE_IMAGE_TEXT
     if slide.type == "quote" and not slide.title:
         # An untitled quote on a titled layout leaves an empty title
         # placeholder sitting above it, which shows as "Click to add title"
@@ -255,6 +267,18 @@ class LayoutResolver:
         if not name:
             return None
         return self._by_name.get(name) or self._by_name.get(name.strip().lower())
+
+    def provides(self, role: str) -> bool:
+        """True when this template has a layout for *role*.
+
+        Configured names count, not just detected ones: a template that maps
+        ``image_text`` to a layout the signature rules do not recognise still
+        provides the role.
+        """
+        configured = self._configured.get(role)
+        if configured and self.by_name(configured) is not None:
+            return True
+        return role in self._by_role
 
     def resolve(self, role: str, override: Optional[str] = None):
         """Return ``(layout, warning)`` for *role*.

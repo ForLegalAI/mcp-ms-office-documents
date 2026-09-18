@@ -411,7 +411,9 @@ class TestInlineImages:
         """No network, no public URL: the bytes are already in the payload."""
         pres = build([{"type": "image", "title": "Chart", "source": PNG_DATA_URI}])
         slide = reload_presentation(pres).slides[0]
-        assert any(shape.shape_type == 13 for shape in slide.shapes)  # PICTURE
+        # Any picture: on a template with a picture layout it is the layout's
+        # own placeholder, which reports as a placeholder rather than a shape.
+        assert any(getattr(shape, "image", None) is not None for shape in slide.shapes)
         assert pres.warnings == []
 
     def test_inline_image_with_caption(self):

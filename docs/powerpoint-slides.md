@@ -74,6 +74,8 @@ Indent child items with any consistent unit — two spaces, four spaces or a tab
 {"type": "image", "source": "data:image/png;base64,iVBORw0KGgo…", "caption": "Fig 1"}
 ```
 
+An image slide uses the template's own picture layout when it has one, so the picture is framed, cropped and positioned the way the template's designer intended, with `body` and `caption` in that layout's text area. Without such a layout — or when the one the template has has no room for the text — the picture is scaled into a rectangle on the content layout, with `body` beside it and `caption` underneath.
+
 **Warnings.** When the deck is produced but not exactly as asked — an image that would not load, body text shrunk to fit, a footer dropped because the layout has no placeholder — the result carries a `warnings` list alongside the file instead of leaving it in the server log:
 
 ```json

@@ -139,8 +139,11 @@ schema's range by `_coerce_font_size()` because it bypasses the schema.
 `LayoutResolver` never indexes `slide_layouts` by position. Each slide type
 asks for a **role** (`title`, `section`, `content`, `two_column`,
 `comparison`, `image_text`, `title_only`, `blank`); `role_for_slide()` picks
-`comparison` over `two_column` when either column has a heading, and `blank`
-for an untitled quote so no empty title placeholder is left behind.
+`comparison` over `two_column` when either column has a heading, `blank`
+for an untitled quote so no empty title placeholder is left behind, and
+`image_text` for an image slide when `resolver.provides()` says the template
+has such a layout — the one role that depends on the template rather than on
+the slide alone.
 Resolution order is the slide's own `layout` name, then the registry's
 `layouts:` mapping, then detection, then the positional index with a warning,
 and finally the last layout rather than an `IndexError` on a trimmed
@@ -199,6 +202,24 @@ percentages, which `list_presentation_templates` passes through. That is the
 answer for a caller positioning a `blank` slide's elements: those coordinates
 stay absolute on the slide — changing them would silently move every existing
 deck — so the safe band is published instead.
+
+### Pictures in a picture placeholder
+
+An `image` slide prefers the template's picture layout and fills its
+`PICTURE` placeholder through `_fill_picture_placeholder()`, so the
+template's own frame, crop and position apply; `body` and `caption` go into
+that layout's body placeholder, the caption as a trailing italic paragraph.
+Until this existed `ROLE_IMAGE_TEXT` was classified but never requested and
+no builder ever filled a picture placeholder, so a template's photo layouts
+were dead weight
+([#120](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/120)).
+
+The computed-rectangle path below is the fallback, taken when the template
+has no picture layout, or when the layout it resolved to has a picture
+placeholder but no body placeholder to hold this slide's text — text is
+never dropped to keep the nicer frame. An unfilled picture placeholder is
+removed either way, since an empty one shows its prompt as soon as anyone
+opens the deck.
 
 Chart and image slides with a `body` split the area, chart or picture on the
 left and bullets on the right. KPI and timeline slides are drawn from
@@ -282,6 +303,7 @@ Both are reported.
 | `tests/test_pptx_blank.py` | Positioned elements, clamping and skipping |
 | `tests/test_pptx_title_fallback.py` | A title on a layout with no title placeholder: geometry, style, the untitled-template warning |
 | `tests/test_pptx_content_area.py` | Drawing on a layout with no body placeholder: the template's content rectangle, and how it is reported |
+| `tests/test_pptx_picture_layout.py` | Image slides on a picture layout: role choice, the filled placeholder, and the fallbacks |
 | `tests/test_pptx_sections.py` | Outline-pane sections |
 | `tests/test_pptx_templates.py` | Registry loading, `.potx`, layout classification and resolution, defaults |
 | `tests/test_admin_pptx.py` | Admin UI support for PowerPoint templates |

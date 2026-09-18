@@ -292,7 +292,7 @@ class PowerpointPresentation(SlideHelpers):
         reported to the caller rather than silently producing a deck laid out
         on the wrong layouts.
         """
-        role = role_for_slide(slide_data)
+        role = role_for_slide(slide_data, self._layouts)
         layout, note = self._layouts.resolve(role, slide_data.layout)
         if note:
             self._warn(index, note)
@@ -546,11 +546,40 @@ class PowerpointPresentation(SlideHelpers):
         self._add_speaker_notes(slide, slide_data.notes)
 
     def _build_image_slide(self, slide_data, index: int) -> None:
-        """Build a slide with an image from a URL or inline data URI."""
-        slide, left, top, width, height = self._content_slide(slide_data, index)
+        """Build a slide with an image from a URL or inline data URI.
+
+        On a template with a picture layout the image goes into the layout's
+        own PICTURE placeholder, which frames, crops and positions it the way
+        the designer meant; the text goes into that layout's body placeholder.
+        Only when the template has no such layout — or when the one it has
+        cannot hold this slide's text — does the builder compute a rectangle
+        and scale the picture into it (#120).
+        """
+        slide = self._new_slide(slide_data, index)
+        self._apply_title(slide, slide_data.title, index)
 
         caption = slide_data.caption
         bullets = body_to_bullets(slide_data.body)
+
+        picture_placeholder = self._placeholder_of_type(slide, {PP_PLACEHOLDER.PICTURE})
+        if picture_placeholder is not None:
+            body_placeholder = max(
+                self._content_placeholders(slide),
+                key=lambda ph: (ph.width or 0) * (ph.height or 0),
+                default=None,
+            )
+            if body_placeholder is not None or not (bullets or caption):
+                self._fill_picture_layout(
+                    slide, slide_data, index,
+                    picture_placeholder, body_placeholder, bullets, caption,
+                )
+                return
+            # Text with nowhere to go: fall through to the computed rectangle
+            # rather than dropping it, and take the empty picture placeholder
+            # with us so it does not show its prompt.
+            self._remove_placeholder(picture_placeholder)
+
+        slide, left, top, width, height = self._add_title_content_slide("", slide=slide)
 
         # With text beside it the picture takes the left 55%, the text the rest.
         image_width = width
@@ -592,6 +621,59 @@ class PowerpointPresentation(SlideHelpers):
             self._warn(index, f"image could not be loaded ({error}); a placeholder was drawn.")
 
         self._add_speaker_notes(slide, slide_data.notes)
+
+    def _fill_picture_layout(self, slide, slide_data, index: int,
+                             picture_placeholder, body_placeholder,
+                             bullets, caption) -> None:
+        """Fill a picture layout's own placeholders."""
+        picture, error = self._fill_picture_placeholder(
+            picture_placeholder, slide_data.source
+        )
+        if not picture:
+            # The placeholder is gone either way — insert_picture() replaces it
+            # on success, and an empty one would show its prompt on failure.
+            left, top, width = (picture_placeholder.left, picture_placeholder.top,
+                                picture_placeholder.width)
+            self._remove_placeholder(picture_placeholder)
+            self._add_image_placeholder(slide, "Image could not be loaded", left, top, width)
+            self._warn(index, f"image could not be loaded ({error}); a placeholder was drawn.")
+
+        if body_placeholder is None:
+            self._add_speaker_notes(slide, slide_data.notes)
+            return
+
+        if bullets or caption:
+            frame = body_placeholder.text_frame
+            if bullets:
+                self._fill_bullets(frame, bullets)
+            if caption:
+                # The caption follows the bullets in the same frame: on a
+                # picture layout the body placeholder *is* the caption area,
+                # and a text box under the picture would sit on the layout.
+                self._add_caption_paragraph(frame, caption, after_bullets=bool(bullets))
+            apply_autofit(
+                frame,
+                scale=self._fit_scale(bullets, body_placeholder.width, body_placeholder.height)
+                if bullets else None,
+            )
+        else:
+            self._remove_placeholder(body_placeholder)
+
+        self._add_speaker_notes(slide, slide_data.notes)
+
+    @staticmethod
+    def _add_caption_paragraph(frame, caption: str, after_bullets: bool) -> None:
+        """Write *caption* into *frame*, italic, after any bullets already there."""
+        paragraph = frame.add_paragraph() if after_bullets else frame.paragraphs[0]
+        if needs_inline_processing(caption):
+            apply_inline_formatting(
+                paragraph, caption, font_size=DEFAULT_CAPTION_FONT_SIZE, italic=True
+            )
+            return
+        run = paragraph.add_run()
+        run.text = caption
+        run.font.size = DEFAULT_CAPTION_FONT_SIZE
+        run.font.italic = True
 
     def _build_two_column_slide(self, slide_data, index: int) -> None:
         """Build a slide with two text columns using built-in PowerPoint layouts.

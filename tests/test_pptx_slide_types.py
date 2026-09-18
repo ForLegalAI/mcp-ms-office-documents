@@ -261,6 +261,13 @@ class TestTimeline:
 # =============================================================================
 
 class TestSideBySide:
+    """The computed-rectangle path, on a layout with no picture placeholder.
+
+    An `image` slide prefers the template's picture layout when it has one
+    (#120, tests/test_pptx_picture_layout.py). These slides name the content
+    layout instead, which is what a template without a picture layout
+    resolves to, and where the builder splits the rectangle itself.
+    """
 
     def test_image_with_body_is_left_aligned_not_centred(self):
         """Alone the picture centres on the slide; beside text it must not.
@@ -270,9 +277,10 @@ class TestSideBySide:
         width would be identical either way. Confinement to the left half is
         covered by test_image_body_does_not_overlap_the_picture.
         """
-        alone = build([{"type": "image", "title": "Chart", "source": PNG_DATA_URI}])
+        alone = build([{"type": "image", "title": "Chart", "source": PNG_DATA_URI,
+                        "layout": "Nadpis a obsah"}])
         split = build([{"type": "image", "title": "Chart", "source": PNG_DATA_URI,
-                        "body": "- Up and to the right"}])
+                        "body": "- Up and to the right", "layout": "Nadpis a obsah"}])
 
         def picture(pres):
             return [s for s in reload_presentation(pres).slides[0].shapes
@@ -287,7 +295,7 @@ class TestSideBySide:
 
     def test_image_body_does_not_overlap_the_picture(self):
         pres = build([{"type": "image", "title": "Chart", "source": PNG_DATA_URI,
-                       "body": "- Beside it"}])
+                       "body": "- Beside it", "layout": "Nadpis a obsah"}])
         slide = reload_presentation(pres).slides[0]
         pic = [s for s in slide.shapes if s.shape_type == MSO_SHAPE_TYPE.PICTURE][0]
         text = [s for s in slide.shapes
@@ -309,7 +317,7 @@ class TestSideBySide:
 
     def test_caption_tracks_the_narrowed_picture(self):
         pres = build([{"type": "image", "title": "C", "source": PNG_DATA_URI,
-                       "body": "- text", "caption": "Fig 1"}])
+                       "body": "- text", "caption": "Fig 1", "layout": "Nadpis a obsah"}])
         slide = reload_presentation(pres).slides[0]
         pic = [s for s in slide.shapes if s.shape_type == MSO_SHAPE_TYPE.PICTURE][0]
         caption = [s for s in slide.shapes
