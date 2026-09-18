@@ -149,6 +149,15 @@ Resolution order is the slide's own `layout` name, then the registry's
 and finally the last layout rather than an `IndexError` on a trimmed
 template.
 
+`LayoutResolver.describe()` is what `validate_templates()` reports and
+`list_presentation_templates` returns: each layout with its index, placeholder
+types, whether it is vertical, and the role it classified as. Roles are held
+in a list parallel to the layouts rather than keyed by name, because two
+layouts in one template may share a name. Together with `coverage()` and
+`missing_roles()` this is the answer to "why did my slide come out on that
+layout"
+([#121](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/121)).
+
 `classify_layout()` reads placeholder *types*, ignoring date, footer and
 slide-number chrome, so it is language-independent. It is deliberately
 conservative: vertical-text layouts and "Content with Caption" return `None`

@@ -253,10 +253,13 @@ class LayoutResolver:
         self._title_style = _UNREAD
         self._content_area = _UNREAD
         self._by_role: Dict[str, object] = {}
-        self._roles_of: Dict[str, str] = {}
+        # Parallel to _layouts rather than keyed by name: two layouts in one
+        # template may share a name, and the reporting below would then
+        # attribute the second one's role to both.
+        self._roles: List[Optional[str]] = []
         for layout in self._layouts:
             role = classify_layout(layout)
-            self._roles_of[layout.name] = role
+            self._roles.append(role)
             if role and role not in self._by_role:
                 self._by_role[role] = layout
 
@@ -397,20 +400,25 @@ class LayoutResolver:
         }
 
     def describe(self) -> List[Dict[str, object]]:
-        """Per-layout detail for the template-listing tool."""
+        """Each layout with the role it was detected as, for the listing tool.
+
+        ``role`` is None for a layout that matched no known shape — either an
+        unusual one, or a vertical-text layout, which is never picked
+        automatically. The placeholder types are what the classifier read, so
+        they say *why* a layout landed on the role it did: the diagnosis in
+        [#121] was a section layout carrying only a title, which is
+        ``title_only`` by signature and nothing else.
+        """
         described = []
         for index, layout in enumerate(self._layouts):
-            types, vertical = layout_signature(layout)
+            _, vertical = layout_signature(layout)
             described.append({
                 "index": index,
                 "name": layout.name,
-                "role": self._roles_of.get(layout.name),
+                "role": self._roles[index],
                 "vertical": vertical,
                 "placeholders": [
-                    {
-                        "idx": ph.placeholder_format.idx,
-                        "type": str(ph.placeholder_format.type).split()[0],
-                    }
+                    str(ph.placeholder_format.type).split()[0]
                     for ph in layout.placeholders
                 ],
             })

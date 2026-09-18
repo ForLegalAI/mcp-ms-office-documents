@@ -380,7 +380,12 @@ def validate_templates() -> List[Dict[str, Any]]:
 
         resolver = LayoutResolver(presentation, spec.layouts)
         report["aspect"] = aspect_of(presentation)
-        report["layouts"] = resolver.layout_names
+        # Each layout with the role it classified as, not just its name: a
+        # template whose section layout carries only a title is detected as
+        # title_only, which then also serves kpi and timeline slides. That is
+        # invisible from a list of names, and diagnosing it meant reading
+        # layouts.py and running classify_layout() by hand (#121).
+        report["layouts"] = resolver.describe()
         report["coverage"] = resolver.coverage()
         report["missing_roles"] = resolver.missing_roles()
         report["layouts_without_footer"] = resolver.layouts_without_footer()

@@ -69,6 +69,22 @@ def reorder_layouts(prs):
     ids.insert(0, section)
 
 
+def strip_section_body(prs):
+    """Leave the Section Header layout carrying only a title.
+
+    The template in #121: by signature that layout is `title_only`, so the
+    section role goes unfilled *and* kpi/timeline slides land on the
+    section divider, because it comes before "Jenom nadpis".
+    """
+    from pptx.enum.shapes import PP_PLACEHOLDER
+
+    layout = prs.slide_layouts[2]
+    for placeholder in list(layout.placeholders):
+        if placeholder.placeholder_format.type in (PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT):
+            element = placeholder._element
+            element.getparent().remove(element)
+
+
 def trim_layouts(prs):
     """Keep only the first three layouts (title, content, section)."""
     ids = _layout_ids(prs)
@@ -669,6 +685,48 @@ class TestValidation:
             assert report["missing_roles"] == []
             assert report["coverage"]["title"]
 
+    def test_each_layout_reports_the_role_it_was_detected_as(self, registry):
+        """A list of names cannot explain a template that resolves oddly."""
+        report = validate_templates()[0]
+
+        by_name = {layout["name"]: layout for layout in report["layouts"]}
+        assert by_name["Nadpis a obsah"]["role"] == "content"
+        assert by_name["Prázdný"]["role"] == "blank"
+        assert "TITLE" in by_name["Nadpis a obsah"]["placeholders"]
+
+        # A vertical-text layout is deliberately never picked automatically,
+        # and says so rather than looking like an unexplained null.
+        vertical = by_name["Nadpis a svislý text"]
+        assert vertical["role"] is None and vertical["vertical"] is True
+
+    def test_a_section_layout_detected_as_title_only_is_visible(self, registry):
+        """The whole of #121 in one call, instead of an hour in layouts.py."""
+        make_template(registry["custom"] / "brand.pptx", strip_section_body)
+        write_registry(registry["config"], [{"name": "brand", "pptx_path": "brand.pptx"}])
+
+        report = validate_templates()[0]
+
+        by_name = {layout["name"]: layout for layout in report["layouts"]}
+        assert by_name["Záhlaví oddílu"]["role"] == "title_only"
+        assert report["coverage"]["section"] is None
+        assert "section" in report["missing_roles"]
+        # And the consequence nothing warned about: it is also what kpi and
+        # timeline slides get, because it comes before "Jenom nadpis".
+        assert report["coverage"]["title_only"] == "Záhlaví oddílu"
+
+    def test_a_duplicate_layout_name_keeps_its_own_role(self, registry):
+        """Roles are tracked per layout; a shared name used to overwrite."""
+        def duplicate_name(prs):
+            prs.slide_layouts[6].name = prs.slide_layouts[1].name
+
+        make_template(registry["custom"] / "brand.pptx", duplicate_name)
+        write_registry(registry["config"], [{"name": "brand", "pptx_path": "brand.pptx"}])
+
+        roles = [layout["role"] for layout in validate_templates()[0]["layouts"]]
+
+        assert roles[1] == "content"
+        assert roles[6] == "blank"
+
     def test_missing_roles_are_reported(self, registry):
         make_template(registry["custom"] / "brand.pptx", trim_layouts)
         write_registry(registry["config"], [{"name": "brand", "pptx_path": "brand.pptx"}])
@@ -697,3 +755,53 @@ class TestValidation:
         report = validate_templates()[0]
 
         assert "error" in report
+
+
+# =============================================================================
+# The listing tool
+# =============================================================================
+# What a client actually receives. The diagnostics are only worth anything if
+# they survive the tool boundary, which is where #121's caller was looking.
+
+class TestListingTool:
+
+    @staticmethod
+    async def call(**arguments):
+        import main
+        from fastmcp import Client
+
+        async with Client(main.mcp) as client:
+            result = await client.call_tool(
+                "list_presentation_templates", arguments, raise_on_error=False,
+            )
+        return result
+
+    async def test_layout_roles_and_gaps_reach_the_caller(self, registry):
+        result = await self.call(include_layouts=True)
+
+        assert not result.is_error
+        entry = result.data["templates"][0]
+        assert {"layouts", "roles", "missing_roles", "content_area"} <= set(entry)
+        assert entry["missing_roles"] == []
+        assert entry["roles"]["content"]
+        assert all("role" in layout and "name" in layout for layout in entry["layouts"])
+
+    async def test_a_template_that_will_not_open_reports_only_the_error(self, registry):
+        """An empty missing_roles would read as a verdict nobody reached."""
+        broken = registry["custom"] / "broken.pptx"
+        broken.write_bytes(b"nonsense")
+        write_registry(registry["config"], [{"name": "broken", "pptx_path": "broken.pptx"}])
+
+        result = await self.call(include_layouts=True)
+
+        entry = result.data["templates"][0]
+        assert "error" in entry
+        assert "missing_roles" not in entry
+
+    async def test_the_plain_listing_stays_small(self, registry):
+        result = await self.call()
+
+        assert not result.is_error
+        entry = result.data["templates"][0]
+        assert "layouts" not in entry and "roles" not in entry
+        assert entry["name"] and entry["aspect"]
