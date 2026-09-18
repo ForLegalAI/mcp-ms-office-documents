@@ -618,6 +618,9 @@ class SlideHelpers:
         alternate_rows: bool = True,
         column_alignments: Optional[List] = None,
         font_size: Optional[int] = None,
+        column_widths: Optional[List[float]] = None,
+        cell_fills: Optional[List[Tuple[int, Optional[int], Any]]] = None,
+        merges: Optional[List[Tuple[int, int, int, int]]] = None,
     ):
         """Create a styled table on a slide.
 
@@ -632,6 +635,13 @@ class SlideHelpers:
             font_size: Explicit cell font size in points. When omitted, the
                 size is chosen from the row count so a tall table still fits
                 the content area instead of running off the slide.
+            column_widths: Relative weights, one per column. Normalised to the
+                table's own width, so [3, 1, 1] means 60/20/20 whatever the
+                content area turns out to be.
+            cell_fills: ``(row, col or None, colour)`` triples applied after
+                the header and zebra shading, so an explicit fill wins.
+            merges: ``(row, col, row_span, col_span)`` blocks, already checked
+                by the caller for range and overlap.
 
         Returns:
             Tuple of (table shape, chosen font size in points or None).
@@ -648,12 +658,24 @@ class SlideHelpers:
         header_color = header_color if header_color is not None else TABLE_HEADER_FILL
         points = font_size or fit_table_font_size(num_rows, height)
 
+        # Merge before writing any text: python-pptx concatenates the text of
+        # the cells it merges, so merging afterwards would repeat every cell of
+        # the block inside the one that survives.
+        for row_idx, col_idx, row_span, col_span in (merges or ()):
+            table.cell(row_idx, col_idx).merge(
+                table.cell(row_idx + row_span - 1, col_idx + col_span - 1)
+            )
+
         for row_idx, row_data in enumerate(table_data):
             for col_idx, cell_text in enumerate(row_data):
                 if col_idx >= num_cols:
                     continue
 
                 cell = table.cell(row_idx, col_idx)
+                if cell.is_spanned:
+                    # Covered by a merge: writing here would be invisible, and
+                    # the block's text belongs to its top-left cell.
+                    continue
                 # cell_to_text, not a falsy test: `if cell_text` blanked a numeric 0.
                 text = cell_to_text(cell_text)
 
@@ -683,7 +705,37 @@ class SlideHelpers:
                 elif alternate_rows and row_idx % 2 == 0:
                     self._set_cell_fill(cell, TABLE_ALT_ROW_FILL)
 
+        for row_idx, col_idx, color in (cell_fills or ()):
+            columns = range(num_cols) if col_idx is None else (col_idx,)
+            for target in columns:
+                cell = table.cell(row_idx, target)
+                if not cell.is_spanned:
+                    self._set_cell_fill(cell, color)
+
+        if column_widths:
+            self._set_column_widths(table, column_widths, width)
+
         return shape, points
+
+    @staticmethod
+    def _set_column_widths(table, weights: List[float], total: int) -> None:
+        """Share *total* between the columns in proportion to *weights*.
+
+        Relative, not absolute: a caller asking for [3, 1, 1] means "three
+        times the space", which holds whatever content rectangle the layout
+        turns out to give the table. The last column takes the rounding
+        remainder so the columns still add up to the table's width.
+        """
+        share = sum(weights)
+        if share <= 0:
+            return
+
+        used = 0
+        for index, weight in enumerate(weights[:-1]):
+            column_width = int(total * weight / share)
+            table.columns[index].width = column_width
+            used += column_width
+        table.columns[len(weights) - 1].width = total - used
 
     # -------------------------------------------------------------------------
     # Image Helpers

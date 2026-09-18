@@ -26,7 +26,7 @@ Every slide takes `type` plus optional `title`, `notes` (speaker notes) and `lay
 | `section` | — |
 | `content` | `body` |
 | `two_column` | `left`, `right` — each `{heading?, body}` |
-| `table` | `rows`, `align?`, `header_color?`, `zebra?`, `font_size?` |
+| `table` | `rows`, `align?`, `header_color?`, `zebra?`, `font_size?`, `widths?`, `fills?`, `merges?` |
 | `chart` | `chart_type`, `categories`, `series`, `legend?`, `data_labels?`, `number_format?`, `chart_title?`, `x_title?`, `y_title?` |
 | `scatter` | `series` (`{name, points: [[x, y], …]}`), `legend?`, `chart_title?`, `x_title?`, `y_title?` |
 | `image` | `source`, `caption?`, `body?` |
@@ -65,6 +65,20 @@ Indent child items with any consistent unit — two spaces, four spaces or a tab
  "rows": [["Plan", "Users", "Price"], ["Basic", 5, 9.0], ["Pro", 25, 29.0]],
  "align": ["left", "right", "right"], "header_color": "accent1"}
 ```
+
+Three options shape the table beyond its text. `widths` are **relative** — `[3, 1, 1]` gives the first column three times the space of the others, at whatever size the table ends up — so a description column need not share equally with a two-character one. `fills` colour individual cells, or a whole row when `col` is omitted, and beat both the header colour and zebra shading. `merges` join a block into one cell, which is how you get a grouped header; the block shows the text of its top-left cell. Row 0 is the header row in all three.
+
+```json
+{"type": "table", "title": "Risk register",
+ "rows": [["Risk", "Impact", "Owner"],
+          ["Data loss", "High", "Ops"],
+          ["Latency", "Low", "Eng"]],
+ "widths": [3, 1, 1],
+ "fills": [{"row": 1, "col": 1, "color": "C00000"}, {"row": 2, "color": "accent2"}],
+ "merges": [{"row": 0, "col": 1, "col_span": 2}]}
+```
+
+A width list that does not have one entry per column is reported in `warnings` and the columns stay equal; a fill or merge naming a cell the table does not have, or a merge overlapping another, is reported and skipped. The rest of the table is built either way.
 
 **Colours** accept 6-digit hex with or without `#`, or a theme name (`accent1`…`accent6`, `dark1`, `dark2`, `light1`, `light2`). Prefer a theme name so the deck follows your template's palette.
 

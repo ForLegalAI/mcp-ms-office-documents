@@ -25,7 +25,7 @@ from pptx.oxml.ns import qn
 from pptx.oxml import parse_xml
 
 from .constants import (
-    MARGIN_LEFT,
+    MARGIN_LEFT, TABLE_ALT_ROW_FILL,
     DEFAULT_BODY_FONT_SIZE, DEFAULT_SUBTITLE_FONT_SIZE,
     DEFAULT_CAPTION_FONT_SIZE, DEFAULT_QUOTE_FONT_SIZE,
     KPI_VALUE_FONT_SIZE, TIMELINE_DETAIL_FONT_SIZE,
@@ -539,6 +539,7 @@ class PowerpointPresentation(SlideHelpers):
         if font_size is not None:
             font_size = self._coerce_font_size(font_size, index)
 
+        num_cols = max((len(row) for row in rows), default=0)
         _, points = self._create_styled_table(
             slide,
             rows,
@@ -550,6 +551,9 @@ class PowerpointPresentation(SlideHelpers):
             alternate_rows=zebra,
             column_alignments=col_alignments,
             font_size=font_size,
+            column_widths=self._table_widths(slide_data.widths, num_cols, index),
+            cell_fills=self._table_fills(slide_data.fills, len(rows), num_cols, index),
+            merges=self._table_merges(slide_data.merges, len(rows), num_cols, index),
         )
 
         if points and table_overflows(len(rows), height, points):
@@ -565,6 +569,77 @@ class PowerpointPresentation(SlideHelpers):
             )
 
         self._add_speaker_notes(slide, slide_data.notes)
+
+    def _table_widths(self, widths, num_cols: int, index: int):
+        """Column weights, or None when they do not describe this table.
+
+        One weight per column: a list of a different length cannot be matched
+        to columns without guessing which ones the caller meant, so it is
+        reported and the table stays evenly divided.
+        """
+        if not widths:
+            return None
+        if len(widths) != num_cols:
+            self._warn(
+                index, W.TABLE_WIDTHS_IGNORED,
+                f"widths has {len(widths)} value(s) for {num_cols} column(s); "
+                "the columns were left equal.",
+            )
+            return None
+        return list(widths)
+
+    def _table_fills(self, fills, num_rows: int, num_cols: int, index: int):
+        """``(row, col, colour)`` triples for the cells that exist."""
+        if not fills:
+            return None
+
+        applied, skipped = [], []
+        for fill in fills:
+            if fill.row >= num_rows or (fill.col is not None and fill.col >= num_cols):
+                skipped.append(fill)
+                continue
+            applied.append((fill.row, fill.col, resolve_fill(fill.color, TABLE_ALT_ROW_FILL)))
+
+        if skipped:
+            self._warn(
+                index, W.TABLE_FILL_IGNORED,
+                f"{len(skipped)} fill(s) name a cell outside a "
+                f"{num_rows}x{num_cols} table and were ignored.",
+            )
+        return applied or None
+
+    def _table_merges(self, merges, num_rows: int, num_cols: int, index: int):
+        """``(row, col, row_span, col_span)`` blocks that fit and do not overlap.
+
+        Overlaps are rejected here rather than by python-pptx, which raises
+        halfway through and would take the whole deck with it. The first block
+        to claim a cell keeps it, so a caller sees which one was dropped.
+        """
+        if not merges:
+            return None
+
+        claimed = set()
+        applied, skipped = [], []
+        for merge in merges:
+            cells = {
+                (row, col)
+                for row in range(merge.row, merge.row + merge.row_span)
+                for col in range(merge.col, merge.col + merge.col_span)
+            }
+            outside = merge.row + merge.row_span > num_rows or merge.col + merge.col_span > num_cols
+            if outside or cells & claimed:
+                skipped.append(merge)
+                continue
+            claimed |= cells
+            applied.append((merge.row, merge.col, merge.row_span, merge.col_span))
+
+        if skipped:
+            self._warn(
+                index, W.TABLE_MERGE_IGNORED,
+                f"{len(skipped)} merge(s) fell outside a {num_rows}x{num_cols} table "
+                "or overlapped another merge, and were ignored.",
+            )
+        return applied or None
 
     def _build_image_slide(self, slide_data, index: int) -> None:
         """Build a slide with an image from a URL or inline data URI.
