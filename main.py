@@ -424,12 +424,12 @@ async def create_powerpoint_presentation(
 
 @mcp.tool(
     name="list_presentation_templates",
-    description="Lists the PowerPoint templates this server can build on, with their aspect ratio, layout names and the slide area kept clear of template decoration.",
+    description="Lists the PowerPoint templates this server can build on, with their aspect ratio and, on request, each layout's detected slide role, the roles nothing covers, and the slide area kept clear of template decoration.",
     tags={"powerpoint", "presentation", "templates"},
     annotations={"title": "PowerPoint Template Lister", "readOnlyHint": True},
 )
 async def list_presentation_templates(
-    include_layouts: Annotated[bool, Field(description="Include each template's layout names, the slide-type role each one serves, and its 'content_area' — the band the template keeps clear of its logo, rules and footer, as percentages you can pass straight to a 'blank' slide's elements. Useful before setting a slide's 'layout' field or positioning blank elements.", default=False)] = False,
+    include_layouts: Annotated[bool, Field(description="Include each template's diagnostics: 'layouts' (every layout with its index, name, placeholder types, and the role it was detected as — null when it matched none), 'roles' (the role -> layout mapping the builder will actually use), 'missing_roles' (roles no layout provides, where slides fall back to a layout by position), and 'content_area' — the band the template keeps clear of its logo, rules and footer, as percentages you can pass straight to a 'blank' slide's elements. Useful before setting a slide's 'layout' field, positioning blank elements, or working out why a slide came out on the wrong layout.", default=False)] = False,
 ) -> dict:
     """Report the registered PowerPoint templates.
 
@@ -438,10 +438,16 @@ async def list_presentation_templates(
 
     Returns:
         A dict with 'templates' (name, description, aspect, default) and, when
-        include_layouts is set, each template's layouts, the roles they fill
-        and its content area — the rectangle inside the template's own
-        decoration, which is what a 'blank' slide's elements should stay
-        within.
+        include_layouts is set, each template's layouts with the role each one
+        was detected as, the resolved role -> layout mapping, the roles no
+        layout provides, and its content area — the rectangle inside the
+        template's own decoration, which is what a 'blank' slide's elements
+        should stay within.
+
+    The per-layout role is what makes a mis-detected template diagnosable: a
+    section layout carrying only a title is 'title_only' by signature, which
+    then serves kpi and timeline slides as well, and nothing in a list of
+    layout names says so (#121).
     """
     logger.info("Listing PowerPoint templates (include_layouts=%s)", include_layouts)
 
@@ -456,10 +462,14 @@ async def list_presentation_templates(
                 report = by_name.get(entry["name"], {})
                 entry["layouts"] = report.get("layouts", [])
                 entry["roles"] = report.get("coverage", {})
+                # Always present, empty list included: a model cannot tell an
+                # absent key from "nothing is missing", and this is the field
+                # that says a slide type will land on a fallback layout.
+                entry["missing_roles"] = report.get("missing_roles", [])
                 if report.get("content_area"):
                     entry["content_area"] = report["content_area"]
-                if report.get("missing_roles"):
-                    entry["missing_roles"] = report["missing_roles"]
+                if report.get("unknown_configured_layouts"):
+                    entry["unknown_configured_layouts"] = report["unknown_configured_layouts"]
                 if report.get("error"):
                     entry["error"] = report["error"]
 
