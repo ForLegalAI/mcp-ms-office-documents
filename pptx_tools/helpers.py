@@ -32,6 +32,7 @@ from .constants import (
 from .schema import Bullet, THEME_COLORS
 from image_utils import load_image, ImageDownloadError, ImageValidationError
 from .inline_formatting import needs_inline_processing, apply_inline_formatting
+from .placeholder_style import content_placeholders
 
 logger = logging.getLogger(__name__)
 
@@ -347,11 +348,13 @@ class SlideHelpers:
     """Mixin providing all common slide helper methods (text, tables, images).
 
     Expects the consuming class to have a `self.presentation` attribute
-    holding a python-pptx Presentation object.
+    holding a python-pptx Presentation object, and a `self._layouts`
+    LayoutResolver for the template it was opened from.
     """
 
-    # Type hint for IDE — actual attribute is set by the consuming class
+    # Type hints for the IDE — the attributes are set by the consuming class
     presentation: Any
+    _layouts: Any
 
     # -------------------------------------------------------------------------
     # Slide Management
@@ -402,14 +405,34 @@ class SlideHelpers:
             sp = content_placeholder._element
             sp.getparent().remove(sp)
         else:
-            # Fallback dimensions
-            slide_width, slide_height = self._get_slide_dimensions()
-            left = MARGIN_LEFT
-            top = Inches(1.5)
-            width = slide_width - (2 * MARGIN_LEFT)
-            height = slide_height - top - Inches(0.5)
+            left, top, width, height = self._content_area()
 
         return slide, left, top, width, height
+
+    def _content_area(self) -> Tuple[int, int, int, int]:
+        """The content rectangle for a slide whose layout reserves none.
+
+        Blank and Title Only layouts have no body placeholder, so everything
+        drawn on one — an untitled quote, a KPI row, a timeline — used to
+        start 1.5 inches down from the top-left of the slide. A blank layout
+        is rarely an empty canvas: templates keep a logo, a header rule and a
+        footer band on it, and the drawing landed on top of them (#119). The
+        template's own content rectangle, read from a layout that does have a
+        body placeholder, sits inside the decoration by construction.
+
+        The hardcoded band survives for a template that has no body
+        placeholder on any layout, which is the only case left with nothing
+        to read.
+        """
+        rect = self._layouts.content_area()
+        if rect is not None:
+            return rect.as_tuple()
+
+        slide_width, slide_height = self._get_slide_dimensions()
+        top = Inches(1.5)
+        return (MARGIN_LEFT, top,
+                slide_width - (2 * MARGIN_LEFT),
+                slide_height - top - Inches(0.5))
 
     def _set_title(self, slide, text: Optional[str]) -> bool:
         """Put *text* in the slide's title placeholder, if it has one.
@@ -437,10 +460,7 @@ class SlideHelpers:
 
     def _content_placeholders(self, slide) -> List[Any]:
         """Body/object placeholders of a slide, in document order."""
-        return [
-            shape for shape in slide.placeholders
-            if shape.placeholder_format.type in (PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT)
-        ]
+        return content_placeholders(slide)
 
     def _add_speaker_notes(self, slide, notes_text: Optional[str]) -> None:
         """Add speaker notes to a slide.

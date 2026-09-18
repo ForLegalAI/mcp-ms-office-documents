@@ -1,4 +1,4 @@
-"""Replay a template's title placeholder as an ordinary text box.
+"""Read what a template's placeholders say, and replay a title as a text box.
 
 Some layouts carry no title placeholder at all — every template's Blank
 layout, and any full-bleed layout a designer trimmed. Slides built on them
@@ -22,6 +22,12 @@ reads, in this order:
 :class:`~pptx_tools.layouts.LayoutResolver` picks which layout to read from;
 the builder calls :func:`draw_title_box` when ``_set_title`` finds no
 placeholder to fill.
+
+:func:`read_content_rect` answers the neighbouring question for the body:
+where this template expects content to sit. A layout with no body placeholder
+— Blank, Title Only — used to fall back to a hardcoded band starting 1.5
+inches down, which on a template with a header rule or a deep title band
+drew straight over the decoration (#119).
 """
 
 from __future__ import annotations
@@ -37,12 +43,29 @@ from pptx.oxml.ns import qn
 logger = logging.getLogger(__name__)
 
 TITLE_PLACEHOLDER_TYPES = (PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE)
+# BODY and OBJECT are both "content goes here"; templates use them
+# interchangeably. Same pair as layouts.py's signature reading.
+CONTENT_PLACEHOLDER_TYPES = (PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT)
 
 # Character properties that point at a relationship (an image fill, a
 # hyperlink) would reference a rel that only exists in the layout's part.
 # Nothing in a title style uses them; dropping them keeps a hand-built
 # template from producing a slide PowerPoint has to repair.
 _RELATIONSHIP_BEARING = ('a:blipFill', 'a:hlinkClick', 'a:hlinkMouseOver')
+
+
+@dataclass(frozen=True)
+class Rect:
+    """A rectangle read from a template, and the layout it came from."""
+
+    left: int
+    top: int
+    width: int
+    height: int
+    source: Optional[str] = None
+
+    def as_tuple(self):
+        return self.left, self.top, self.width, self.height
 
 
 @dataclass(frozen=True)
@@ -65,6 +88,32 @@ def title_placeholder(container):
         if placeholder.placeholder_format.type in TITLE_PLACEHOLDER_TYPES:
             return placeholder
     return None
+
+
+def content_placeholders(container):
+    """Body/object placeholders of a layout or slide, in document order."""
+    return [placeholder for placeholder in container.placeholders
+            if placeholder.placeholder_format.type in CONTENT_PLACEHOLDER_TYPES]
+
+
+def read_content_rect(layout) -> Optional[Rect]:
+    """The rectangle *layout* reserves for content, or None if it reserves none.
+
+    The largest body placeholder, not the first: on a Comparison layout the
+    first is the heading strip, which is the same trap ``_add_title_content_
+    slide()`` avoids when the slide itself has placeholders.
+    """
+    placeholder = max(
+        content_placeholders(layout),
+        key=lambda ph: (ph.width or 0) * (ph.height or 0),
+        default=None,
+    )
+    if placeholder is None:
+        return None
+    box = (placeholder.left, placeholder.top, placeholder.width, placeholder.height)
+    if any(value is None for value in box):
+        return None
+    return Rect(*box, source=getattr(layout, "name", None))
 
 
 def _master_of(layout):

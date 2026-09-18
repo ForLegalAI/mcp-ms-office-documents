@@ -32,7 +32,7 @@ from .constants import (
     TITLE_LAYOUT, SECTION_LAYOUT, CONTENT_LAYOUT,
     TWO_COLUMN_LAYOUT, TWO_COLUMN_TEXT_LAYOUT, TITLE_ONLY_LAYOUT, BLANK_LAYOUT,
 )
-from .placeholder_style import TitleStyle, read_title_style
+from .placeholder_style import Rect, TitleStyle, read_content_rect, read_title_style
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,14 @@ ROLES = (
 TITLE_REFERENCE_ROLES = (
     ROLE_CONTENT, ROLE_TITLE_ONLY, ROLE_TWO_COLUMN, ROLE_COMPARISON,
     ROLE_IMAGE_TEXT, ROLE_SECTION, ROLE_TITLE,
+)
+
+# Where to read the content rectangle from for a layout that reserves none of
+# its own — Blank and Title Only (#119). The single-content layouts come
+# first: their body placeholder is the template's own answer to "where does
+# content go", while a two-column layout's is half the slide.
+CONTENT_REFERENCE_ROLES = (
+    ROLE_CONTENT, ROLE_SECTION, ROLE_TWO_COLUMN, ROLE_COMPARISON, ROLE_IMAGE_TEXT,
 )
 
 # Positional fallbacks, i.e. what the builder assumed before this module.
@@ -231,6 +239,7 @@ class LayoutResolver:
             self._by_name.setdefault(layout.name.strip().lower(), layout)
 
         self._title_style = _UNREAD
+        self._content_area = _UNREAD
         self._by_role: Dict[str, object] = {}
         self._roles_of: Dict[str, str] = {}
         for layout in self._layouts:
@@ -326,6 +335,29 @@ class LayoutResolver:
                 self._title_style = style
                 break
         return self._title_style
+
+    def content_area(self) -> Optional[Rect]:
+        """The rectangle this template reserves for content, or None.
+
+        What a slide drawn on a layout with no body placeholder should use
+        instead of the whole slide: a Blank layout is rarely an empty canvas.
+        Templates keep a logo, a header rule or a footer band on it, and
+        positioning from the top-left corner drew over all three.
+        """
+        if self._content_area is not _UNREAD:
+            return self._content_area
+
+        candidates = [self._by_role[role] for role in CONTENT_REFERENCE_ROLES
+                      if role in self._by_role]
+        candidates += [layout for layout in self._layouts if layout not in candidates]
+
+        self._content_area = None
+        for layout in candidates:
+            rect = read_content_rect(layout)
+            if rect is not None:
+                self._content_area = rect
+                break
+        return self._content_area
 
     # -- reporting ---------------------------------------------------------
 

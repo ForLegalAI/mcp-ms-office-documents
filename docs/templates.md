@@ -40,6 +40,19 @@ Each entry becomes a value for the `template` argument, and
 `list_presentation_templates` reports them with their aspect ratio and layout
 names. Anything under `defaults:` applies when the tool call does not set it.
 
+With `include_layouts`, each entry also carries a `content_area`: the
+rectangle the template reserves for content, read from its own content
+layout, as percentages of the slide. Slides the tool positions itself stay
+inside it — a `blank` or title-only layout keeps the template's logo, rules
+and footer, so drawing from the top-left corner would land on them — and a
+`blank` slide's own `elements`, whose coordinates are absolute, can be
+positioned against it:
+
+```json
+{"content_area": {"layout": "Nadpis a obsah",
+                  "x": "6.9%", "y": "26.6%", "w": "86.2%", "h": "63.4%"}}
+```
+
 **Layouts are matched by name and by shape, never by position.** A template
 that reorders, renames or deletes layouts still works — previously a reordered
 template silently built the title slide on the section layout. Resolution order:

@@ -337,8 +337,11 @@ async def create_powerpoint_presentation(
             "'elements' (text, image or shape), each with x, y, w and optional h as inches (1.5) or a "
             "share of the slide ('40%'). Elements draw in order; anything that would run past the "
             "slide edge is shrunk and reported. A 'title' is kept — it is drawn where the "
-            "template puts its titles, with your elements over it. Prefer a typed slide "
-            "whenever one fits.\n"
+            "template puts its titles, with your elements over it. Coordinates are absolute "
+            "on the slide, and a blank layout usually still carries the template's logo, "
+            "header rule and footer: call list_presentation_templates with "
+            "include_layouts=true for the 'content_area' that stays clear of them. Prefer a "
+            "typed slide whenever one fits.\n"
             "\n"
             "LINKS: [label](https://url) works in any text field.\n"
             "\n"
@@ -418,12 +421,12 @@ async def create_powerpoint_presentation(
 
 @mcp.tool(
     name="list_presentation_templates",
-    description="Lists the PowerPoint templates this server can build on, with their aspect ratio and layout names.",
+    description="Lists the PowerPoint templates this server can build on, with their aspect ratio, layout names and the slide area kept clear of template decoration.",
     tags={"powerpoint", "presentation", "templates"},
     annotations={"title": "PowerPoint Template Lister", "readOnlyHint": True},
 )
 async def list_presentation_templates(
-    include_layouts: Annotated[bool, Field(description="Include each template's layout names and the slide-type role each one serves. Useful before setting a slide's 'layout' field.", default=False)] = False,
+    include_layouts: Annotated[bool, Field(description="Include each template's layout names, the slide-type role each one serves, and its 'content_area' — the band the template keeps clear of its logo, rules and footer, as percentages you can pass straight to a 'blank' slide's elements. Useful before setting a slide's 'layout' field or positioning blank elements.", default=False)] = False,
 ) -> dict:
     """Report the registered PowerPoint templates.
 
@@ -432,7 +435,10 @@ async def list_presentation_templates(
 
     Returns:
         A dict with 'templates' (name, description, aspect, default) and, when
-        include_layouts is set, each template's layouts and the roles they fill.
+        include_layouts is set, each template's layouts, the roles they fill
+        and its content area — the rectangle inside the template's own
+        decoration, which is what a 'blank' slide's elements should stay
+        within.
     """
     logger.info("Listing PowerPoint templates (include_layouts=%s)", include_layouts)
 
@@ -447,6 +453,8 @@ async def list_presentation_templates(
                 report = by_name.get(entry["name"], {})
                 entry["layouts"] = report.get("layouts", [])
                 entry["roles"] = report.get("coverage", {})
+                if report.get("content_area"):
+                    entry["content_area"] = report["content_area"]
                 if report.get("missing_roles"):
                     entry["missing_roles"] = report["missing_roles"]
                 if report.get("error"):
