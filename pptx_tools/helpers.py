@@ -32,6 +32,7 @@ from .constants import (
 from .schema import Bullet, THEME_COLORS
 from image_utils import load_image, ImageDownloadError, ImageValidationError
 from .inline_formatting import needs_inline_processing, apply_inline_formatting
+from .placeholder_style import content_placeholders
 
 logger = logging.getLogger(__name__)
 
@@ -347,11 +348,13 @@ class SlideHelpers:
     """Mixin providing all common slide helper methods (text, tables, images).
 
     Expects the consuming class to have a `self.presentation` attribute
-    holding a python-pptx Presentation object.
+    holding a python-pptx Presentation object, and a `self._layouts`
+    LayoutResolver for the template it was opened from.
     """
 
-    # Type hint for IDE — actual attribute is set by the consuming class
+    # Type hints for the IDE — the attributes are set by the consuming class
     presentation: Any
+    _layouts: Any
 
     # -------------------------------------------------------------------------
     # Slide Management
@@ -421,8 +424,7 @@ class SlideHelpers:
         placeholder on any layout, which is the only case left with nothing
         to read.
         """
-        resolver = getattr(self, "_layouts", None)
-        rect = resolver.content_area() if resolver is not None else None
+        rect = self._layouts.content_area()
         if rect is not None:
             return rect.as_tuple()
 
@@ -458,10 +460,7 @@ class SlideHelpers:
 
     def _content_placeholders(self, slide) -> List[Any]:
         """Body/object placeholders of a slide, in document order."""
-        return [
-            shape for shape in slide.placeholders
-            if shape.placeholder_format.type in (PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT)
-        ]
+        return content_placeholders(slide)
 
     def _add_speaker_notes(self, slide, notes_text: Optional[str]) -> None:
         """Add speaker notes to a slide.
