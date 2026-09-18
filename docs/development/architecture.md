@@ -93,7 +93,8 @@ upload_and_format_response(buffer, suffix, file_name, ctx, message, add_unique_p
                      └► upload_to_<backend>()  upload_tools/backends/*.py → message with URL or path
   ▼
 return str | dict                             main.py
-  (PowerPoint: wraps in {"file", "slide_count", "warnings"} when there are warnings)
+  (PowerPoint: wraps in {"file", "slide_count", "warnings"} when there are warnings;
+   each warning is a {code, severity, slide, message} record, not a sentence)
 ```
 
 Stage by stage:

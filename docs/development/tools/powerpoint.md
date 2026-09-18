@@ -338,7 +338,8 @@ Both are reported.
 
 | To add… | Edit | Notes |
 |---------|------|-------|
-| A new slide type | `schema.py` (model, `_SLIDE_MODELS`, `AnySlide`), `layouts.SLIDE_TYPE_ROLE`, `slide_builder._build_slides()` (builder), `_build_<type>()` | Use `_content_slide()` if it draws its own shapes, `_new_slide()` + `_apply_title()` otherwise. Report anything dropped through `_warn()` |
+| A new slide type | `schema.py` (model, `_SLIDE_MODELS`, `AnySlide`), `layouts.SLIDE_TYPE_ROLE`, `slide_builder._build_slides()` (builder), `_build_<type>()` | Use `_content_slide()` if it draws its own shapes, `_new_slide()` + `_apply_title()` otherwise. Report anything dropped through `_warn(index, code, message)` |
+| A new warning | a code in `warnings.py` and its severity in `WARNING_SEVERITY` | `test_every_code_has_a_severity` fails on a code without one. Severity is about the deck: `error` if the content is not in the file, `warning` if it is there but altered, `info` for a substitution |
 | A new field on an existing type | the model in `schema.py`, then the builder | The flat schema regenerates itself; describe the field, since the description is what the model reads |
 | A new chart type | `chart_utils.CHART_TYPE_MAP` and the `chart_type` literal in `ChartSlide` | Only category charts; an XY variant needs its own data path like scatter |
 | A new layout role | `layouts.py` (`ROLE_*`, `ROLES`, `ROLE_FALLBACK_INDEX`, `classify_layout()`) | Keep classification conservative; returning `None` is better than a confident wrong pick |

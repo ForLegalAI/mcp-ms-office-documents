@@ -15,8 +15,9 @@ Configuration comes from `.env` in the same directory; see
 [Configuration](configuration.md). Template and config directories are
 re-read when they change, so adding a template does not need a restart.
 
-The image is built from `Dockerfile` (Python 3.12 on Alpine, non-root user)
-and published by the release workflow: a GitHub release builds and pushes
+The image is built from `Dockerfile` (Python 3.12 on Alpine, non-root user,
+plus the metric-compatible font packages the PowerPoint fit estimate measures
+text against) and published by the release workflow: a GitHub release builds and pushes
 `georgx22/mcp-office-docs:<tag>`, and a full release also moves `latest`.
 A prerelease never moves `latest`.
 
@@ -27,6 +28,12 @@ pip install -r requirements.txt
 cp .env.example .env        # optional; defaults are LOCAL storage, INFO logging
 python main.py
 ```
+
+Everything works without the image's font packages; the PowerPoint tool's
+overflow warnings are then measured against whichever font the host has, and
+fall back to an arithmetic estimate on a host with none. Install
+`fonts-crosextra-carlito`, `fonts-liberation`, `fonts-crosextra-caladea` and
+`fonts-gelasio` (Debian/Ubuntu names) to match what the image measures.
 
 The server listens on `0.0.0.0:8958` with the MCP endpoint at `/mcp`.
 Template and config directories are resolved relative to the checkout
