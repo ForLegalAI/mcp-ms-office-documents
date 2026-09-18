@@ -25,6 +25,7 @@ from pptx.oxml.ns import qn
 from pptx.oxml import parse_xml
 
 from .constants import (
+    MARGIN_LEFT,
     DEFAULT_BODY_FONT_SIZE, DEFAULT_SUBTITLE_FONT_SIZE,
     DEFAULT_CAPTION_FONT_SIZE, DEFAULT_QUOTE_FONT_SIZE,
     KPI_VALUE_FONT_SIZE, TIMELINE_DETAIL_FONT_SIZE,
@@ -44,6 +45,7 @@ from .chart_utils import (
     set_axis_titles, ChartDataError,
 )
 from .layouts import LayoutResolver, role_for_slide
+from .placeholder_style import TitleStyle, draw_title_box
 from .schema import Bullet, coerce_slides
 from .templates import TemplateSpec, open_template, select_template
 
@@ -232,21 +234,44 @@ class PowerpointPresentation(SlideHelpers):
         return Presentation()
 
     def _apply_title(self, slide, text, index: int) -> None:
-        """Set the slide title, saying so when the layout cannot hold one.
+        """Set the slide title, drawing it by hand when the layout has none.
 
-        Every other dropped element on a slide is reported — a subtitle, the
-        bullets, the footer. The title was the one that vanished in silence,
-        which is the failure this phase exists to remove, not to introduce
-        somewhere new.
+        A Blank layout never has a title placeholder — that is what makes it
+        blank — so a `blank` slide's title was accepted, validated and then
+        dropped with a warning on every single run (#118). It is now drawn as
+        a text box where this template puts its titles, in the style this
+        template gives them, which is what the placeholder would have done.
+
+        Only a template that defines no title anywhere still warns: the box
+        then goes in a band across the top of the slide, which is a guess.
         """
         if self._set_title(slide, text):
             return
-        if text:
+        if not text:
+            return
+
+        style = self._layouts.title_style()
+        if style is None:
+            style = self._default_title_style()
             self._warn(
                 index,
-                f"layout {slide.slide_layout.name!r} has no title placeholder; "
-                f"the title {text!r} was dropped.",
+                f"layout {slide.slide_layout.name!r} has no title placeholder and "
+                "no layout in this template has one; the title was drawn as a "
+                "text box across the top of the slide.",
             )
+        box = draw_title_box(slide, text, style)
+        # add_textbox() defaults to grow-the-shape; a title stays the size the
+        # template gave it and shrinks its text instead, as a placeholder does.
+        apply_autofit(box.text_frame)
+
+    def _default_title_style(self) -> TitleStyle:
+        """A title band across the top, for a template that positions none."""
+        return TitleStyle(
+            left=MARGIN_LEFT,
+            top=Inches(0.3),
+            width=self.presentation.slide_width - 2 * MARGIN_LEFT,
+            height=Inches(1.0),
+        )
 
     def _content_slide(self, slide_data, index: int):
         """Resolve, create and title a slide, and return its content rectangle.

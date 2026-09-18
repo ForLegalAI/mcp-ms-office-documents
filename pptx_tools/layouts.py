@@ -32,8 +32,12 @@ from .constants import (
     TITLE_LAYOUT, SECTION_LAYOUT, CONTENT_LAYOUT,
     TWO_COLUMN_LAYOUT, TWO_COLUMN_TEXT_LAYOUT, TITLE_ONLY_LAYOUT, BLANK_LAYOUT,
 )
+from .placeholder_style import TitleStyle, read_title_style
 
 logger = logging.getLogger(__name__)
+
+# "not looked up yet", distinct from "looked up, and this template has none".
+_UNREAD = object()
 
 
 # Roles a layout can play. These are what slide types ask for; they are not
@@ -50,6 +54,16 @@ ROLE_BLANK = "blank"
 ROLES = (
     ROLE_TITLE, ROLE_SECTION, ROLE_CONTENT, ROLE_TWO_COLUMN,
     ROLE_COMPARISON, ROLE_IMAGE_TEXT, ROLE_TITLE_ONLY, ROLE_BLANK,
+)
+
+# Where to read a title's position and styling from when the layout a slide
+# landed on has no title placeholder of its own (#118). Ordinary body layouts
+# come first: their title is the banner across the top, which is what a title
+# on a blank slide should look like. The cover layout is last because its
+# title is a centred block halfway down the slide.
+TITLE_REFERENCE_ROLES = (
+    ROLE_CONTENT, ROLE_TITLE_ONLY, ROLE_TWO_COLUMN, ROLE_COMPARISON,
+    ROLE_IMAGE_TEXT, ROLE_SECTION, ROLE_TITLE,
 )
 
 # Positional fallbacks, i.e. what the builder assumed before this module.
@@ -216,6 +230,7 @@ class LayoutResolver:
             self._by_name.setdefault(layout.name, layout)
             self._by_name.setdefault(layout.name.strip().lower(), layout)
 
+        self._title_style = _UNREAD
         self._by_role: Dict[str, object] = {}
         self._roles_of: Dict[str, str] = {}
         for layout in self._layouts:
@@ -288,6 +303,29 @@ class LayoutResolver:
             f"matches the {role!r} role; used {layout.name!r}."
         )
         return layout, (f"{extra}; {note}" if extra else note)
+
+    def title_style(self) -> Optional[TitleStyle]:
+        """How and where this template draws a title, or None if it never does.
+
+        Read once per presentation and cached: a deck of blank slides would
+        otherwise walk every layout again for each one. The preferred roles
+        come first, then any layout at all that has a title placeholder, so a
+        template whose only titled layout is unclassifiable still answers.
+        """
+        if self._title_style is not _UNREAD:
+            return self._title_style
+
+        candidates = [self._by_role[role] for role in TITLE_REFERENCE_ROLES
+                      if role in self._by_role]
+        candidates += [layout for layout in self._layouts if layout not in candidates]
+
+        self._title_style = None
+        for layout in candidates:
+            style = read_title_style(layout)
+            if style is not None:
+                self._title_style = style
+                break
+        return self._title_style
 
     # -- reporting ---------------------------------------------------------
 

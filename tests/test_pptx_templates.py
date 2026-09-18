@@ -282,20 +282,19 @@ class TestResolutionOrder:
         # Still built, on the detected layout.
         assert layout_names_of(pres) == ["Nadpis a obsah"]
 
-    def test_a_dropped_title_is_reported(self, registry):
-        """Every other dropped element warns; the title used to vanish silently."""
+    def test_a_title_survives_a_layout_without_a_title_placeholder(self, registry):
+        """It used to warn and vanish (#118); now it is drawn where titles go."""
         make_template(registry["custom"] / "custom_pptx_template_16_9.pptx")
 
         pres = build([{"type": "content", "title": "THIS TITLE MATTERS",
                        "body": "- a", "layout": "Prázdný"}])
 
         slide = pres.presentation.slides[0]
-        assert not any(
+        assert any(
             "THIS TITLE MATTERS" in shape.text_frame.text
             for shape in slide.shapes if shape.has_text_frame
         )
-        assert any("THIS TITLE MATTERS" in w and "no title placeholder" in w
-                   for w in pres.warnings)
+        assert not any("title" in w.lower() for w in pres.warnings)
 
     @pytest.mark.parametrize("slide_type,extra", [
         ("content", {"body": "- a"}),
@@ -304,12 +303,14 @@ class TestResolutionOrder:
         ("section", {}),
         ("two_column", {"left": {"body": "- l"}, "right": {"body": "- r"}}),
     ])
-    def test_every_slide_type_reports_a_dropped_title(self, registry, slide_type, extra):
+    def test_every_slide_type_keeps_its_title(self, registry, slide_type, extra):
         make_template(registry["custom"] / "custom_pptx_template_16_9.pptx")
 
-        pres = build([{"type": slide_type, "title": "Gone", "layout": "Prázdný", **extra}])
+        pres = build([{"type": slide_type, "title": "Kept", "layout": "Prázdný", **extra}])
 
-        assert any("no title placeholder" in w for w in pres.warnings)
+        slide = pres.presentation.slides[0]
+        assert any("Kept" in shape.text_frame.text
+                   for shape in slide.shapes if shape.has_text_frame)
 
     def test_content_goes_in_the_largest_placeholder(self, registry):
         """On Comparison the first content placeholder is the heading strip.

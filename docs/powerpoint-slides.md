@@ -39,7 +39,7 @@ Every slide takes `type` plus optional `title`, `notes` (speaker notes) and `lay
 
 **Sections.** Every `section` slide also starts a section in PowerPoint's outline pane and slide sorter, so the presenter sees the deck's structure rather than a flat list. Slides before the first section slide go in a "Default Section", as PowerPoint would name it.
 
-**Blank slides** are the escape hatch for the one layout no typed slide fits. Elements draw in order, so a later one sits on top; a `text` element takes the same inline markdown as a bullet, a `shape` is one of `rectangle`, `rounded_rectangle`, `ellipse`, `chevron`, `arrow` with an optional `fill` and centred `text`, and an `image` keeps its aspect ratio within its box. Anything that would run past the slide edge is shrunk to fit and reported in `warnings`; anything starting off the slide is skipped and reported.
+**Blank slides** are the escape hatch for the one layout no typed slide fits. Elements draw in order, so a later one sits on top; a `text` element takes the same inline markdown as a bullet, a `shape` is one of `rectangle`, `rounded_rectangle`, `ellipse`, `chevron`, `arrow` with an optional `fill` and centred `text`, and an `image` keeps its aspect ratio within its box. Anything that would run past the slide edge is shrunk to fit and reported in `warnings`; anything starting off the slide is skipped and reported. A `title` on a blank slide is kept: the blank layout has no title placeholder, so it is drawn as a text box where the template puts its titles, and elements you position draw over it.
 
 **Body text.** `body` takes either a Markdown bullet string or explicit bullet objects. Prefer the string:
 
