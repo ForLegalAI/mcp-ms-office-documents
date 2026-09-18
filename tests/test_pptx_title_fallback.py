@@ -85,6 +85,14 @@ class TestItLooksLikeATitle:
         assert rPr.find(qn('a:latin')).get('typeface') == '+mj-lt'
         assert rPr.find(qn('a:solidFill')).find(qn('a:schemeClr')).get('val') == 'tx1'
 
+    def test_every_line_of_a_multi_line_title_is_styled(self):
+        """`TextFrame.text` splits on a newline; an unstyled second line shows."""
+        _, slide = build(title="First line\nSecond line")
+        box = [shape for shape in slide.shapes if shape.name == "Title"][0]
+        sizes = [run._r.find(qn('a:rPr')).get('sz')
+                 for paragraph in box.text_frame.paragraphs for run in paragraph.runs]
+        assert sizes == ['4400', '4400']
+
     def test_a_long_title_shrinks_instead_of_resizing_the_box(self):
         """add_textbox() defaults to grow-to-fit; a title band is fixed."""
         _, slide = build(title="Kept " * 40)

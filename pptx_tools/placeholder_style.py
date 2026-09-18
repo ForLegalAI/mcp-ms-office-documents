@@ -173,20 +173,35 @@ def draw_title_box(slide, text: str, style: TitleStyle):
     if bodyPr is not None and style.anchor:
         bodyPr.set('anchor', style.anchor)
 
-    paragraph = frame.paragraphs[0]
-    if style.algn:
-        paragraph._p.get_or_add_pPr().set('algn', style.algn)
-
-    if style.defRPr is not None and paragraph.runs:
-        run = paragraph.runs[0]._r
-        existing = run.find(qn('a:rPr'))
-        if existing is not None:
-            run.remove(existing)
-        rPr = copy.deepcopy(style.defRPr)
-        rPr.tag = qn('a:rPr')
-        for tag in _RELATIONSHIP_BEARING:
-            for child in rPr.findall(qn(tag)):
-                rPr.remove(child)
-        run.insert(0, rPr)
+    # Every paragraph, not just the first: ``TextFrame.text`` splits a title
+    # containing a newline into one paragraph per line, and a second line left
+    # at python-pptx's defaults would sit under the first in the wrong face
+    # and half the size.
+    for paragraph in frame.paragraphs:
+        if style.algn:
+            paragraph._p.get_or_add_pPr().set('algn', style.algn)
+        if style.defRPr is None:
+            continue
+        for run in paragraph.runs:
+            element = run._r
+            existing = element.find(qn('a:rPr'))
+            if existing is not None:
+                element.remove(existing)
+            element.insert(0, _run_properties(style.defRPr))
 
     return box
+
+
+def _run_properties(defRPr):
+    """*defRPr* as an ``<a:rPr>``, with anything part-specific removed.
+
+    The two share a content model, so the copy is schema-valid as it stands;
+    what cannot travel is a reference to a relationship, which lives in the
+    layout's part and not the slide's.
+    """
+    rPr = copy.deepcopy(defRPr)
+    rPr.tag = qn('a:rPr')
+    for tag in _RELATIONSHIP_BEARING:
+        for child in rPr.findall(qn(tag)):
+            rPr.remove(child)
+    return rPr
