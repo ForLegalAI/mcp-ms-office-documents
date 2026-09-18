@@ -53,6 +53,46 @@ def needs_inline_processing(text: str) -> bool:
     return has_inline_formatting(text) or has_escapes(text)
 
 
+def write_text(
+    target,
+    text: str,
+    font_size=None,
+    bold: bool = False,
+    italic: bool = False,
+    alignment=None,
+) -> None:
+    """Write *text* into *target*, rendering inline markdown when it carries any.
+
+    The one way to put a caller's string on a slide. The tool tells the model
+    that inline markdown works in any text field, and it did not: a title, a
+    caption, a KPI label or a two-column heading was assigned with
+    ``paragraph.text``, which shows ``**bold**`` as four asterisks and a link
+    as its markdown source. Every such assignment goes through here instead,
+    so the promise holds wherever a caller can put text.
+
+    *target* is a text frame or a paragraph. The style arguments are the
+    paragraph's own defaults, applied to the plain path and inherited by the
+    formatted one; leaving one out leaves that property inherited from the
+    placeholder or layout, which is what an untouched title relies on.
+    """
+    if needs_inline_processing(text):
+        apply_inline_formatting(
+            target, text, font_size=font_size, bold=bold, italic=italic, alignment=alignment
+        )
+        return
+
+    paragraph = target.paragraphs[0] if hasattr(target, 'paragraphs') else target
+    paragraph.text = text
+    if font_size is not None:
+        paragraph.font.size = font_size
+    if bold:
+        paragraph.font.bold = True
+    if italic:
+        paragraph.font.italic = True
+    if alignment is not None:
+        paragraph.alignment = alignment
+
+
 def apply_inline_formatting(
     text_frame_or_paragraph,
     text: str,

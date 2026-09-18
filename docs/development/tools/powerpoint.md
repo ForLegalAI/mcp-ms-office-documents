@@ -259,6 +259,25 @@ autoshapes and text boxes because python-pptx cannot create SmartArt. A
 timeline reserves its detail band before sizing the chevrons so captions can
 never run off a short content box.
 
+### One way to write text
+
+Every string a caller supplies goes through `inline_formatting.write_text()`,
+which renders the inline grammar when the text carries any and assigns it
+plainly when it does not. The tool has always told the model that inline
+markdown and links work in any text field; ten of them — titles, subtitles,
+quote attributions, KPI figures, labels and deltas, timeline labels and
+details, image captions, two-column headings — assigned `paragraph.text`
+directly and printed `**bold**` as four asterisks. A new text field is
+written with `write_text()`, not with `paragraph.text`, and
+`tests/test_pptx_inline_everywhere.py` parametrises over every field there
+is so a new one that forgets is a failing test.
+
+The style arguments are the paragraph's defaults: what is left out stays
+inherited, which is what a title filling a placeholder relies on. For the
+same reason `draw_title_box()` puts the template's title style in the
+paragraph's `<a:defRPr>` rather than on each run — stamping the runs would
+overwrite the bold a caller asked for and drop a link's `<a:hlinkClick>`.
+
 ### Table formatting
 
 `_create_styled_table()` takes three optional extras beyond alignment, the
@@ -324,7 +343,10 @@ Footer text and slide numbers are applied by cloning the layout's footer and
 slide-number placeholders onto each slide with fresh shape ids. Layouts
 without a footer placeholder are counted and reported in one deck-level
 warning. `_apply_language()` stamps `lang` on every run, table cell and notes
-frame so the deck is proofed in the right language.
+frame so the deck is proofed in the right language. It walks shapes, so text
+that lives inside a chart part — its title, axis titles and category labels —
+is not reached and keeps the viewer's own proofing language; the tool
+description says so rather than promising more than it does.
 
 ### The blank slide
 

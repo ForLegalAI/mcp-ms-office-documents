@@ -39,7 +39,7 @@ from .helpers import (
     apply_autofit, body_to_bullets, estimate_text_fill, parse_table_data,
     resolve_fill, set_runs_language, table_overflows,
 )
-from .inline_formatting import needs_inline_processing, apply_inline_formatting
+from .inline_formatting import write_text
 from .chart_utils import (
     add_chart_to_slide, add_scatter_to_slide, configure_data_labels,
     set_axis_titles, ChartDataError,
@@ -76,8 +76,10 @@ class PowerpointPresentation(SlideHelpers):
             author: Author name stored in document metadata/properties.
             footer_text: Optional footer text displayed on all slides.
             show_slide_numbers: Whether to show slide numbers on all slides.
-            language: BCP-47 tag (e.g. "cs-CZ") stamped on every text run so
-                the deck is proof-read in the right language.
+            language: BCP-47 tag (e.g. "cs-CZ") stamped on every text run of
+                the slides, their tables and their notes, so the deck is
+                proof-read in the right language. Text that lives inside a
+                chart part is not reached, and keeps the viewer's own language.
             template: Name of a registered template. Overrides *format*.
             template_spec: An already-resolved template to build on, bypassing
                 the registry lookup. Overrides *template*. This exists for the
@@ -478,7 +480,7 @@ class PowerpointPresentation(SlideHelpers):
             slide, (PP_PLACEHOLDER.SUBTITLE, PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT)
         )
         if subtitle is not None:
-            subtitle.text = slide_data.subtitle or ""
+            write_text(subtitle.text_frame, slide_data.subtitle or "")
         elif slide_data.subtitle:
             self._warn(index, W.SUBTITLE_DROPPED,
                        "this layout has no subtitle placeholder; the subtitle was dropped.")
@@ -764,15 +766,7 @@ class PowerpointPresentation(SlideHelpers):
     def _add_caption_paragraph(frame, caption: str, after_bullets: bool) -> None:
         """Write *caption* into *frame*, italic, after any bullets already there."""
         paragraph = frame.add_paragraph() if after_bullets else frame.paragraphs[0]
-        if needs_inline_processing(caption):
-            apply_inline_formatting(
-                paragraph, caption, font_size=DEFAULT_CAPTION_FONT_SIZE, italic=True
-            )
-            return
-        run = paragraph.add_run()
-        run.text = caption
-        run.font.size = DEFAULT_CAPTION_FONT_SIZE
-        run.font.italic = True
+        write_text(paragraph, caption, font_size=DEFAULT_CAPTION_FONT_SIZE, italic=True)
 
     def _build_two_column_slide(self, slide_data, index: int) -> None:
         """Build a slide with two text columns using built-in PowerPoint layouts.
@@ -808,7 +802,7 @@ class PowerpointPresentation(SlideHelpers):
                 continue  # already set through _apply_title
             elif idx in heading_slots:
                 if heading_slots[idx]:
-                    shape.text = heading_slots[idx]
+                    write_text(shape.text_frame, heading_slots[idx])
             elif idx in content_slots:
                 bullets = content_slots[idx]
                 if bullets:
@@ -910,20 +904,14 @@ class PowerpointPresentation(SlideHelpers):
         para = tf.paragraphs[0]
         para.alignment = PP_ALIGN.CENTER
         formatted_quote = f'"{slide_data.text}"'
-        if needs_inline_processing(formatted_quote):
-            apply_inline_formatting(para, formatted_quote,
-                                    font_size=DEFAULT_QUOTE_FONT_SIZE, italic=True)
-        else:
-            para.text = formatted_quote
-            para.font.size = DEFAULT_QUOTE_FONT_SIZE
-            para.font.italic = True
+        write_text(para, formatted_quote, font_size=DEFAULT_QUOTE_FONT_SIZE, italic=True)
 
         if slide_data.attribution:
             author_para = tf.add_paragraph()
-            author_para.text = f"— {slide_data.attribution}"
-            author_para.font.size = DEFAULT_SUBTITLE_FONT_SIZE
-            author_para.font.bold = True
-            author_para.alignment = PP_ALIGN.CENTER
+            write_text(
+                author_para, f"— {slide_data.attribution}",
+                font_size=DEFAULT_SUBTITLE_FONT_SIZE, bold=True, alignment=PP_ALIGN.CENTER,
+            )
             author_para.space_before = Pt(24)
 
         self._add_speaker_notes(slide, slide_data.notes)
@@ -955,23 +943,18 @@ class PowerpointPresentation(SlideHelpers):
             frame.word_wrap = True
 
             value = frame.paragraphs[0]
-            value.text = item.value
-            value.alignment = PP_ALIGN.CENTER
-            value.font.size = KPI_VALUE_FONT_SIZE
-            value.font.bold = True
+            write_text(value, item.value, font_size=KPI_VALUE_FONT_SIZE,
+                       bold=True, alignment=PP_ALIGN.CENTER)
 
             label = frame.add_paragraph()
-            label.text = item.label
-            label.alignment = PP_ALIGN.CENTER
-            label.font.size = DEFAULT_CAPTION_FONT_SIZE
+            write_text(label, item.label, font_size=DEFAULT_CAPTION_FONT_SIZE,
+                       alignment=PP_ALIGN.CENTER)
             label.space_before = Pt(4)
 
             if item.delta:
                 delta = frame.add_paragraph()
-                delta.text = item.delta
-                delta.alignment = PP_ALIGN.CENTER
-                delta.font.size = DEFAULT_CAPTION_FONT_SIZE
-                delta.font.italic = True
+                write_text(delta, item.delta, font_size=DEFAULT_CAPTION_FONT_SIZE,
+                           italic=True, alignment=PP_ALIGN.CENTER)
                 delta.space_before = Pt(2)
                 # Theme accent, so the figure follows the template's palette.
                 delta.font.color.theme_color = MSO_THEME_COLOR.ACCENT_1
@@ -1142,7 +1125,7 @@ class PowerpointPresentation(SlideHelpers):
             if element.kind == "text":
                 box = slide.shapes.add_textbox(left, top, width, height)
                 box.text_frame.word_wrap = True
-                apply_inline_formatting(
+                write_text(
                     box.text_frame, element.text,
                     font_size=Pt(element.font_size) if element.font_size else None,
                     bold=element.bold,
@@ -1170,9 +1153,7 @@ class PowerpointPresentation(SlideHelpers):
                     self._fill_shape(shape, fill)
                 if element.text:
                     shape.text_frame.word_wrap = True
-                    apply_inline_formatting(
-                        shape.text_frame, element.text, alignment=PP_ALIGN.CENTER
-                    )
+                    write_text(shape.text_frame, element.text, alignment=PP_ALIGN.CENTER)
 
         self._add_speaker_notes(slide, slide_data.notes)
 
@@ -1238,10 +1219,8 @@ class PowerpointPresentation(SlideHelpers):
             frame = shape.text_frame
             frame.word_wrap = True
             label = frame.paragraphs[0]
-            label.text = step.label
-            label.alignment = PP_ALIGN.CENTER
-            label.font.size = DEFAULT_CAPTION_FONT_SIZE
-            label.font.bold = True
+            write_text(label, step.label, font_size=DEFAULT_CAPTION_FONT_SIZE,
+                       bold=True, alignment=PP_ALIGN.CENTER)
 
             if step.detail and detail_height:
                 # Detail below the shape, so a long line cannot burst the chevron.
@@ -1252,9 +1231,8 @@ class PowerpointPresentation(SlideHelpers):
                 )
                 caption.text_frame.word_wrap = True
                 detail = caption.text_frame.paragraphs[0]
-                detail.text = step.detail
-                detail.alignment = PP_ALIGN.CENTER
-                detail.font.size = TIMELINE_DETAIL_FONT_SIZE
+                write_text(detail, step.detail, font_size=TIMELINE_DETAIL_FONT_SIZE,
+                           alignment=PP_ALIGN.CENTER)
 
         self._add_speaker_notes(slide, slide_data.notes)
 

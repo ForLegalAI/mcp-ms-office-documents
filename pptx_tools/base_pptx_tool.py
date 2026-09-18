@@ -39,7 +39,8 @@ def _create_presentation_buffer(
     :param author: Author name for document properties
     :param footer_text: Optional footer text displayed on all slides
     :param show_slide_numbers: Whether to show slide numbers
-    :param language: BCP-47 tag stamped on every run for proofing
+    :param language: BCP-47 tag stamped on every slide-text run for proofing
+        (chart text keeps the viewer's own language)
     :param template: Name of a registered template; overrides *format*
     :return: ``(buffer, warnings)`` — the buffer is positioned at the start,
         and warnings are :class:`~pptx_tools.warnings.SlideWarning` records of
@@ -81,7 +82,8 @@ def create_presentation(
     :param author: Author name for document properties
     :param footer_text: Optional footer text displayed on all slides
     :param show_slide_numbers: Whether to show slide numbers
-    :param language: BCP-47 tag stamped on every run for proofing
+    :param language: BCP-47 tag stamped on every slide-text run for proofing
+        (chart text keeps the viewer's own language)
     :return: Upload status or URL text
     """
     file_object, warnings = _create_presentation_buffer(

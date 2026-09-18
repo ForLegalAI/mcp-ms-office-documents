@@ -47,6 +47,8 @@ from typing import Any, Dict, Iterator, Optional
 from pptx.enum.shapes import PP_PLACEHOLDER
 from pptx.oxml.ns import qn
 
+from .inline_formatting import write_text
+
 logger = logging.getLogger(__name__)
 
 TITLE_PLACEHOLDER_TYPES = (PP_PLACEHOLDER.TITLE, PP_PLACEHOLDER.CENTER_TITLE)
@@ -309,7 +311,7 @@ def draw_title_box(slide, text: str, style: TitleStyle):
     box.name = "Title"
     frame = box.text_frame
     frame.word_wrap = True
-    frame.text = text
+    write_text(frame, text)
 
     bodyPr = frame._txBody.find(qn('a:bodyPr'))
     if bodyPr is not None and style.anchor:
@@ -322,28 +324,28 @@ def draw_title_box(slide, text: str, style: TitleStyle):
     for paragraph in frame.paragraphs:
         if style.algn:
             paragraph._p.get_or_add_pPr().set('algn', style.algn)
-        if style.defRPr is None:
-            continue
-        for run in paragraph.runs:
-            element = run._r
-            existing = element.find(qn('a:rPr'))
-            if existing is not None:
-                element.remove(existing)
-            element.insert(0, _run_properties(style.defRPr))
+        if style.defRPr is not None:
+            _set_paragraph_default(paragraph, style.defRPr)
 
     return box
 
 
-def _run_properties(defRPr):
-    """*defRPr* as an ``<a:rPr>``, with anything part-specific removed.
+def _set_paragraph_default(paragraph, defRPr) -> None:
+    """Make *defRPr* the default for runs in *paragraph*.
 
-    The two share a content model, so the copy is schema-valid as it stands;
-    what cannot travel is a reference to a relationship, which lives in the
-    layout's part and not the slide's.
+    The paragraph's default rather than each run's own properties, because a
+    title can carry inline markup: stamping the runs would overwrite the bold
+    a caller asked for and drop a link's ``<a:hlinkClick>`` with it. As a
+    default it sets the face, size and colour of anything the run does not
+    state for itself, which is exactly the placeholder relationship this is
+    standing in for.
     """
-    rPr = copy.deepcopy(defRPr)
-    rPr.tag = qn('a:rPr')
-    for tag in _RELATIONSHIP_BEARING:
-        for child in rPr.findall(qn(tag)):
-            rPr.remove(child)
-    return rPr
+    target = paragraph._p.get_or_add_pPr().get_or_add_defRPr()
+    for name, value in defRPr.attrib.items():
+        target.set(name, value)
+    for child in defRPr:
+        # A reference to a relationship cannot travel: it lives in the
+        # layout's part, not the slide's.
+        if any(child.tag == qn(tag) for tag in _RELATIONSHIP_BEARING):
+            continue
+        target.append(copy.deepcopy(child))

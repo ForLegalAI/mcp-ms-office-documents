@@ -84,6 +84,11 @@ backend → URL string or LibreChat artifact dict. Details:
 - Never index `slide_layouts[N]` in a builder; go through `_new_slide()`.
 - Keep the published slide schema flat (no `oneOf`/`$ref`/`discriminator`);
   validation is `coerce_slides()` in the build step.
+- Write a caller's text with `inline_formatting.write_text()`, never
+  `paragraph.text` — the tool promises inline markdown and links in every
+  text field, and a direct assignment prints the markers instead.
+- Every warning takes a code from `pptx_tools/warnings.py`, and every code
+  takes a severity in `WARNING_SEVERITY`.
 
 **Dynamic tools and schemas**
 - Never `Optional[...]` on a dynamic-tool argument; optionality is the

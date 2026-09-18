@@ -79,19 +79,42 @@ class TestItLooksLikeATitle:
             reference.left, reference.top, reference.width, reference.height)
 
     def test_it_inherits_the_template_title_font_and_theme_colour(self):
+        """As the paragraph's default, so a run can still say bold for itself."""
         _, slide = build(title="Kept")
-        rPr = title_boxes(slide, "Kept")[0].text_frame.paragraphs[0].runs[0]._r.find(qn('a:rPr'))
-        assert rPr.get('sz') == '4400'
-        assert rPr.find(qn('a:latin')).get('typeface') == '+mj-lt'
-        assert rPr.find(qn('a:solidFill')).find(qn('a:schemeClr')).get('val') == 'tx1'
+        pPr = title_boxes(slide, "Kept")[0].text_frame.paragraphs[0]._p.find(qn('a:pPr'))
+        defRPr = pPr.find(qn('a:defRPr'))
+        assert defRPr.get('sz') == '4400'
+        assert defRPr.find(qn('a:latin')).get('typeface') == '+mj-lt'
+        assert defRPr.find(qn('a:solidFill')).find(qn('a:schemeClr')).get('val') == 'tx1'
 
-    def test_every_line_of_a_multi_line_title_is_styled(self):
-        """`TextFrame.text` splits on a newline; an unstyled second line shows."""
+    def test_a_multi_line_title_is_one_styled_paragraph(self):
+        """A newline is a soft break inside the title, as it is in Word (#110).
+
+        One paragraph rather than two, so the template's style is stated once
+        and both lines are covered by it — there is no second paragraph left
+        at python-pptx's defaults to forget about.
+        """
         _, slide = build(title="First line\nSecond line")
         box = [shape for shape in slide.shapes if shape.name == "Title"][0]
-        sizes = [run._r.find(qn('a:rPr')).get('sz')
-                 for paragraph in box.text_frame.paragraphs for run in paragraph.runs]
-        assert sizes == ['4400', '4400']
+        paragraphs = box.text_frame.paragraphs
+
+        assert len(paragraphs) == 1
+        assert paragraphs[0]._p.find(qn('a:br')) is not None
+        assert paragraphs[0]._p.find(qn('a:pPr')).find(qn('a:defRPr')).get('sz') == '4400'
+        assert [run.text for run in paragraphs[0].runs] == ["First line", "Second line"]
+
+    def test_inline_markup_in_the_title_survives_the_template_style(self):
+        """Stamping the runs instead would overwrite the bold and drop the link."""
+        _, slide = build(title="**Bold** and [link](https://example.com)")
+        box = [shape for shape in slide.shapes if shape.name == "Title"][0]
+        runs = box.text_frame.paragraphs[0].runs
+
+        assert [r.text for r in runs if r.font.bold] == ["Bold"]
+        assert [r.hyperlink.address for r in runs if r.hyperlink.address] == \
+               ["https://example.com"]
+        # and the template's own size still reaches the unformatted runs
+        assert box.text_frame.paragraphs[0]._p.find(qn('a:pPr')).find(
+            qn('a:defRPr')).get('sz') == '4400'
 
     def test_a_long_title_shrinks_instead_of_resizing_the_box(self):
         """add_textbox() defaults to grow-to-fit; a title band is fixed."""

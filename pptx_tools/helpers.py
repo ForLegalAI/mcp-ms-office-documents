@@ -31,7 +31,7 @@ from .constants import (
 )
 from .schema import Bullet, THEME_COLORS
 from image_utils import load_image, ImageDownloadError, ImageValidationError
-from .inline_formatting import needs_inline_processing, apply_inline_formatting
+from .inline_formatting import needs_inline_processing, apply_inline_formatting, write_text
 from .placeholder_style import content_placeholders
 from .text_metrics import measure_lines
 
@@ -464,7 +464,7 @@ class SlideHelpers:
         placeholder = slide.shapes.title
         if placeholder is None:
             return False
-        placeholder.text = text or ""
+        write_text(placeholder.text_frame, text or "")
         return True
 
     def _placeholder_of_type(self, slide, kinds, skip_title: bool = True):
@@ -533,12 +533,11 @@ class SlideHelpers:
         tf = shape.text_frame
         tf.word_wrap = word_wrap
 
-        para = tf.paragraphs[0]
-        para.text = text
-        para.font.size = font_size or DEFAULT_BODY_FONT_SIZE
-        para.font.bold = bold
-        para.font.italic = italic
-        para.alignment = alignment
+        write_text(
+            tf, text,
+            font_size=font_size or DEFAULT_BODY_FONT_SIZE,
+            bold=bold, italic=italic, alignment=alignment,
+        )
 
         return shape
 
