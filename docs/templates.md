@@ -48,21 +48,19 @@ the template will actually be used:
 | `layouts` | every layout with its index, placeholder types and the **role it was detected as** — `null` when it matched none |
 | `roles` | the role → layout mapping the builder will use, `null` for a role nothing serves |
 | `missing_roles` | roles no layout provides, where slides fall back to a layout by position and warn |
-| `content_area` | the band the template keeps clear of its own decoration (below) |
+| `content_area` | the rectangle the template reserves for content, as percentages of the slide |
 
-This is what makes a mis-detected template diagnosable. A section layout that
-carries only a title is `title_only` by signature, so `section` goes unserved
-*and* that layout is what `kpi` and `timeline` slides get when it comes before
-the real title-only layout — visible at a glance in `layouts` and `roles`,
-where a list of layout names said nothing.
+The per-layout role is what makes a mis-detected template diagnosable. A
+section layout that carries only a title is `title_only` by signature, so
+`section` goes unserved *and* that layout is what `kpi` and `timeline` slides
+get when it comes before the real title-only layout — visible at a glance in
+`layouts` and `roles`, where a list of layout names said nothing.
 
-With `include_layouts`, each entry also carries a `content_area`: the
-rectangle the template reserves for content, read from its own content
-layout, as percentages of the slide. Slides the tool positions itself stay
-inside it — a `blank` or title-only layout keeps the template's logo, rules
-and footer, so drawing from the top-left corner would land on them — and a
-`blank` slide's own `elements`, whose coordinates are absolute, can be
-positioned against it:
+The `content_area` is read from the template's own content layout. Slides the
+tool positions itself stay inside it — a `blank` or title-only layout keeps
+the template's logo, rules and footer, so drawing from the top-left corner
+would land on them — and a `blank` slide's own `elements`, whose coordinates
+are absolute, can be positioned against it:
 
 ```json
 {"content_area": {"layout": "Nadpis a obsah",

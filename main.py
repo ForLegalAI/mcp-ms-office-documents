@@ -462,16 +462,21 @@ async def list_presentation_templates(
                 report = by_name.get(entry["name"], {})
                 entry["layouts"] = report.get("layouts", [])
                 entry["roles"] = report.get("coverage", {})
-                # Always present, empty list included: a model cannot tell an
-                # absent key from "nothing is missing", and this is the field
-                # that says a slide type will land on a fallback layout.
-                entry["missing_roles"] = report.get("missing_roles", [])
                 if report.get("content_area"):
                     entry["content_area"] = report["content_area"]
                 if report.get("unknown_configured_layouts"):
                     entry["unknown_configured_layouts"] = report["unknown_configured_layouts"]
                 if report.get("error"):
+                    # A template that would not open was never classified, so
+                    # an empty missing_roles beside it would read as "nothing
+                    # is missing" about a template nothing is known about.
                     entry["error"] = report["error"]
+                else:
+                    # Otherwise always present, empty list included: a model
+                    # cannot tell an absent key from "nothing is missing", and
+                    # this is the field that says a slide type will land on a
+                    # fallback layout.
+                    entry["missing_roles"] = report.get("missing_roles", [])
 
         if not result["templates"]:
             result["note"] = (

@@ -786,6 +786,18 @@ class TestListingTool:
         assert entry["roles"]["content"]
         assert all("role" in layout and "name" in layout for layout in entry["layouts"])
 
+    async def test_a_template_that_will_not_open_reports_only_the_error(self, registry):
+        """An empty missing_roles would read as a verdict nobody reached."""
+        broken = registry["custom"] / "broken.pptx"
+        broken.write_bytes(b"nonsense")
+        write_registry(registry["config"], [{"name": "broken", "pptx_path": "broken.pptx"}])
+
+        result = await self.call(include_layouts=True)
+
+        entry = result.data["templates"][0]
+        assert "error" in entry
+        assert "missing_roles" not in entry
+
     async def test_the_plain_listing_stays_small(self, registry):
         result = await self.call()
 
