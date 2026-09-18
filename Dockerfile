@@ -42,6 +42,14 @@ FROM python:${PYTHON_VERSION}-alpine AS runtime
 # the scanned CVEs (openssl/musl/xz/sqlite); only /opt/venv is copied from builder.
 RUN apk upgrade --no-cache
 
+# Font files for the PowerPoint fit estimate, which measures text against a
+# real face rather than counting characters. These two are metric-compatible
+# with the fonts corporate templates actually use — Carlito with Calibri,
+# Liberation with Arial, Times New Roman and Courier New — so measuring them
+# measures the real thing. Without any font file the estimate silently falls
+# back to arithmetic, which is what this replaces.
+RUN apk add --no-cache font-carlito font-liberation
+
 # Prevents Python from writing pyc files.
 ENV PYTHONDONTWRITEBYTECODE=1
 

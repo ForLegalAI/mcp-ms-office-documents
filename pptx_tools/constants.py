@@ -79,8 +79,11 @@ MAX_INDENT_LEVEL = 5
 # the deck is opened, and (b) a warning returned to the caller.
 
 # Mean glyph advance as a fraction of the font size, for a mixed-case latin
-# sentence in the template's body face.
+# sentence in the template's body face. Only used when no font file can be
+# loaded at all; otherwise the text is measured (see text_metrics.py).
 AVG_CHAR_WIDTH_RATIO = 0.5
+# How much of the text width each bullet level gives up to its indent.
+BULLET_INDENT_INCHES = 0.3
 # Baseline-to-baseline distance as a multiple of the font size.
 LINE_HEIGHT_RATIO = 1.22
 # Never shrink text below this fraction of its nominal size; past here the

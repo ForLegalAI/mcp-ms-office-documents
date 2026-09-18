@@ -46,6 +46,7 @@ from .chart_utils import (
 )
 from .layouts import LayoutResolver, role_for_slide
 from .placeholder_style import TitleStyle, apply_list_style, draw_title_box
+from .text_metrics import theme_body_typeface
 from .schema import Bullet, coerce_slides
 from . import warnings as W
 from .warnings import SlideWarning, make_warning
@@ -101,6 +102,9 @@ class PowerpointPresentation(SlideHelpers):
         self._layouts = LayoutResolver(
             self.presentation, self.spec.layouts if self.spec else None
         )
+        # The face body text is actually set in, so the fit estimate measures
+        # this deck's text rather than a generic one (#125).
+        self._typeface = theme_body_typeface(self.presentation)
 
         defaults = self.spec.defaults if self.spec else {}
         self._footer_text = footer_text if footer_text is not None else defaults.get("footer_text")
@@ -1276,7 +1280,8 @@ class PowerpointPresentation(SlideHelpers):
     def _fit_scale(self, bullets, width, height):
         """Shrink factor for a text box, or None when the text already fits."""
         fill = estimate_text_fill(
-            bullets, width, height, font_size_pt=float(DEFAULT_BODY_FONT_SIZE.pt)
+            bullets, width, height, font_size_pt=float(DEFAULT_BODY_FONT_SIZE.pt),
+            typeface=self._typeface,
         )
         return (1.0 / fill) if fill > 1.0 else None
 
@@ -1285,6 +1290,7 @@ class PowerpointPresentation(SlideHelpers):
         fill = estimate_text_fill(
             bullets, placeholder.width, placeholder.height,
             font_size_pt=float(DEFAULT_BODY_FONT_SIZE.pt),
+            typeface=self._typeface,
         )
         apply_autofit(placeholder.text_frame, scale=(1.0 / fill) if fill > 1.0 else None)
 

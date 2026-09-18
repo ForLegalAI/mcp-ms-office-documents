@@ -88,6 +88,7 @@ problems go to the warnings list instead.
 | `inline_formatting.py` | Renders the shared inline grammar into python-pptx runs |
 | `constants.py` | Aspect ratios, positional layout fallbacks, typography, autofit ratios, table colours |
 | `warnings.py` | The warnings channel as data: `SlideWarning`, the codes, and the one severity per code |
+| `text_metrics.py` | Font resolution (metric-compatible substitutes, generic fallback) and wrapped line counting through Pillow |
 
 Two root modules are part of this pipeline: `inline_markdown.py` holds the
 emphasis grammar (PowerPoint asks for superscript and subscript but not
@@ -281,13 +282,31 @@ keeps it.
 
 ### Fit estimation
 
-python-pptx cannot lay text out, so `estimate_text_fill()` approximates lines
-from a mean glyph width and line height, both constants. The result drives
-two things: `apply_autofit()` writes `<a:normAutofit fontScale=…>` so viewers
-that do not recompute autofit still shrink the text, and a warning is
-returned when the estimate passes the shrink floor. Tables are sized by row
-count instead, through `fit_table_font_size()`, and warn when they still
-would not fit at the minimum size.
+python-pptx cannot lay text out, so `estimate_text_fill()` counts the lines
+itself and multiplies by a line height. Lines are counted by **measuring**:
+`text_metrics.measure_lines()` wraps each bullet against a real font file
+through Pillow, which python-pptx already depends on, so "WWW WWW" and
+"iii iii" no longer count the same
+([#125](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/125)).
+The result drives two things: `apply_autofit()` writes
+`<a:normAutofit fontScale=…>` so viewers that do not recompute autofit still
+shrink the text, and a warning is returned when the estimate passes the
+shrink floor.
+
+Which face gets measured, best first: the deck's own typeface
+(`theme_body_typeface()` reads the theme's minor latin font), then a
+**metric-compatible** substitute — Carlito for Calibri, Liberation Sans or
+Arimo for Arial, Liberation Serif or Tinos for Times New Roman, Caladea for
+Cambria — whose advances are identical by design, so measuring one measures
+the real thing; then any installed sans face, which is a real measurement of
+the wrong font; and if no font file can be loaded at all, `measure_lines()`
+returns None and the old `AVG_CHAR_WIDTH_RATIO` arithmetic runs instead. The
+runtime image installs `font-carlito` and `font-liberation` so the middle
+case is the usual one — the shipped templates set Aptos, which has no free
+metric-compatible clone.
+
+Tables are sized by row count instead, through `fit_table_font_size()`, and
+warn when they still would not fit at the minimum size.
 
 ### Sections, footers, language
 
@@ -359,6 +378,7 @@ Both are reported.
 | `tests/test_pptx_warnings.py` | Warning records: codes, severities, the deck-wide case, and the tool boundary |
 | `tests/test_pptx_bullet_glyphs.py` | Bullets in a text box: the master's glyphs and indents, and the order of `<a:pPr>` |
 | `tests/test_pptx_table_formatting.py` | Column widths, cell and row fills, merged blocks, and what happens when they do not fit the table |
+| `tests/test_pptx_text_metrics.py` | Measured line counts, wrapping, face selection, and the arithmetic fallback |
 | `tests/test_pptx_sections.py` | Outline-pane sections |
 | `tests/test_pptx_templates.py` | Registry loading, `.potx`, layout classification and resolution, defaults |
 | `tests/test_admin_pptx.py` | Admin UI support for PowerPoint templates |
@@ -370,9 +390,11 @@ assert on shapes and XML. See [`../testing.md`](../testing.md).
 
 ## Known limitations
 
-- **Fit estimation is approximate.** No font metrics are consulted; the
-  shrink factor is a hint PowerPoint recomputes on first edit, and the
-  warning threshold is a rough estimate.
+- **Fit estimation measures the shapes, not the layout.** Text is measured
+  against a real font file, but PowerPoint's own line breaking, kerning and
+  autofit are not reproduced, and the deck's face may only be approximated by
+  a substitute. The shrink factor remains a hint PowerPoint recomputes on
+  first edit.
 - **Placeholder `idx` conventions are assumed** for two-column bodies and for
   footers and slide numbers. See the invariants above.
 - **No SmartArt.** KPI and timeline slides are built from autoshapes.
