@@ -11,6 +11,8 @@ from pptx.chart.data import CategoryChartData, XyChartData
 from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION, XL_LABEL_POSITION
 from pptx.util import Pt
 
+from .inline_formatting import write_text
+
 logger = logging.getLogger(__name__)
 
 
@@ -189,10 +191,16 @@ def _configure_legend(chart, has_legend: bool, legend_position: str) -> None:
 
 
 def _configure_title(chart, title: Optional[str]) -> None:
-    """Set or clear the chart's own title."""
+    """Set or clear the chart's own title.
+
+    Written through :func:`write_text` like every other caller string, so a
+    chart title takes the same inline markdown as a slide title. A link in one
+    is the exception the grammar cannot honour: PowerPoint does not follow a
+    hyperlink inside chart text, so it renders as its label.
+    """
     if title:
         chart.has_title = True
-        chart.chart_title.text_frame.paragraphs[0].text = title
+        write_text(chart.chart_title.text_frame, title, hyperlinks=False)
     else:
         chart.has_title = False
 
@@ -239,7 +247,7 @@ def set_axis_titles(chart, x_title: Optional[str] = None, y_title: Optional[str]
         try:
             axis = getattr(chart, axis_name)
             axis.has_title = True
-            axis.axis_title.text_frame.paragraphs[0].text = title
+            write_text(axis.axis_title.text_frame, title, hyperlinks=False)
         except (ValueError, NotImplementedError, AttributeError):
             logger.debug("Chart type has no %s; skipping its title", axis_name)
 

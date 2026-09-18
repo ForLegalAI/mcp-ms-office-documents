@@ -58,13 +58,43 @@ FIELDS = {
         {"kind": "shape", "x": 1, "y": 2, "w": 4, "h": 1, "text": MARKUP}]},
 }
 
+# Chart text lives in the chart part, where PowerPoint does not follow a
+# hyperlink. The emphasis still applies; the link renders as its label.
+CHART_FIELDS = {
+    "chart title": {"type": "chart", "title": "T", "chart_type": "column",
+                    "categories": ["a"], "series": [{"name": "s", "values": [1]}],
+                    "chart_title": MARKUP},
+    "x axis title": {"type": "chart", "title": "T", "chart_type": "column",
+                     "categories": ["a"], "series": [{"name": "s", "values": [1]}],
+                     "x_title": MARKUP},
+    "y axis title": {"type": "chart", "title": "T", "chart_type": "column",
+                     "categories": ["a"], "series": [{"name": "s", "values": [1]}],
+                     "y_title": MARKUP},
+}
 
-def runs_of(slide):
+
+def frames_of(slide):
+    """Every text frame a caller's string can land in, chart parts included."""
     frames = [shape.text_frame for shape in slide.shapes if shape.has_text_frame]
     for shape in slide.shapes:
         if getattr(shape, "has_table", False):
             frames += [cell.text_frame for row in shape.table.rows for cell in row.cells]
-    return [run for frame in frames for paragraph in frame.paragraphs
+        if getattr(shape, "has_chart", False):
+            chart = shape.chart
+            if chart.has_title:
+                frames.append(chart.chart_title.text_frame)
+            for axis_name in ("category_axis", "value_axis"):
+                try:
+                    axis = getattr(chart, axis_name)
+                except (ValueError, NotImplementedError):
+                    continue
+                if axis.has_title:
+                    frames.append(axis.axis_title.text_frame)
+    return frames
+
+
+def runs_of(slide):
+    return [run for frame in frames_of(slide) for paragraph in frame.paragraphs
             for run in paragraph.runs]
 
 
@@ -95,6 +125,25 @@ class TestEveryTextField:
         assert addresses == ["https://example.com"]
 
 
+@pytest.mark.parametrize("field", sorted(CHART_FIELDS))
+class TestChartText:
+
+    def test_the_markers_are_not_shown_on_the_chart(self, field):
+        assert not [r for r in render(CHART_FIELDS[field]) if "**" in r.text]
+
+    def test_the_emphasis_is_applied(self, field):
+        emphasised = [r for r in render(CHART_FIELDS[field]) if r.text == "bold"]
+
+        assert emphasised and all(r.font.bold for r in emphasised)
+
+    def test_the_link_renders_as_its_label(self, field):
+        """PowerPoint does not follow a link inside chart text; the label stays."""
+        texts = [r.text for r in render(CHART_FIELDS[field])]
+
+        assert "link" in texts
+        assert "https://example.com" not in " ".join(texts)
+
+
 class TestWhatTheGrammarLeavesAlone:
 
     def test_prose_that_merely_contains_a_marker_is_untouched(self):
@@ -111,11 +160,15 @@ class TestWhatTheGrammarLeavesAlone:
 
         assert [r.text for r in runs if "price" in r.text] == ["price * qty"]
 
-    def test_plain_text_keeps_its_paragraph_level_styling(self):
-        """The fast path must still set what the slow path inherits."""
+    def test_plain_text_keeps_the_styling_the_builder_asked_for(self):
+        """The plain path must still apply what the formatted path inherits."""
         from pptx.util import Pt
-        runs = render({"type": "kpi", "title": "T", "items": [{"value": "€4.2M", "label": "ARR"}]})
-        value = [r for r in runs if r.text == "€4.2M"][0]
 
-        assert value.font.size == Pt(40) or value._r.getparent().find(
-            "{http://schemas.openxmlformats.org/drawingml/2006/main}pPr") is not None
+        pres = PowerpointPresentation(
+            [{"type": "kpi", "title": "T", "items": [{"value": "€4.2M", "label": "ARR"}]}], "16:9")
+        slide = PptxReader(pres.save()).slides[0]
+        figure = [p for frame in frames_of(slide) for p in frame.paragraphs
+                  if p.text == "€4.2M"][0]
+
+        assert figure.font.size == Pt(40)
+        assert figure.font.bold is True

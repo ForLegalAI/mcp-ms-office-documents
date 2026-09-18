@@ -31,7 +31,7 @@ from .constants import (
 )
 from .schema import Bullet, THEME_COLORS
 from image_utils import load_image, ImageDownloadError, ImageValidationError
-from .inline_formatting import needs_inline_processing, apply_inline_formatting, write_text
+from .inline_formatting import write_text
 from .placeholder_style import content_placeholders
 from .text_metrics import measure_lines
 
@@ -582,13 +582,7 @@ class SlideHelpers:
             para.alignment = PP_ALIGN.LEFT
             para.level = max(0, min(bullet.level, MAX_INDENT_LEVEL) - 1)
 
-            # Apply inline markdown formatting when markers OR escapes are present
-            if needs_inline_processing(bullet.text):
-                apply_inline_formatting(para, bullet.text, font_size=font_size)
-            else:
-                para.text = bullet.text
-                if font_size:
-                    para.font.size = font_size
+            write_text(para, bullet.text, font_size=font_size)
 
         return bullets
 
@@ -697,15 +691,10 @@ class SlideHelpers:
                 # cell_to_text, not a falsy test: `if cell_text` blanked a numeric 0.
                 text = cell_to_text(cell_text)
 
-                paragraph = cell.text_frame.paragraphs[0]
-
                 # Cells take the same inline markdown as every other text field;
                 # previously **bold** showed up literally inside a table.
-                if needs_inline_processing(text):
-                    apply_inline_formatting(paragraph, text)
-                else:
-                    cell.text = text
-                    paragraph = cell.text_frame.paragraphs[0]
+                paragraph = cell.text_frame.paragraphs[0]
+                write_text(paragraph, text)
 
                 # Apply column alignment
                 if column_alignments and col_idx < len(column_alignments):

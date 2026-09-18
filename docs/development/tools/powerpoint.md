@@ -272,6 +272,13 @@ written with `write_text()`, not with `paragraph.text`, and
 `tests/test_pptx_inline_everywhere.py` parametrises over every field there
 is so a new one that forgets is a failing test.
 
+Chart text goes through it too, with `hyperlinks=False`: a hyperlink needs a
+relationship in the part that owns the run, and python-pptx cannot resolve a
+chart title's part — attempting one raises `'ChartTitle' object has no
+attribute 'part'`. PowerPoint does not follow a link inside chart text
+anyway, so the label is rendered and the target dropped, which the tool
+description says out loud.
+
 The style arguments are the paragraph's defaults: what is left out stays
 inherited, which is what a title filling a placeholder relies on. For the
 same reason `draw_title_box()` puts the template's title style in the
