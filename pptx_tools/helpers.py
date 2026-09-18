@@ -402,14 +402,35 @@ class SlideHelpers:
             sp = content_placeholder._element
             sp.getparent().remove(sp)
         else:
-            # Fallback dimensions
-            slide_width, slide_height = self._get_slide_dimensions()
-            left = MARGIN_LEFT
-            top = Inches(1.5)
-            width = slide_width - (2 * MARGIN_LEFT)
-            height = slide_height - top - Inches(0.5)
+            left, top, width, height = self._content_area()
 
         return slide, left, top, width, height
+
+    def _content_area(self) -> Tuple[int, int, int, int]:
+        """The content rectangle for a slide whose layout reserves none.
+
+        Blank and Title Only layouts have no body placeholder, so everything
+        drawn on one — an untitled quote, a KPI row, a timeline — used to
+        start 1.5 inches down from the top-left of the slide. A blank layout
+        is rarely an empty canvas: templates keep a logo, a header rule and a
+        footer band on it, and the drawing landed on top of them (#119). The
+        template's own content rectangle, read from a layout that does have a
+        body placeholder, sits inside the decoration by construction.
+
+        The hardcoded band survives for a template that has no body
+        placeholder on any layout, which is the only case left with nothing
+        to read.
+        """
+        resolver = getattr(self, "_layouts", None)
+        rect = resolver.content_area() if resolver is not None else None
+        if rect is not None:
+            return rect.as_tuple()
+
+        slide_width, slide_height = self._get_slide_dimensions()
+        top = Inches(1.5)
+        return (MARGIN_LEFT, top,
+                slide_width - (2 * MARGIN_LEFT),
+                slide_height - top - Inches(0.5))
 
     def _set_title(self, slide, text: Optional[str]) -> bool:
         """Put *text* in the slide's title placeholder, if it has one.

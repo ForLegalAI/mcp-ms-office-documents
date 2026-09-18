@@ -72,7 +72,7 @@ problems go to the warnings list instead.
 | `slide_builder.py` | `PowerpointPresentation`: template selection, one `_build_*` method per slide type, sections, footer and slide numbers, language, the warnings list |
 | `helpers.py` | `SlideHelpers` mixin (titles, placeholders, bullets, tables, images, notes) and free functions: `body_to_bullets()`, `parse_table_data()`, `estimate_text_fill()`, `apply_autofit()`, `fit_table_font_size()`, `set_runs_language()`, `resolve_fill()` |
 | `layouts.py` | Layout roles, `classify_layout()`, `role_for_slide()`, `LayoutResolver` |
-| `placeholder_style.py` | Reading a title placeholder's geometry and inherited character style, and replaying it on a plain text box (`read_title_style()`, `draw_title_box()`) |
+| `placeholder_style.py` | Reading placeholder geometry and inherited character style from a layout, and replaying a title on a plain text box (`read_title_style()`, `read_content_rect()`, `draw_title_box()`) |
 | `templates.py` | `TemplateSpec`, the registry loaded from YAML with an mtime-fingerprint cache, `.potx` handling, `select_template()`, `validate_templates()` |
 | `chart_utils.py` | Category charts from `CategoryChartData`, scatter from `XyChartData`, legend, title, data labels, axis titles |
 | `inline_formatting.py` | Renders the shared inline grammar into python-pptx runs |
@@ -182,8 +182,23 @@ Builders that draw their own shapes (table, image, chart, scatter, quote,
 KPI, timeline) call `_content_slide()`, which resolves the layout, applies
 the title, then takes the rectangle of the **largest** body placeholder and
 removes it. Largest, not first: on a Comparison layout the first content
-placeholder is the small heading strip. With no body placeholder a fixed
-margin rectangle is used.
+placeholder is the small heading strip.
+
+With no body placeholder on the slide's layout — Blank, Title Only —
+`_content_area()` falls back to `LayoutResolver.content_area()`: the largest
+body placeholder of a layout that does have one, preferring the
+single-content layouts over a two-column one, whose body is half the slide.
+A blank layout is rarely an empty canvas; templates keep a logo, a header
+rule and a footer band on it, and the old fixed rectangle 1.5 inches down
+drew over them ([#119](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/119)).
+That fixed rectangle is now the last resort, for a template with no body
+placeholder on any layout.
+
+`validate_templates()` reports the same rectangle as `content_area` in
+percentages, which `list_presentation_templates` passes through. That is the
+answer for a caller positioning a `blank` slide's elements: those coordinates
+stay absolute on the slide — changing them would silently move every existing
+deck — so the safe band is published instead.
 
 Chart and image slides with a `body` split the area, chart or picture on the
 left and bullets on the right. KPI and timeline slides are drawn from
@@ -266,6 +281,7 @@ Both are reported.
 | `tests/test_pptx_slide_types.py` | KPI, timeline, agenda, closing, hyperlinks, table markdown |
 | `tests/test_pptx_blank.py` | Positioned elements, clamping and skipping |
 | `tests/test_pptx_title_fallback.py` | A title on a layout with no title placeholder: geometry, style, the untitled-template warning |
+| `tests/test_pptx_content_area.py` | Drawing on a layout with no body placeholder: the template's content rectangle, and how it is reported |
 | `tests/test_pptx_sections.py` | Outline-pane sections |
 | `tests/test_pptx_templates.py` | Registry loading, `.potx`, layout classification and resolution, defaults |
 | `tests/test_admin_pptx.py` | Admin UI support for PowerPoint templates |

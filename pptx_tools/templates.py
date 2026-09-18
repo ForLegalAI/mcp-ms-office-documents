@@ -331,6 +331,34 @@ def select_template(name: Optional[str] = None, format: Optional[str] = None):
 # Startup validation
 # ---------------------------------------------------------------------------
 
+def _content_area_summary(resolver, presentation) -> Optional[Dict[str, str]]:
+    """The template's content rectangle as percentages of the slide.
+
+    Percentages rather than inches because that is what a caller positioning
+    a ``blank`` slide's elements writes, and they carry across aspect ratios.
+    A blank layout usually keeps the template's logo, rules and footer, so
+    this is the band inside them (#119).
+    """
+    rect = resolver.content_area()
+    if rect is None:
+        return None
+
+    width, height = presentation.slide_width, presentation.slide_height
+    if not width or not height:
+        return None
+
+    def share(value: int, total: int) -> str:
+        return f"{round(value / total * 100, 1)}%"
+
+    return {
+        "layout": rect.source,
+        "x": share(rect.left, width),
+        "y": share(rect.top, height),
+        "w": share(rect.width, width),
+        "h": share(rect.height, height),
+    }
+
+
 def validate_templates() -> List[Dict[str, Any]]:
     """Open every registered template once and report what it provides.
 
@@ -356,6 +384,7 @@ def validate_templates() -> List[Dict[str, Any]]:
         report["coverage"] = resolver.coverage()
         report["missing_roles"] = resolver.missing_roles()
         report["layouts_without_footer"] = resolver.layouts_without_footer()
+        report["content_area"] = _content_area_summary(resolver, presentation)
 
         # A configured name that is not in the file is a silent mis-render
         # waiting to happen, so name it explicitly.
