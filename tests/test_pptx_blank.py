@@ -80,10 +80,13 @@ class TestPlacement:
         kinds = [s.shape_type for s in slide.shapes]
         assert kinds.index(MSO_SHAPE_TYPE.AUTO_SHAPE) < kinds.index(MSO_SHAPE_TYPE.TEXT_BOX)
 
-    def test_a_titled_blank_slide_reports_the_dropped_title(self):
-        """The blank layout has no title placeholder; saying so beats losing it."""
-        pres, _ = build([{"kind": "text", "text": "x", "x": 0, "y": 0, "w": 1}], title="Lost")
-        assert any("title" in w.lower() for w in pres.warnings)
+    def test_a_titled_blank_slide_keeps_its_title(self):
+        """The blank layout has no title placeholder, so the title is drawn (#118)."""
+        pres, slide = build([{"kind": "text", "text": "x", "x": 0, "y": 3, "w": 1}], title="Kept")
+        titles = [s for s in shapes_of(slide, MSO_SHAPE_TYPE.TEXT_BOX)
+                  if s.text_frame.text == "Kept"]
+        assert len(titles) == 1
+        assert not pres.warnings
 
 
 class TestValidationAgainstSlideSize:

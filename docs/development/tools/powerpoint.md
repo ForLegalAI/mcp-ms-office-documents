@@ -43,7 +43,7 @@ slides (list of dicts, models, or strings)  +  format / template / author / foot
   ▼
   _build_slides(): one builder per slide type
   ├─ _new_slide()                role_for_slide() → resolver.resolve(role, slide.layout)
-  ├─ _apply_title()              warns if the layout has no title placeholder
+  ├─ _apply_title()              placeholder, else a text box in the template's title style
   ├─ helpers.body_to_bullets()   markdown string or Bullet objects → levels
   ├─ SlideHelpers._fill_bullets / _create_styled_table / _add_image / _add_text_box
   ├─ inline_formatting.apply_inline_formatting()               runs, links, super/subscript
@@ -72,6 +72,7 @@ problems go to the warnings list instead.
 | `slide_builder.py` | `PowerpointPresentation`: template selection, one `_build_*` method per slide type, sections, footer and slide numbers, language, the warnings list |
 | `helpers.py` | `SlideHelpers` mixin (titles, placeholders, bullets, tables, images, notes) and free functions: `body_to_bullets()`, `parse_table_data()`, `estimate_text_fill()`, `apply_autofit()`, `fit_table_font_size()`, `set_runs_language()`, `resolve_fill()` |
 | `layouts.py` | Layout roles, `classify_layout()`, `role_for_slide()`, `LayoutResolver` |
+| `placeholder_style.py` | Reading a title placeholder's geometry and inherited character style, and replaying it on a plain text box (`read_title_style()`, `draw_title_box()`) |
 | `templates.py` | `TemplateSpec`, the registry loaded from YAML with an mtime-fingerprint cache, `.potx` handling, `select_template()`, `validate_templates()` |
 | `chart_utils.py` | Category charts from `CategoryChartData`, scatter from `XyChartData`, legend, title, data labels, axis titles |
 | `inline_formatting.py` | Renders the shared inline grammar into python-pptx runs |
@@ -152,6 +153,28 @@ and are left for an explicit name. The distinguishing tests are a picture
 placeholder (image_text), a subtitle (title), no content (title_only), four
 content placeholders (comparison), two (two_column), and for one, `BODY`
 means section and `OBJECT` means content.
+
+### Titles on a layout that has none
+
+A Blank layout has no title placeholder — that is what makes it blank — and a
+trimmed corporate layout may have none either. `_apply_title()` therefore
+falls back rather than dropping the text: `LayoutResolver.title_style()`
+reads the first title placeholder it finds, preferring the body layouts
+(`content`, `title_only`, two-column, `image_text`, `section`) over the cover
+layout, whose title is a centred block halfway down the slide, and
+`placeholder_style.draw_title_box()` draws a text box with that geometry.
+
+The character style is the `<a:defRPr>` of the first paragraph-property
+element in the chain *layout placeholder → master placeholder → the master's
+`<p:titleStyle>`*, copied onto the run wholesale rather than re-derived
+attribute by attribute, so theme references (`+mj-lt`, `schemeClr`) survive
+and keep following the theme. Alignment and vertical anchoring come from the
+same chain; `apply_autofit()` then replaces python-pptx's default
+`<a:spAutoFit>` so a long title shrinks instead of resizing the band.
+
+Only a template with no title placeholder on any layout still warns: the box
+goes in a band across the top of the slide, and that is a guess worth saying
+out loud.
 
 ### Content placement
 
@@ -242,6 +265,7 @@ Both are reported.
 | `tests/test_pptx_robustness.py` | Input hardening: numeric cells, bad colours, odd levels |
 | `tests/test_pptx_slide_types.py` | KPI, timeline, agenda, closing, hyperlinks, table markdown |
 | `tests/test_pptx_blank.py` | Positioned elements, clamping and skipping |
+| `tests/test_pptx_title_fallback.py` | A title on a layout with no title placeholder: geometry, style, the untitled-template warning |
 | `tests/test_pptx_sections.py` | Outline-pane sections |
 | `tests/test_pptx_templates.py` | Registry loading, `.potx`, layout classification and resolution, defaults |
 | `tests/test_admin_pptx.py` | Admin UI support for PowerPoint templates |
