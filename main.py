@@ -314,7 +314,9 @@ async def create_powerpoint_presentation(
             "indent child items to nest them (any consistent unit: 2 spaces, 4 spaces or a tab). "
             "A line with no '-' marker becomes a top-level bullet.\n"
             "\n"
-            "INLINE MARKDOWN in any text field: **bold**, *italic*, ***bold italic***, ~~strikethrough~~, "
+            "INLINE MARKDOWN in every text field — titles, subtitles, bullets, table cells, KPI "
+            "figures and labels, timeline steps, captions, quotes and attributions, column headings, "
+            "chart and axis titles, blank-slide text: **bold**, *italic*, ***bold italic***, ~~strikethrough~~, "
             "__underline__, `code`, ^superscript^, ~subscript~. A marker formats only when it hugs its "
             "text (**bold**, not ** bold **), so prose such as '5 * 3 * 2' is left alone. Escape a "
             "literal marker with a backslash (\\*) or wrap it in backticks.\n"
@@ -352,7 +354,8 @@ async def create_powerpoint_presentation(
             "include_layouts=true for the 'content_area' that stays clear of them. Prefer a "
             "typed slide whenever one fits.\n"
             "\n"
-            "LINKS: [label](https://url) works in any text field.\n"
+            "LINKS: [label](https://url) works in any text field except inside a chart, where "
+            "PowerPoint does not follow one: there the label is shown as written.\n"
             "\n"
             "Text that overflows its slide is shrunk to fit and reported in the result's 'warnings'; "
             "split the content across slides rather than relying on that. Each warning is an object "
@@ -368,7 +371,7 @@ async def create_powerpoint_presentation(
     author: Annotated[Optional[str], Field(description="Author name stored in document properties/metadata.", default=None)] = None,
     footer_text: Annotated[Optional[str], Field(description="Footer text displayed on every slide (e.g., company name, confidentiality notice).", default=None)] = None,
     show_slide_numbers: Annotated[bool, Field(description="Show slide numbers on every slide.", default=False)] = False,
-    language: Annotated[Optional[str], Field(description="Language tag for proofing in PowerPoint (e.g. 'cs-CZ' for Czech, 'en-US' for English, 'de-DE' for German). Set this when the deck is not in the template's own language, otherwise every word is flagged as a misspelling.", default=None)] = None,
+    language: Annotated[Optional[str], Field(description="Language tag for proofing in PowerPoint (e.g. 'cs-CZ' for Czech, 'en-US' for English, 'de-DE' for German). Set this when the deck is not in the template's own language, otherwise every word is flagged as a misspelling. Applies to slide text, table cells and speaker notes; text inside a chart (its title, axis titles and category labels) keeps the viewer's own proofing language.", default=None)] = None,
     template: Annotated[Optional[str], Field(description="Name of a registered template to build on. Call list_presentation_templates to see what is available, along with each one's aspect ratio and layout names. Overrides 'format'. Omit to use the default template for the requested aspect ratio.", default=None)] = None,
     file_name: Annotated[Optional[str], Field(description="Custom filename for the output file (without extension). If not provided, a unique identifier will be used.", default=None)] = None,
     add_unique_prefix: Annotated[Optional[bool], Field(description="If true, adds 8-char UUID prefix to filename for uniqueness. If not set, defaults to True for traditional storage backends (LOCAL/S3/GCS/AZURE/MINIO) and False for LibreChat.", default=None)] = None,

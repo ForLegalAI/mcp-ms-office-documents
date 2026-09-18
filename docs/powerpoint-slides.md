@@ -50,7 +50,7 @@ Every slide takes `type` plus optional `title`, `notes` (speaker notes) and `lay
 
 Indent child items with any consistent unit — two spaces, four spaces or a tab. A line without a `-` marker becomes a top-level bullet. The explicit form is `[{"text": "…", "level": 2}]`, where `level` is 1 (outermost) to 5.
 
-**Inline formatting** works in every text field, table cells included: `**bold**`, `*italic*`, `***bold italic***`, `~~strikethrough~~`, `__underline__`, `` `code` ``, `^superscript^`, `~subscript~`, and `[links](https://example.com)`. The same grammar drives the Word tool, so text formats identically in both. A marker only formats when it hugs its text (`**bold**`, not `** bold **`), so prose like `5 * 3 * 2 = 30` is left alone. Escape a literal marker with `\*`, or wrap it in backticks.
+**Inline formatting** works in every text field — titles and subtitles, bullets, table cells, KPI figures and labels, timeline steps, captions, quotes and attributions, column headings, chart and axis titles, and the text of a blank slide's elements. A link is the one exception inside a chart, where PowerPoint does not follow one: the label is shown as written. `**bold**`, `*italic*`, `***bold italic***`, `~~strikethrough~~`, `__underline__`, `` `code` ``, `^superscript^`, `~subscript~`, and `[links](https://example.com)`. The same grammar drives the Word tool, so text formats identically in both. A marker only formats when it hugs its text (`**bold**`, not `** bold **`), so prose like `5 * 3 * 2 = 30` is left alone. Escape a literal marker with `\*`, or wrap it in backticks.
 
 **Tables** take raw values — numbers and `null` are fine, not just strings:
 

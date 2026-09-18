@@ -53,6 +53,48 @@ def needs_inline_processing(text: str) -> bool:
     return has_inline_formatting(text) or has_escapes(text)
 
 
+def write_text(
+    target,
+    text: str,
+    font_size=None,
+    bold: bool = False,
+    italic: bool = False,
+    alignment=None,
+    hyperlinks: bool = True,
+) -> None:
+    """Write *text* into *target*, rendering inline markdown when it carries any.
+
+    The one way to put a caller's string on a slide. The tool tells the model
+    that inline markdown works in any text field, and it did not: a title, a
+    caption, a KPI label or a two-column heading was assigned with
+    ``paragraph.text``, which shows ``**bold**`` as four asterisks and a link
+    as its markdown source. Every such assignment goes through here instead,
+    so the promise holds wherever a caller can put text.
+
+    *target* is a text frame or a paragraph. The style arguments are the
+    paragraph's own defaults, applied to the plain path and inherited by the
+    formatted one; leaving one out leaves that property inherited from the
+    placeholder or layout, which is what an untouched title relies on.
+    """
+    if needs_inline_processing(text):
+        apply_inline_formatting(
+            target, text, font_size=font_size, bold=bold, italic=italic,
+            alignment=alignment, hyperlinks=hyperlinks,
+        )
+        return
+
+    paragraph = target.paragraphs[0] if hasattr(target, 'paragraphs') else target
+    paragraph.text = text
+    if font_size is not None:
+        paragraph.font.size = font_size
+    if bold:
+        paragraph.font.bold = True
+    if italic:
+        paragraph.font.italic = True
+    if alignment is not None:
+        paragraph.alignment = alignment
+
+
 def apply_inline_formatting(
     text_frame_or_paragraph,
     text: str,
@@ -60,6 +102,7 @@ def apply_inline_formatting(
     bold: bool = False,
     italic: bool = False,
     alignment=None,
+    hyperlinks: bool = True,
 ) -> None:
     """Parse inline markdown and render into a pptx text frame paragraph.
 
@@ -73,6 +116,10 @@ def apply_inline_formatting(
         bold: Inherited bold context.
         italic: Inherited italic context.
         alignment: Optional PP_ALIGN value for the paragraph.
+        hyperlinks: False renders a link as its label without making it one.
+            Chart text is the case: a hyperlink needs a relationship in the
+            part that owns the run, and python-pptx cannot resolve a chart
+            title's part — PowerPoint would not follow the link there anyway.
     """
     # Determine if we got a text frame or a paragraph
     if hasattr(text_frame_or_paragraph, 'paragraphs'):
@@ -88,7 +135,8 @@ def apply_inline_formatting(
     text = _handle_escapes(text, escape_ctx)
 
     # Parse and render
-    _parse_segment(text, paragraph, font_size=font_size, bold=bold, italic=italic, escape_ctx=escape_ctx)
+    _parse_segment(text, paragraph, font_size=font_size, bold=bold, italic=italic,
+                   escape_ctx=escape_ctx, hyperlinks=hyperlinks)
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +199,8 @@ def _add_run(paragraph, text: str, font_size=None, bold=False, italic=False,
     return run
 
 
-def _parse_segment(text: str, paragraph, font_size=None, bold=False, italic=False, escape_ctx=None):
+def _parse_segment(text: str, paragraph, font_size=None, bold=False, italic=False,
+                   escape_ctx=None, hyperlinks=True):
     """Parse a text segment for inline markdown and create runs."""
     for part in _INLINE_FORMAT_RE.split(text):
         if not part:
@@ -159,12 +208,12 @@ def _parse_segment(text: str, paragraph, font_size=None, bold=False, italic=Fals
 
         if part.startswith('***') and part.endswith('***') and len(part) > 6:
             # Bold italic
-            _parse_segment(part[3:-3], paragraph, font_size=font_size,
+            _parse_segment(part[3:-3], paragraph, font_size=font_size, hyperlinks=hyperlinks,
                            bold=True, italic=True, escape_ctx=escape_ctx)
 
         elif part.startswith('**') and part.endswith('**') and len(part) > 4:
             # Bold
-            _parse_segment(part[2:-2], paragraph, font_size=font_size,
+            _parse_segment(part[2:-2], paragraph, font_size=font_size, hyperlinks=hyperlinks,
                            bold=True, italic=italic, escape_ctx=escape_ctx)
 
         elif part.startswith('~~') and part.endswith('~~') and len(part) > 4:
@@ -179,7 +228,7 @@ def _parse_segment(text: str, paragraph, font_size=None, bold=False, italic=Fals
 
         elif part.startswith('*') and part.endswith('*') and not part.startswith('**') and len(part) > 2:
             # Italic
-            _parse_segment(part[1:-1], paragraph, font_size=font_size,
+            _parse_segment(part[1:-1], paragraph, font_size=font_size, hyperlinks=hyperlinks,
                            bold=bold, italic=True, escape_ctx=escape_ctx)
 
         elif part.startswith('`') and part.endswith('`') and len(part) > 2:
@@ -204,10 +253,11 @@ def _parse_segment(text: str, paragraph, font_size=None, bold=False, italic=Fals
             # every run it produced at the target.
             label, target = _LINK_RE.match(part).groups()
             first_new = len(paragraph.runs)
-            _parse_segment(label, paragraph, font_size=font_size,
+            _parse_segment(label, paragraph, font_size=font_size, hyperlinks=hyperlinks,
                            bold=bold, italic=italic, escape_ctx=escape_ctx)
-            for run in paragraph.runs[first_new:]:
-                run.hyperlink.address = _restore_escapes(target, escape_ctx)
+            if hyperlinks:
+                for run in paragraph.runs[first_new:]:
+                    run.hyperlink.address = _restore_escapes(target, escape_ctx)
 
         else:
             # Plain text
