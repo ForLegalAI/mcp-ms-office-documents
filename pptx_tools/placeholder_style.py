@@ -23,6 +23,13 @@ reads, in this order:
 the builder calls :func:`draw_title_box` when ``_set_title`` finds no
 placeholder to fill.
 
+:func:`apply_list_style` answers a third: a plain text box inherits its
+paragraph formatting from the presentation's default text style, which has no
+bullets, so bullets drawn beside a picture or a chart came out as plain lines
+while the same markdown on a `content` slide showed glyphs (#123). The
+master's ``<p:bodyStyle>`` is where those glyphs are defined, and it is
+applied per level.
+
 :func:`read_content_rect` answers the neighbouring question for the body:
 where this template expects content to sit. A layout with no body placeholder
 — Blank, Title Only — used to fall back to a hardcoded band starting 1.5
@@ -35,7 +42,7 @@ from __future__ import annotations
 import copy
 import logging
 from dataclasses import dataclass
-from typing import Iterator, Optional
+from typing import Any, Dict, Iterator, Optional
 
 from pptx.enum.shapes import PP_PLACEHOLDER
 from pptx.oxml.ns import qn
@@ -52,6 +59,18 @@ CONTENT_PLACEHOLDER_TYPES = (PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT)
 # Nothing in a title style uses them; dropping them keeps a hand-built
 # template from producing a slide PowerPoint has to repair.
 _RELATIONSHIP_BEARING = ('a:blipFill', 'a:hlinkClick', 'a:hlinkMouseOver')
+
+# The bullet half of CT_TextParagraphProperties, in schema order. A paragraph
+# may carry one of each group; copying them as a block keeps that order.
+_BULLET_TAGS = (
+    'a:buClrTx', 'a:buClr',
+    'a:buSzTx', 'a:buSzPct', 'a:buSzPts',
+    'a:buFontTx', 'a:buFont',
+    'a:buNone', 'a:buAutoNum', 'a:buChar',
+)
+# What may precede them, and what must follow, inside <a:pPr>.
+_BEFORE_BULLETS = ('a:lnSpc', 'a:spcBef', 'a:spcAft')
+_AFTER_BULLETS = ('a:tabLst', 'a:defRPr', 'a:extLst')
 
 
 @dataclass(frozen=True)
@@ -208,6 +227,80 @@ def read_title_style(layout) -> Optional[TitleStyle]:
         defRPr=defRPr, algn=algn, anchor=anchor,
         source=getattr(layout, "name", None),
     )
+
+
+def body_list_levels(master) -> Dict[int, Any]:
+    """The master's ``<p:bodyStyle>`` levels, keyed by 0-based paragraph level."""
+    if master is None:
+        return {}
+    txStyles = master._element.find(qn('p:txStyles'))
+    if txStyles is None:
+        return {}
+    bodyStyle = txStyles.find(qn('p:bodyStyle'))
+    if bodyStyle is None:
+        return {}
+
+    levels: Dict[int, Any] = {}
+    for depth in range(9):
+        level = bodyStyle.find(qn(f'a:lvl{depth + 1}pPr'))
+        if level is not None:
+            levels[depth] = level
+    return levels
+
+
+def apply_list_style(text_frame, master) -> bool:
+    """Give a plain text box the bullet glyphs and indents of a body placeholder.
+
+    A text box inherits from the presentation's default text style, which has
+    no bullets — so a body drawn beside a picture or a chart rendered as plain
+    lines while the identical markdown bulleted correctly in a placeholder
+    (#123). Each paragraph takes the ``marL``/``indent`` and the bullet
+    definition of its own level from the master's body style.
+
+    Only the list formatting is copied. Size, colour and line spacing stay as
+    the builder set them: the body style's 28pt first level is meant for a
+    full-width placeholder, not for a column beside a picture.
+
+    Returns False when the master defines no body style, in which case the
+    text box is left as it was.
+    """
+    levels = body_list_levels(master)
+    if not levels:
+        return False
+
+    for paragraph in text_frame.paragraphs:
+        pPr = paragraph._p.get_or_add_pPr()
+        source = levels.get(int(pPr.get('lvl') or 0))
+        if source is None:
+            continue
+
+        for name in ('marL', 'indent'):
+            value = source.get(name)
+            if value is not None:
+                pPr.set(name, value)
+
+        _replace_bullet_properties(pPr, source)
+
+    return True
+
+
+def _replace_bullet_properties(pPr, source) -> None:
+    """Swap *pPr*'s bullet elements for *source*'s, keeping schema order."""
+    before, after = [], []
+    for child in list(pPr):
+        tag = child.tag
+        if any(tag == qn(name) for name in _BEFORE_BULLETS):
+            before.append(child)
+        elif any(tag == qn(name) for name in _AFTER_BULLETS):
+            after.append(child)
+        # Anything else is a bullet property being replaced, and is dropped.
+        pPr.remove(child)
+
+    bullets = [copy.deepcopy(child) for child in source
+               if any(child.tag == qn(name) for name in _BULLET_TAGS)]
+
+    for child in before + bullets + after:
+        pPr.append(child)
 
 
 def draw_title_box(slide, text: str, style: TitleStyle):
