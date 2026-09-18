@@ -16,6 +16,7 @@ sys.path.insert(0, str(project_root))
 import pytest
 from pptx import Presentation as PptxReader
 from pptx.enum.shapes import MSO_SHAPE_TYPE, PP_PLACEHOLDER
+from pptx.oxml.ns import qn
 
 from pptx_tools.layouts import ROLE_IMAGE_TEXT, LayoutResolver, role_for_slide
 from pptx_tools.schema import coerce_slides
@@ -133,6 +134,17 @@ class TestThePlaceholderIsFilled:
         _, slide = build({"title": "Chart"})
         kinds = [shape.placeholder_format.type for shape in slide.placeholders]
         assert PP_PLACEHOLDER.BODY not in kinds and PP_PLACEHOLDER.OBJECT not in kinds
+
+    def test_overfull_text_is_shrunk_and_reported(self):
+        """The layout's text area is small; overflow there needs saying."""
+        pres, slide = build({"title": "Chart",
+                             "body": "\n".join(f"- {'word ' * 12}" for _ in range(20))})
+        body = [shape for shape in slide.shapes
+                if shape.is_placeholder
+                and shape.placeholder_format.type in (PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT)][0]
+        bodyPr = body.text_frame._txBody.find(qn('a:bodyPr'))
+        assert bodyPr.find(qn('a:normAutofit')) is not None
+        assert any("space available" in w for w in pres.warnings)
 
     def test_a_failed_image_leaves_no_empty_placeholder(self):
         pres, slide = build({"title": "Chart", "source": "data:image/png;base64,not-base64!"})

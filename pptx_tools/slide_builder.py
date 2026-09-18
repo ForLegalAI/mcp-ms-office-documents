@@ -277,7 +277,9 @@ class PowerpointPresentation(SlideHelpers):
         """Resolve, create and title a slide, and return its content rectangle.
 
         Shared by every slide type that draws into the body area itself
-        (table, image, chart, scatter, quote).
+        (table, chart, scatter, quote). An image slide resolves and titles its
+        slide the same way but inspects it for a picture placeholder first, so
+        it calls the two steps itself.
         """
         slide = self._new_slide(slide_data, index)
         self._apply_title(slide, slide_data.title, index)
@@ -651,11 +653,13 @@ class PowerpointPresentation(SlideHelpers):
                 # picture layout the body placeholder *is* the caption area,
                 # and a text box under the picture would sit on the layout.
                 self._add_caption_paragraph(frame, caption, after_bullets=bool(bullets))
-            apply_autofit(
-                frame,
-                scale=self._fit_scale(bullets, body_placeholder.width, body_placeholder.height)
-                if bullets else None,
-            )
+            # Through _fit_text, like every other placeholder-filled body: a
+            # picture layout's text area is the smallest one a template
+            # offers, so it is the likeliest to overflow and the one a caller
+            # most needs warned about. The caption counts towards the fill;
+            # it is set smaller than body text, so the estimate is generous.
+            measured = bullets + ([Bullet(text=caption)] if caption else [])
+            self._fit_text(body_placeholder, measured, index)
         else:
             self._remove_placeholder(body_placeholder)
 
