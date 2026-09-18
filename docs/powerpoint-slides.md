@@ -111,7 +111,7 @@ Each warning is an object rather than a sentence, so you can act on it without r
 | `slide` | the index in the `slides` list you sent, counting from zero; absent when the warning is about the deck as a whole |
 | `message` | the sentence, unchanged |
 
-So `any(w["severity"] == "error" for w in warnings)` answers "did the deck lose anything", and `w["code"] == "text_overflow"` finds the slides worth splitting.
+So `any(w["severity"] == "error" for w in warnings)` answers "did the deck lose anything", and `w["code"] == "text_overflow"` finds the slides worth splitting. Overflow is judged by measuring the text against a real font rather than counting characters, so a slide of narrow words and one of wide ones are told apart — worth acting on rather than treating as a hint.
 
 **Compatibility.** The previous key names (`slide_type`, `slide_title`, `slide_text`, `indentation_level`, `speaker_notes`, `table_data`, `alternate_rows`, `image_url`, `image_caption`, `quote_text`, `quote_author`, `left_column`, `right_column`, `chart_data`, `has_legend`, `legend_position`) are still accepted and mapped onto the current ones, with a note in the log. They will be removed in a future release.
 

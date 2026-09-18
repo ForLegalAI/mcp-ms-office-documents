@@ -25,7 +25,7 @@ from .constants import (
     CONTENT_LAYOUT,
     DEFAULT_BODY_FONT_SIZE,
     MARGIN_LEFT, MAX_INDENT_LEVEL,
-    AVG_CHAR_WIDTH_RATIO, LINE_HEIGHT_RATIO, MIN_AUTOFIT_SCALE,
+    AVG_CHAR_WIDTH_RATIO, BULLET_INDENT_INCHES, LINE_HEIGHT_RATIO, MIN_AUTOFIT_SCALE,
     TABLE_MIN_FONT_SIZE, TABLE_ROW_HEIGHT_PER_POINT,
     TABLE_HEADER_FILL, TABLE_HEADER_TEXT, TABLE_ALT_ROW_FILL,
 )
@@ -33,6 +33,7 @@ from .schema import Bullet, THEME_COLORS
 from image_utils import load_image, ImageDownloadError, ImageValidationError
 from .inline_formatting import needs_inline_processing, apply_inline_formatting
 from .placeholder_style import content_placeholders
+from .text_metrics import measure_lines
 
 logger = logging.getLogger(__name__)
 
@@ -212,11 +213,20 @@ def estimate_text_fill(
     width: int,
     height: int,
     font_size_pt: float = 18.0,
+    typeface: Optional[str] = None,
 ) -> float:
-    """Estimate how full a text box will be, as a ratio (1.0 = exactly full).
+    """How full a text box will be, as a ratio (1.0 = exactly full).
 
-    Deliberately approximate — see the constants module. Used to decide whether
-    to ask PowerPoint to shrink the text and whether to warn the caller.
+    Lines are counted by measuring each bullet against a real font file where
+    one is available, so "WWW WWW" and "iii iii" no longer count the same
+    (#125). *typeface* is the deck's own body font; a metric-compatible
+    substitute measures it exactly, any other installed face measures the
+    right shapes in the wrong font, and with no font file at all the old
+    character-count arithmetic is used instead.
+
+    The result drives the shrink factor written into the deck and the warning
+    returned to the caller. PowerPoint still recomputes autofit itself on the
+    first edit; this decides what everything before that edit sees.
     """
     width_in = Emu(width).inches
     height_in = Emu(height).inches
@@ -226,13 +236,22 @@ def estimate_text_fill(
     char_width_in = AVG_CHAR_WIDTH_RATIO * font_size_pt / 72.0
     line_height_in = LINE_HEIGHT_RATIO * font_size_pt / 72.0
 
-    total_lines = 0
-    for bullet in bullets:
-        # Deeper levels are indented, so less width is available for text.
-        indent_in = 0.3 * (bullet.level - 1)
-        usable_in = max(width_in - indent_in, char_width_in)
-        chars_per_line = max(int(usable_in / char_width_in), 1)
-        total_lines += max(1, math.ceil(len(bullet.text) / chars_per_line))
+    # Deeper levels are indented, so less width is available for their text.
+    usable_in = [
+        max(width_in - BULLET_INDENT_INCHES * (bullet.level - 1), char_width_in)
+        for bullet in bullets
+    ]
+
+    total_lines = measure_lines(
+        [(bullet.text, inches * 72.0) for bullet, inches in zip(bullets, usable_in)],
+        typeface,
+        font_size_pt,
+    )
+    if total_lines is None:
+        total_lines = 0
+        for bullet, inches in zip(bullets, usable_in):
+            chars_per_line = max(int(inches / char_width_in), 1)
+            total_lines += max(1, math.ceil(len(bullet.text) / chars_per_line))
 
     return (total_lines * line_height_in) / height_in
 
