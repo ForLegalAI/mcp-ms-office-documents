@@ -24,6 +24,16 @@ layout the template does not provide or a footer dropped, is collected on
 calling model can correct its next call. `main.py` wraps the result in
 `{"file", "slide_count", "warnings"}` when there is anything to report.
 
+Each entry is a `SlideWarning` from `warnings.py`, not a sentence: `code`,
+`slide` (the index in the caller's list, None for the deck), `severity` and
+`message`. `_warn(index, code, message)` and `_warn_deck(code, message)`
+record them, `make_warning()` reads the severity out of `WARNING_SEVERITY` so
+one code always means one severity, and `str(warning)` renders the line the
+channel used to hold — which is what the log, the admin preview header and
+`warning_messages` still use. Adding a warning means adding its code to that
+table; `test_every_code_has_a_severity` fails otherwise
+([#122](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/122)).
+
 ## Pipeline
 
 ```
@@ -77,6 +87,7 @@ problems go to the warnings list instead.
 | `chart_utils.py` | Category charts from `CategoryChartData`, scatter from `XyChartData`, legend, title, data labels, axis titles |
 | `inline_formatting.py` | Renders the shared inline grammar into python-pptx runs |
 | `constants.py` | Aspect ratios, positional layout fallbacks, typography, autofit ratios, table colours |
+| `warnings.py` | The warnings channel as data: `SlideWarning`, the codes, and the one severity per code |
 
 Two root modules are part of this pipeline: `inline_markdown.py` holds the
 emphasis grammar (PowerPoint asks for superscript and subscript but not
@@ -313,6 +324,7 @@ Both are reported.
 | `tests/test_pptx_title_fallback.py` | A title on a layout with no title placeholder: geometry, style, the untitled-template warning |
 | `tests/test_pptx_content_area.py` | Drawing on a layout with no body placeholder: the template's content rectangle, and how it is reported |
 | `tests/test_pptx_picture_layout.py` | Image slides on a picture layout: role choice, the filled placeholder, and the fallbacks |
+| `tests/test_pptx_warnings.py` | Warning records: codes, severities, the deck-wide case, and the tool boundary |
 | `tests/test_pptx_sections.py` | Outline-pane sections |
 | `tests/test_pptx_templates.py` | Registry loading, `.potx`, layout classification and resolution, defaults |
 | `tests/test_admin_pptx.py` | Admin UI support for PowerPoint templates |

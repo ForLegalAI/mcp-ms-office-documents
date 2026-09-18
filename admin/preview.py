@@ -125,7 +125,7 @@ def render_pptx_preview(
     spec: Dict[str, Any],
     slides: List[Dict[str, Any]] = None,
 ) -> tuple:
-    """Build the sample deck on a PowerPoint template; return ``(bytes, warnings)``.
+    """Build the sample deck on a PowerPoint template; return ``(bytes, lines)``.
 
     Goes through :class:`~pptx_tools.slide_builder.PowerpointPresentation` with a
     spec built from the submitted form, so the preview exercises the same layout
@@ -133,7 +133,8 @@ def render_pptx_preview(
     layout overrides the admin has just typed but not yet saved. The warnings
     the builder produces are handed back, because "which slides could not be
     laid out on this template" is the single most useful thing a preview can
-    tell an admin.
+    tell an admin — as their rendered lines, since they go straight into a
+    response header for a person to read.
     """
     from pptx_tools.slide_builder import PowerpointPresentation
     from pptx_tools.templates import TemplateSpec, aspect_of, open_template
@@ -156,7 +157,7 @@ def render_pptx_preview(
         format=aspect,
         template_spec=template_spec,
     )
-    return presentation.save().getvalue(), list(presentation.warnings)
+    return presentation.save().getvalue(), presentation.warning_messages
 
 
 def render_email_preview(

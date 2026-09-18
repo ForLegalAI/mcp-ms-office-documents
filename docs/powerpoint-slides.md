@@ -80,8 +80,24 @@ An image slide uses the template's own picture layout when it has one, so the pi
 
 ```json
 {"file": "https://…/deck.pptx", "slide_count": 12,
- "warnings": ["slide 4: body text is about 1.9x the space available and will be shrunk to fit; consider splitting it across slides."]}
+ "warnings": [
+   {"code": "text_overflow", "severity": "warning", "slide": 4,
+    "message": "body text is about 1.9x the space available and will be shrunk to fit; consider splitting it across slides."},
+   {"code": "image_failed", "severity": "error", "slide": 7,
+    "message": "image could not be loaded (404 Not Found); a placeholder was drawn."}
+ ]}
 ```
+
+Each warning is an object rather than a sentence, so you can act on it without reading English:
+
+| Field | Meaning |
+|-------|---------|
+| `code` | a stable identifier for the kind of problem — the thing to branch on |
+| `severity` | `error` (something you asked for is not in the file), `warning` (it is there but shrunk, clamped or moved), `info` (a substitution you probably do not mind) |
+| `slide` | the index in the `slides` list you sent, counting from zero; absent when the warning is about the deck as a whole |
+| `message` | the sentence, unchanged |
+
+So `any(w["severity"] == "error" for w in warnings)` answers "did the deck lose anything", and `w["code"] == "text_overflow"` finds the slides worth splitting.
 
 **Compatibility.** The previous key names (`slide_type`, `slide_title`, `slide_text`, `indentation_level`, `speaker_notes`, `table_data`, `alternate_rows`, `image_url`, `image_caption`, `quote_text`, `quote_author`, `left_column`, `right_column`, `chart_data`, `has_legend`, `legend_position`) are still accepted and mapped onto the current ones, with a note in the log. They will be removed in a future release.
 

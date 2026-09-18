@@ -3,7 +3,8 @@
 ``_create_presentation_buffer`` builds a deck through
 :class:`pptx_tools.slide_builder.PowerpointPresentation` and returns
 ``(BytesIO, warnings)`` — what ``main.py`` calls, so the warnings ride back to
-the caller alongside the file. ``create_presentation`` builds and uploads
+the caller alongside the file, as
+:class:`~pptx_tools.warnings.SlideWarning` records. ``create_presentation`` builds and uploads
 synchronously for direct library use and drops the warnings. See
 docs/development/tools/powerpoint.md.
 """
@@ -14,6 +15,7 @@ from typing import Any, List, Optional, Sequence, Tuple
 from upload_tools import upload_file
 from .constants import DEFAULT_SLIDE_FORMAT
 from .slide_builder import PowerpointPresentation
+from .warnings import SlideWarning
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +28,7 @@ def _create_presentation_buffer(
     show_slide_numbers: bool = False,
     language: Optional[str] = None,
     template: Optional[str] = None,
-) -> Tuple[io.BytesIO, List[str]]:
+) -> Tuple[io.BytesIO, List[SlideWarning]]:
     """Create a PowerPoint presentation and return its bytes and any warnings.
 
     This function is useful when the caller needs to handle upload separately,
@@ -40,8 +42,10 @@ def _create_presentation_buffer(
     :param language: BCP-47 tag stamped on every run for proofing
     :param template: Name of a registered template; overrides *format*
     :return: ``(buffer, warnings)`` — the buffer is positioned at the start,
-        and warnings describe anything the builder had to work around so the
-        caller can act on it instead of only seeing it in the server log.
+        and warnings are :class:`~pptx_tools.warnings.SlideWarning` records of
+        anything the builder had to work around, each with a stable ``code``
+        and ``severity`` so the caller can act on it rather than only reading
+        it in the server log.
     """
     if not slides:
         raise ValueError("No slides provided")
