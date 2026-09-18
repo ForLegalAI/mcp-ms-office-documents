@@ -297,13 +297,16 @@ Which face gets measured, best first: the deck's own typeface
 (`theme_body_typeface()` reads the theme's minor latin font), then a
 **metric-compatible** substitute — Carlito for Calibri, Liberation Sans or
 Arimo for Arial, Liberation Serif or Tinos for Times New Roman, Caladea for
-Cambria — whose advances are identical by design, so measuring one measures
-the real thing; then any installed sans face, which is a real measurement of
-the wrong font; and if no font file can be loaded at all, `measure_lines()`
-returns None and the old `AVG_CHAR_WIDTH_RATIO` arithmetic runs instead. The
-runtime image installs `font-carlito` and `font-liberation` so the middle
-case is the usual one — the shipped templates set Aptos, which has no free
-metric-compatible clone.
+Cambria, Gelasio for Georgia — whose advances are identical by design, so
+measuring one measures the real thing; then any installed sans face, which is
+a real measurement of the wrong font; and if no font file can be loaded at
+all, `measure_lines()` returns None and the old `AVG_CHAR_WIDTH_RATIO`
+arithmetic runs instead. The runtime image installs one package per family in
+that table (`font-carlito`, `font-liberation`, `font-caladea`,
+`font-gelasio`), so the middle case is the usual one — the shipped templates
+set Aptos, which has no free metric-compatible clone.
+`test_every_metric_compatible_face_is_installed` reads the Dockerfile and
+fails if the table ever promises a face the image does not carry.
 
 Tables are sized by row count instead, through `fit_table_font_size()`, and
 warn when they still would not fit at the minimum size.

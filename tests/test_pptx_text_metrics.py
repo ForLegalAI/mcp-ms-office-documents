@@ -114,6 +114,54 @@ class TestChoosingAFace:
         load_font.cache_clear()
 
 
+class TestTheImageCarriesWhatTheTablePromises:
+    """A substitute the image lacks is a promise the fallback quietly breaks.
+
+    METRIC_COMPATIBLE says "measuring this face measures the real thing". That
+    only holds where the file exists, so the runtime image has to install one
+    package per family — and the two drifted apart once already (#134 review).
+    """
+
+    # The Alpine package that provides each substitute family.
+    PACKAGES = {
+        "Carlito": "font-carlito",
+        "Caladea": "font-caladea",
+        "Gelasio": "font-gelasio",
+        "LiberationSans": "font-liberation",
+        "Liberation Sans": "font-liberation",
+        "LiberationSerif": "font-liberation",
+        "Liberation Serif": "font-liberation",
+        "LiberationMono": "font-liberation",
+        "Liberation Mono": "font-liberation",
+        "Arimo": "font-croscore",
+        "Tinos": "font-croscore",
+        "Cousine": "font-croscore",
+    }
+
+    @pytest.fixture
+    def installed(self):
+        dockerfile = (project_root / "Dockerfile").read_text(encoding="utf-8")
+        line = [row for row in dockerfile.splitlines() if "apk add" in row and "font-" in row]
+        assert line, "the runtime image installs no fonts"
+        return set(line[0].split())
+
+    def test_every_substitute_family_is_a_package_we_know(self):
+        unknown = {
+            face
+            for faces in text_metrics.METRIC_COMPATIBLE.values()
+            for face in faces
+            if face not in self.PACKAGES
+        }
+        assert not unknown, f"no package mapping for {unknown}"
+
+    def test_every_metric_compatible_face_is_installed(self, installed):
+        for typeface, faces in text_metrics.METRIC_COMPATIBLE.items():
+            packages = {self.PACKAGES[face] for face in faces}
+            assert packages & installed, (
+                f"{typeface} claims {sorted(faces)}, none of which the image installs"
+            )
+
+
 class TestTheDecksOwnFace:
 
     def test_the_theme_body_font_is_read_from_the_template(self):

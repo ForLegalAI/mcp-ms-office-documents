@@ -72,15 +72,17 @@ MAX_INDENT_LEVEL = 5
 # =============================================================================
 # Autofit / overflow estimation
 # =============================================================================
-# Text is measured by estimate, not by a font engine: python-pptx cannot lay
-# text out, and shipping a font metrics dependency for a warning is not worth
-# it. The numbers below are deliberately rough and only drive (a) a shrink
-# factor written into <a:normAutofit>, which PowerPoint recomputes exactly when
-# the deck is opened, and (b) a warning returned to the caller.
+# python-pptx cannot lay text out, so the builder counts the lines itself.
+# It does that by measuring each bullet against a real font file through
+# Pillow (text_metrics.py); the ratios below are the fallback for an
+# environment with no font file at all, and the line height and shrink floor
+# the measured path uses too. What they drive either way is (a) a shrink
+# factor written into <a:normAutofit>, which PowerPoint recomputes exactly
+# when the deck is opened, and (b) a warning returned to the caller.
 
 # Mean glyph advance as a fraction of the font size, for a mixed-case latin
-# sentence in the template's body face. Only used when no font file can be
-# loaded at all; otherwise the text is measured (see text_metrics.py).
+# sentence in the template's body face. The fallback path only: it cannot tell
+# "WWW" from "iii", which is why measuring replaced it.
 AVG_CHAR_WIDTH_RATIO = 0.5
 # How much of the text width each bullet level gives up to its indent.
 BULLET_INDENT_INCHES = 0.3

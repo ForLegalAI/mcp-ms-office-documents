@@ -43,12 +43,16 @@ FROM python:${PYTHON_VERSION}-alpine AS runtime
 RUN apk upgrade --no-cache
 
 # Font files for the PowerPoint fit estimate, which measures text against a
-# real face rather than counting characters. These two are metric-compatible
-# with the fonts corporate templates actually use — Carlito with Calibri,
-# Liberation with Arial, Times New Roman and Courier New — so measuring them
-# measures the real thing. Without any font file the estimate silently falls
-# back to arithmetic, which is what this replaces.
-RUN apk add --no-cache font-carlito font-liberation
+# real face rather than counting characters. Each of these is metric-compatible
+# with a font corporate templates actually use, so measuring it measures the
+# real thing: Carlito with Calibri, Liberation with Arial, Times New Roman and
+# Courier New, Caladea with Cambria, Gelasio with Georgia. One package per
+# family named in text_metrics.METRIC_COMPATIBLE — a substitute the image does
+# not carry is a promise the fallback chain quietly breaks, and
+# test_every_metric_compatible_face_is_installed keeps the two in step.
+# Without any font file the estimate falls back to arithmetic, which is what
+# this replaces.
+RUN apk add --no-cache font-carlito font-liberation font-caladea font-gelasio
 
 # Prevents Python from writing pyc files.
 ENV PYTHONDONTWRITEBYTECODE=1
