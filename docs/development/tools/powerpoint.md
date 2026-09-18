@@ -82,7 +82,7 @@ problems go to the warnings list instead.
 | `slide_builder.py` | `PowerpointPresentation`: template selection, one `_build_*` method per slide type, sections, footer and slide numbers, language, the warnings list |
 | `helpers.py` | `SlideHelpers` mixin (titles, placeholders, bullets, tables, images, notes) and free functions: `body_to_bullets()`, `parse_table_data()`, `estimate_text_fill()`, `apply_autofit()`, `fit_table_font_size()`, `set_runs_language()`, `resolve_fill()` |
 | `layouts.py` | Layout roles, `classify_layout()`, `role_for_slide()`, `LayoutResolver` |
-| `placeholder_style.py` | Reading placeholder geometry and inherited character style from a layout, and replaying a title on a plain text box (`read_title_style()`, `read_content_rect()`, `draw_title_box()`) |
+| `placeholder_style.py` | Reading placeholder geometry, character style and list style from a template, and replaying them on plain text boxes (`read_title_style()`, `read_content_rect()`, `draw_title_box()`, `apply_list_style()`) |
 | `templates.py` | `TemplateSpec`, the registry loaded from YAML with an mtime-fingerprint cache, `.potx` handling, `select_template()`, `validate_templates()` |
 | `chart_utils.py` | Category charts from `CategoryChartData`, scatter from `XyChartData`, legend, title, data labels, axis titles |
 | `inline_formatting.py` | Renders the shared inline grammar into python-pptx runs |
@@ -242,7 +242,18 @@ removed either way, since an empty one shows its prompt as soon as anyone
 opens the deck.
 
 Chart and image slides with a `body` split the area, chart or picture on the
-left and bullets on the right. KPI and timeline slides are drawn from
+left and bullets on the right. Both go through `_add_bulleted_textbox()`,
+which fills the box and then calls `placeholder_style.apply_list_style()`: a
+text box is not a placeholder, so it inherits from the presentation's default
+text style, which has no bullet glyphs — the same markdown that bulleted
+correctly in a content placeholder came out as plain lines beside a picture
+([#123](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/123)).
+Each paragraph takes the `marL`, `indent` and bullet definition of its own
+level from the master's `<p:bodyStyle>`; size and spacing stay as the builder
+set them, because that style's 28pt first level is meant for a full-width
+placeholder. The copy keeps `<a:pPr>`'s children in schema order — bullet
+properties after `lnSpc`/`spcBef` and before `defRPr` — since PowerPoint
+reports a file whose paragraph properties are out of order as damaged. KPI and timeline slides are drawn from
 autoshapes and text boxes because python-pptx cannot create SmartArt. A
 timeline reserves its detail band before sizing the chevrons so captions can
 never run off a short content box.
@@ -325,6 +336,7 @@ Both are reported.
 | `tests/test_pptx_content_area.py` | Drawing on a layout with no body placeholder: the template's content rectangle, and how it is reported |
 | `tests/test_pptx_picture_layout.py` | Image slides on a picture layout: role choice, the filled placeholder, and the fallbacks |
 | `tests/test_pptx_warnings.py` | Warning records: codes, severities, the deck-wide case, and the tool boundary |
+| `tests/test_pptx_bullet_glyphs.py` | Bullets in a text box: the master's glyphs and indents, and the order of `<a:pPr>` |
 | `tests/test_pptx_sections.py` | Outline-pane sections |
 | `tests/test_pptx_templates.py` | Registry loading, `.potx`, layout classification and resolution, defaults |
 | `tests/test_admin_pptx.py` | Admin UI support for PowerPoint templates |

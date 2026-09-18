@@ -45,7 +45,7 @@ from .chart_utils import (
     set_axis_titles, ChartDataError,
 )
 from .layouts import LayoutResolver, role_for_slide
-from .placeholder_style import TitleStyle, draw_title_box
+from .placeholder_style import TitleStyle, apply_list_style, draw_title_box
 from .schema import Bullet, coerce_slides
 from . import warnings as W
 from .warnings import SlideWarning, make_warning
@@ -609,12 +609,7 @@ class PowerpointPresentation(SlideHelpers):
             gutter = Inches(0.3)
             text_left = left + image_width + gutter
             text_width = width - image_width - gutter
-            box = slide.shapes.add_textbox(text_left, top, text_width, height)
-            self._fill_bullets(box.text_frame, bullets)
-            apply_autofit(
-                box.text_frame,
-                scale=self._fit_scale(bullets, text_width, height),
-            )
+            self._add_bulleted_textbox(slide, bullets, text_left, top, text_width, height)
 
         max_height = height - (Inches(0.6) if caption else 0)
 
@@ -753,12 +748,7 @@ class PowerpointPresentation(SlideHelpers):
             gutter = Inches(0.3)
             text_left = left + chart_width + gutter
             text_width = width - chart_width - gutter
-            box = slide.shapes.add_textbox(text_left, top, text_width, height)
-            self._fill_bullets(box.text_frame, bullets)
-            apply_autofit(
-                box.text_frame,
-                scale=self._fit_scale(bullets, text_width, height),
-            )
+            self._add_bulleted_textbox(slide, bullets, text_left, top, text_width, height)
             width = chart_width
 
         chart_data = {
@@ -1192,6 +1182,21 @@ class PowerpointPresentation(SlideHelpers):
     # -------------------------------------------------------------------------
     # Fit, language, footer
     # -------------------------------------------------------------------------
+
+    def _add_bulleted_textbox(self, slide, bullets, left, top, width, height):
+        """Bullets in a text box, looking like bullets.
+
+        A text box is not a placeholder, so it inherits its paragraph
+        formatting from the presentation's default text style, which has no
+        bullet glyphs: the same markdown that bulleted correctly in a content
+        placeholder came out as plain lines beside a picture or a chart
+        (#123). The master's body style is applied explicitly instead.
+        """
+        box = slide.shapes.add_textbox(left, top, width, height)
+        self._fill_bullets(box.text_frame, bullets)
+        apply_list_style(box.text_frame, slide.slide_layout.slide_master)
+        apply_autofit(box.text_frame, scale=self._fit_scale(bullets, width, height))
+        return box
 
     def _fit_scale(self, bullets, width, height):
         """Shrink factor for a text box, or None when the text already fits."""
