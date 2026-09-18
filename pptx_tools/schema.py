@@ -43,6 +43,7 @@ from pydantic import (
     ValidationError,
     WithJsonSchema,
     field_validator,
+    model_validator,
 )
 
 from .constants import MAX_INDENT_LEVEL, TABLE_FONT_SIZE_RANGE
@@ -208,6 +209,38 @@ class ContentSlide(SlideBase):
     body: Body = Field(default_factory=list, description="Markdown bullets, or explicit bullet objects.")
 
 
+class CellFill(BaseModel):
+    """A background colour for one cell, or for a whole row."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    row: int = Field(ge=0, description="Row index; row 0 is the header row.")
+    col: Optional[int] = Field(
+        default=None, ge=0,
+        description="Column index. Omit to fill the whole row.",
+    )
+    color: Color = Field(description="Fill colour: '#RRGGBB', 'RRGGBB' or a theme name.")
+
+
+class CellMerge(BaseModel):
+    """A block of cells joined into one, for a grouped header or a spanning label."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    row: int = Field(ge=0, description="Top row of the block; row 0 is the header row.")
+    col: int = Field(ge=0, description="Left column of the block.")
+    row_span: int = Field(default=1, ge=1, description="How many rows the block covers.")
+    col_span: int = Field(default=1, ge=1, description="How many columns the block covers.")
+
+    @model_validator(mode="after")
+    def _spans_more_than_one_cell(self) -> "CellMerge":
+        # A 1x1 merge is a no-op that reads like an intention, so it is an
+        # error rather than something silently ignored.
+        if self.row_span * self.col_span < 2:
+            raise ValueError("a merge must cover more than one cell: set row_span or col_span above 1")
+        return self
+
+
 class TableSlide(SlideBase):
     type: Literal["table"]
     rows: List[List[CellValue]] = Field(
@@ -221,6 +254,22 @@ class TableSlide(SlideBase):
     font_size: Optional[int] = Field(
         default=None, ge=TABLE_FONT_SIZE_RANGE[0], le=TABLE_FONT_SIZE_RANGE[1],
         description="Cell font size in points.",
+    )
+    widths: Optional[List[Annotated[float, Field(gt=0)]]] = Field(
+        default=None,
+        description="Relative column widths, one per column: [3, 1, 1] gives the "
+                    "first column three times the space of the others. Columns are "
+                    "equal without it.",
+    )
+    fills: Optional[List[CellFill]] = Field(
+        default=None,
+        description="Background colours for individual cells or whole rows, e.g. to "
+                    "flag severity. They override the header colour and zebra shading.",
+    )
+    merges: Optional[List[CellMerge]] = Field(
+        default=None,
+        description="Blocks of cells joined into one, for grouped headers. The text of "
+                    "the block is the text of its top-left cell.",
     )
 
 

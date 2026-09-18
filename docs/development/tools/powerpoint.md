@@ -258,6 +258,27 @@ autoshapes and text boxes because python-pptx cannot create SmartArt. A
 timeline reserves its detail band before sizing the chevrons so captions can
 never run off a short content box.
 
+### Table formatting
+
+`_create_styled_table()` takes three optional extras beyond alignment, the
+header colour, zebra shading and a font size
+([#124](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/124)):
+
+| Extra | How it is applied |
+|-------|-------------------|
+| `column_widths` | relative weights normalised to the table's own width, so `[3, 1, 1]` means 60/20/20 whatever rectangle the layout gives it; the last column takes the rounding remainder so the columns still add up |
+| `cell_fills` | applied after the header and zebra passes, so an explicit fill wins; a fill with no column covers the row |
+| `merges` | applied **before any text is written** — `Cell.merge()` concatenates the text of the cells it joins, so merging afterwards repeats every cell of the block inside the one that survives. Cells reported as `is_spanned` are then skipped |
+
+The builder checks all three against the real table first
+(`_table_widths()`, `_table_fills()`, `_table_merges()`) and warns rather than
+raising: widths that do not match the column count are dropped whole, since
+guessing which column a short list meant is worse than leaving them equal;
+fills and merges outside the table are skipped individually. Overlapping
+merges are caught there too, because `Cell.merge()` raises part-way through a
+block and would take the whole deck with it — the first block to claim a cell
+keeps it.
+
 ### Fit estimation
 
 python-pptx cannot lay text out, so `estimate_text_fill()` approximates lines
@@ -337,6 +358,7 @@ Both are reported.
 | `tests/test_pptx_picture_layout.py` | Image slides on a picture layout: role choice, the filled placeholder, and the fallbacks |
 | `tests/test_pptx_warnings.py` | Warning records: codes, severities, the deck-wide case, and the tool boundary |
 | `tests/test_pptx_bullet_glyphs.py` | Bullets in a text box: the master's glyphs and indents, and the order of `<a:pPr>` |
+| `tests/test_pptx_table_formatting.py` | Column widths, cell and row fills, merged blocks, and what happens when they do not fit the table |
 | `tests/test_pptx_sections.py` | Outline-pane sections |
 | `tests/test_pptx_templates.py` | Registry loading, `.potx`, layout classification and resolution, defaults |
 | `tests/test_admin_pptx.py` | Admin UI support for PowerPoint templates |
