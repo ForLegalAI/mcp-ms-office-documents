@@ -95,7 +95,7 @@ class TestValidationAgainstSlideSize:
         pres, slide = build([{"kind": "shape", "x": 10, "y": 1, "w": 8, "h": 1}], "16:9")
         shape = shapes_of(slide, MSO_SHAPE_TYPE.AUTO_SHAPE)[0]
         assert shape.left + shape.width <= PptxReader(pres.save()).slide_width
-        assert any("ran past the slide edge" in w and "width" in w for w in pres.warnings)
+        assert any("ran past the slide edge" in w and "width" in w for w in pres.warning_messages)
 
     def test_an_element_starting_off_the_slide_is_skipped_and_reported(self):
         pres, slide = build([
@@ -104,7 +104,7 @@ class TestValidationAgainstSlideSize:
         ])
         assert shapes_of(slide, MSO_SHAPE_TYPE.AUTO_SHAPE) == []
         assert len(shapes_of(slide, MSO_SHAPE_TYPE.TEXT_BOX)) == 1
-        assert any("starts off the slide; skipped" in w for w in pres.warnings)
+        assert any("starts off the slide; skipped" in w for w in pres.warning_messages)
 
     @pytest.mark.parametrize("element, kind", [
         ({"kind": "text", "text": "x", "x": 1, "y": 1, "w": 0}, MSO_SHAPE_TYPE.TEXT_BOX),
@@ -115,7 +115,7 @@ class TestValidationAgainstSlideSize:
         """A 0-wide box or a 1-EMU picture draws nothing and, before this, said nothing."""
         pres, slide = build([element])
         assert shapes_of(slide, kind) == []
-        assert any("has no size; skipped" in w for w in pres.warnings)
+        assert any("has no size; skipped" in w for w in pres.warning_messages)
 
     def test_nothing_is_reported_when_everything_fits(self):
         pres, _ = build([{"kind": "shape", "x": "10%", "y": "10%", "w": "80%", "h": "80%"}])
@@ -143,7 +143,7 @@ class TestKinds:
     def test_a_broken_image_draws_a_placeholder_and_reports(self):
         pres, slide = build([{"kind": "image", "source": "data:image/png;base64,AAAA", "x": 1, "y": 1, "w": 2}])
         assert shapes_of(slide, MSO_SHAPE_TYPE.PICTURE) == []
-        assert any("could not be loaded" in w for w in pres.warnings)
+        assert any("could not be loaded" in w for w in pres.warning_messages)
 
     @pytest.mark.parametrize("name", ["rectangle", "rounded_rectangle", "ellipse", "chevron", "arrow"])
     def test_every_shape_name_draws_an_autoshape(self, name):

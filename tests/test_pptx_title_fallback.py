@@ -135,7 +135,7 @@ class TestTemplateWithNoTitleAnywhere:
             "16:9",
             template_spec=TemplateSpec(name="untitled", path=untitled_template, aspect="16:9"),
         )
-        assert any("no layout in this template has one" in w for w in pres.warnings)
+        assert any("no layout in this template has one" in w for w in pres.warning_messages)
         slide = PptxReader(pres.save()).slides[0]
         box = title_boxes(slide, "Kept")[0]
         assert box.top == Inches(0.3)

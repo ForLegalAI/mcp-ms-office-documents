@@ -349,7 +349,10 @@ async def create_powerpoint_presentation(
             "LINKS: [label](https://url) works in any text field.\n"
             "\n"
             "Text that overflows its slide is shrunk to fit and reported in the result's 'warnings'; "
-            "split the content across slides rather than relying on that."
+            "split the content across slides rather than relying on that. Each warning is an object "
+            "with a stable 'code', a 'severity' ('error' means something you asked for is not in the "
+            "file, 'warning' that it is there but altered, 'info' a substitution), the 'slide' index "
+            "it happened on, and a readable 'message'."
         )
     )],
     format: Annotated[Literal["4:3", "16:9"], Field(
@@ -368,8 +371,9 @@ async def create_powerpoint_presentation(
 
     Returns:
         For traditional upload strategies: a dict with the file location,
-        slide_count and any warnings (a bare URL string when there is nothing
-        to report, preserving the previous response shape).
+        slide_count and any warnings — each a {code, severity, slide, message}
+        object — or a bare URL string when there is nothing to report, which
+        preserves the previous response shape.
         For LIBRECHAT strategy: MCP file artifact dict.
     """
 
@@ -404,15 +408,18 @@ async def create_powerpoint_presentation(
         # Warnings describe a deck that was produced but not exactly as asked
         # (an image that would not load, text shrunk to fit, a dropped footer).
         # They ride alongside the result so the model can correct its next call
-        # instead of the problem living only in the server log.
-        if warnings and isinstance(result, str):
+        # instead of the problem living only in the server log. Each one is an
+        # object with a stable 'code' and 'severity', so a caller can branch on
+        # it rather than parse the sentence.
+        reported = [warning.as_dict() for warning in warnings]
+        if reported and isinstance(result, str):
             return {
                 "file": result,
                 "slide_count": len(slides),
-                "warnings": warnings,
+                "warnings": reported,
             }
-        if warnings and isinstance(result, dict):
-            result = {**result, "warnings": warnings}
+        if reported and isinstance(result, dict):
+            result = {**result, "warnings": reported}
         return result
     except ValueError as e:
         # Schema/validation problems: the message names the slide and field.

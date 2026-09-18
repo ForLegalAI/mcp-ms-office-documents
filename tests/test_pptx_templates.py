@@ -226,7 +226,7 @@ class TestAwkwardTemplates:
 
         pres = build(DECK)
 
-        assert any("two_column" in w and "slide 3" in w for w in pres.warnings)
+        assert any("two_column" in w and "slide 3" in w for w in pres.warning_messages)
 
 
 # =============================================================================
@@ -257,7 +257,7 @@ class TestResolutionOrder:
                        "layout": "Jenom nadpis"}])
 
         assert layout_names_of(pres) == ["Jenom nadpis"]
-        assert any("no body placeholder" in w for w in pres.warnings)
+        assert any("no body placeholder" in w for w in pres.warning_messages)
 
     def test_per_slide_layout_is_case_insensitive(self, registry):
         make_template(registry["custom"] / "custom_pptx_template_16_9.pptx")
@@ -270,7 +270,7 @@ class TestResolutionOrder:
         pres = build([{"type": "content", "title": "C", "layout": "No Such Layout"}])
 
         assert layout_names_of(pres) == ["Nadpis a obsah"]
-        assert any("No Such Layout" in w for w in pres.warnings)
+        assert any("No Such Layout" in w for w in pres.warning_messages)
 
     def test_configured_mapping_overrides_detection(self, registry):
         make_template(registry["custom"] / "brand.pptx")
@@ -294,7 +294,7 @@ class TestResolutionOrder:
 
         pres = build([{"type": "content", "title": "C"}], template="brand")
 
-        assert any("Missing Layout" in w for w in pres.warnings)
+        assert any("Missing Layout" in w for w in pres.warning_messages)
         # Still built, on the detected layout.
         assert layout_names_of(pres) == ["Nadpis a obsah"]
 
@@ -310,7 +310,7 @@ class TestResolutionOrder:
             "THIS TITLE MATTERS" in shape.text_frame.text
             for shape in slide.shapes if shape.has_text_frame
         )
-        assert not any("title" in w.lower() for w in pres.warnings)
+        assert not any("title" in w.lower() for w in pres.warning_messages)
 
     @pytest.mark.parametrize("slide_type,extra", [
         ("content", {"body": "- a"}),
@@ -388,7 +388,7 @@ class TestRegistry:
 
         pres = build([{"type": "title", "title": "T"}], template="missing")
 
-        assert any("missing" in w and "brand" in w for w in pres.warnings)
+        assert any("missing" in w and "brand" in w for w in pres.warning_messages)
         assert len(pres.presentation.slides) == 1
 
     def test_entry_with_a_path_is_rejected(self, registry, caplog):
@@ -526,7 +526,7 @@ class TestTableAndChartDefaults:
     def test_a_non_numeric_font_size_is_reported_not_crashed(self, registry):
         self._register(registry, {"table": {"font_size": "big"}})
         pres = build([{"type": "table", "rows": self.TABLE}], template="brand")
-        assert any("font_size 'big' is not a number" in w for w in pres.warnings)
+        assert any("font_size 'big' is not a number" in w for w in pres.warning_messages)
 
     def test_an_out_of_range_font_size_is_clamped_and_reported(self, registry):
         """A template value bypasses the schema's 6–40 bound; a typo of 200 was
@@ -535,7 +535,7 @@ class TestTableAndChartDefaults:
         pres = build([{"type": "table", "rows": self.TABLE}], template="brand")
         table = self._table_of(pres)
         assert table.cell(1, 0).text_frame.paragraphs[0].font.size == Pt(40)
-        assert any("outside 6–40; used 40" in w for w in pres.warnings)
+        assert any("outside 6–40; used 40" in w for w in pres.warning_messages)
 
     def test_a_quoted_false_in_yaml_still_turns_zebra_off(self, registry):
         """YAML `zebra: "false"` is the string "false", and bool("false") is True."""
@@ -552,7 +552,7 @@ class TestTableAndChartDefaults:
         self._register(registry, {"table": {"zebra": "maybe"}})
         pres = build([{"type": "table", "rows": self.TABLE}], template="brand")
         assert "<a:solidFill>" in self._table_of(pres).cell(2, 0)._tc.xml   # built-in: on
-        assert any("zebra 'maybe' is not true/false" in w for w in pres.warnings)
+        assert any("zebra 'maybe' is not true/false" in w for w in pres.warning_messages)
 
     def test_data_labels_from_the_template(self, registry):
         self._register(registry, {"chart": {"data_labels": True}})
@@ -665,7 +665,7 @@ class TestFileFormats:
         pres = build([{"type": "title", "title": "T"}], template="broken")
 
         assert len(pres.presentation.slides) == 1
-        assert any("could not be opened" in w for w in pres.warnings)
+        assert any("could not be opened" in w for w in pres.warning_messages)
 
     def test_aspect_is_read_from_the_file_not_declared(self):
         assert aspect_of(PptxReader(str(BASE_16_9))) == "16:9"

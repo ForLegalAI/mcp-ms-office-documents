@@ -144,7 +144,7 @@ class TestThePlaceholderIsFilled:
                 and shape.placeholder_format.type in (PP_PLACEHOLDER.BODY, PP_PLACEHOLDER.OBJECT)][0]
         bodyPr = body.text_frame._txBody.find(qn('a:bodyPr'))
         assert bodyPr.find(qn('a:normAutofit')) is not None
-        assert any("space available" in w for w in pres.warnings)
+        assert any("space available" in w for w in pres.warning_messages)
 
     def test_a_failed_image_leaves_no_empty_placeholder(self):
         pres, slide = build({"title": "Chart", "source": "data:image/png;base64,not-base64!"})
@@ -152,7 +152,7 @@ class TestThePlaceholderIsFilled:
         assert PP_PLACEHOLDER.PICTURE not in [ph.placeholder_format.type
                                               for ph in slide.placeholders]
         assert "Image could not be loaded" in text_of(slide)
-        assert any("image could not be loaded" in w for w in pres.warnings)
+        assert any("image could not be loaded" in w for w in pres.warning_messages)
 
 
 class TestFallingBack:

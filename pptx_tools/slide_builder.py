@@ -47,6 +47,8 @@ from .chart_utils import (
 from .layouts import LayoutResolver, role_for_slide
 from .placeholder_style import TitleStyle, draw_title_box
 from .schema import Bullet, coerce_slides
+from . import warnings as W
+from .warnings import SlideWarning, make_warning
 from .templates import TemplateSpec, open_template, select_template
 
 logger = logging.getLogger(__name__)
@@ -86,7 +88,7 @@ class PowerpointPresentation(SlideHelpers):
         if not slides:
             raise ValueError("At least one slide is required")
 
-        self.warnings: List[str] = []
+        self.warnings: List[SlideWarning] = []
         self.slides = coerce_slides(slides)
 
         logger.info(
@@ -123,11 +125,22 @@ class PowerpointPresentation(SlideHelpers):
     # Setup
     # -------------------------------------------------------------------------
 
-    def _warn(self, slide_index: int, message: str) -> None:
+    def _warn(self, slide_index: int, code: str, message: str) -> None:
         """Record a caller-visible warning about one slide."""
-        entry = f"slide {slide_index}: {message}"
-        self.warnings.append(entry)
-        logger.warning("[pptx] %s", entry)
+        self._record(make_warning(code, message, slide=slide_index))
+
+    def _warn_deck(self, code: str, message: str) -> None:
+        """Record a warning about the deck rather than any one slide."""
+        self._record(make_warning(code, message))
+
+    def _record(self, warning: SlideWarning) -> None:
+        self.warnings.append(warning)
+        logger.warning("[pptx] %s", warning)
+
+    @property
+    def warning_messages(self) -> List[str]:
+        """The warnings as the lines they read as, for logs and for people."""
+        return [str(warning) for warning in self.warnings]
 
     @staticmethod
     def _setting(slide_data, field: str, defaults: dict, key: str, fallback):
@@ -170,7 +183,8 @@ class PowerpointPresentation(SlideHelpers):
             return True
         if text in ("false", "no", "off", "0"):
             return False
-        self._warn(index, f"template {option} {value!r} is not true/false; used {fallback}.")
+        self._warn(index, W.TEMPLATE_OPTION_INVALID,
+                   f"template {option} {value!r} is not true/false; used {fallback}.")
         return fallback
 
     def _coerce_font_size(self, value, index: int) -> Optional[int]:
@@ -183,13 +197,14 @@ class PowerpointPresentation(SlideHelpers):
         try:
             points = int(value)
         except (TypeError, ValueError):
-            self._warn(index, f"template table font_size {value!r} is not a number; ignored.")
+            self._warn(index, W.TEMPLATE_FONT_SIZE_INVALID,
+                       f"template table font_size {value!r} is not a number; ignored.")
             return None
         low, high = TABLE_FONT_SIZE_RANGE
         if not low <= points <= high:
             clamped = max(low, min(points, high))
             self._warn(
-                index,
+                index, W.TEMPLATE_FONT_SIZE_CLAMPED,
                 f"template table font_size {points} is outside {low}–{high}; used {clamped}.",
             )
             return clamped
@@ -203,8 +218,9 @@ class PowerpointPresentation(SlideHelpers):
                 "Unknown presentation format %r; using %s. Valid formats: %s",
                 format, DEFAULT_SLIDE_FORMAT, ", ".join(VALID_SLIDE_FORMATS),
             )
-            self.warnings.append(
-                f"Unknown format {format!r}; used {DEFAULT_SLIDE_FORMAT}."
+            self._warn_deck(
+                W.FORMAT_SUBSTITUTED,
+                f"Unknown format {format!r}; used {DEFAULT_SLIDE_FORMAT}.",
             )
             format = DEFAULT_SLIDE_FORMAT
 
@@ -213,7 +229,7 @@ class PowerpointPresentation(SlideHelpers):
         else:
             spec, note = select_template(template, None if template else format)
         if note:
-            self.warnings.append(note)
+            self._warn_deck(W.TEMPLATE_SUBSTITUTED, note)
 
         if spec is not None:
             try:
@@ -225,9 +241,10 @@ class PowerpointPresentation(SlideHelpers):
                 return presentation
             except Exception as e:
                 logger.error("Failed to load template %s: %s", spec.path.name, e)
-                self.warnings.append(
+                self._warn_deck(
+                    W.TEMPLATE_UNREADABLE,
                     f"Template {spec.name!r} could not be opened ({e}); "
-                    "used the built-in PowerPoint theme."
+                    "used the built-in PowerPoint theme.",
                 )
 
         logger.warning("Using the built-in PowerPoint theme for %s", format)
@@ -254,7 +271,7 @@ class PowerpointPresentation(SlideHelpers):
         if style is None:
             style = self._default_title_style()
             self._warn(
-                index,
+                index, W.TITLE_POSITION_GUESSED,
                 f"layout {slide.slide_layout.name!r} has no title placeholder and "
                 "no layout in this template has one; the title was drawn as a "
                 "text box across the top of the slide.",
@@ -297,7 +314,7 @@ class PowerpointPresentation(SlideHelpers):
         role = role_for_slide(slide_data, self._layouts)
         layout, note = self._layouts.resolve(role, slide_data.layout)
         if note:
-            self._warn(index, note)
+            self._warn(index, W.LAYOUT_SUBSTITUTED, note)
         return self.presentation.slides.add_slide(layout)
 
     def _remove_template_slides(self) -> None:
@@ -459,7 +476,8 @@ class PowerpointPresentation(SlideHelpers):
         if subtitle is not None:
             subtitle.text = slide_data.subtitle or ""
         elif slide_data.subtitle:
-            self._warn(index, "this layout has no subtitle placeholder; the subtitle was dropped.")
+            self._warn(index, W.SUBTITLE_DROPPED,
+                       "this layout has no subtitle placeholder; the subtitle was dropped.")
 
         self._add_speaker_notes(slide, slide_data.notes)
 
@@ -483,7 +501,8 @@ class PowerpointPresentation(SlideHelpers):
                 self._fill_bullets(placeholder.text_frame, bullets)
                 self._fit_text(placeholder, bullets, index)
             else:
-                self._warn(index, "this layout has no body placeholder; the bullets were dropped.")
+                self._warn(index, W.BULLETS_DROPPED,
+                           "this layout has no body placeholder; the bullets were dropped.")
 
         self._add_speaker_notes(slide, slide_data.notes)
 
@@ -493,7 +512,7 @@ class PowerpointPresentation(SlideHelpers):
 
         rows, col_alignments = parse_table_data(slide_data.rows)
         if not rows:
-            self._warn(index, "table has no rows; the slide is empty.")
+            self._warn(index, W.TABLE_EMPTY, "table has no rows; the slide is empty.")
             return
 
         # An explicit `align` beats an inline markdown separator row.
@@ -535,13 +554,13 @@ class PowerpointPresentation(SlideHelpers):
 
         if points and table_overflows(len(rows), height, points):
             self._warn(
-                index,
+                index, W.TABLE_OVERFLOW,
                 f"table of {len(rows)} rows will not fit the content area even at "
                 f"{points}pt; split it across slides.",
             )
         elif font_size is None and points and points < int(DEFAULT_BODY_FONT_SIZE.pt):
             self._warn(
-                index,
+                index, W.TABLE_FONT_REDUCED,
                 f"table font reduced to {points}pt to fit {len(rows)} rows.",
             )
 
@@ -620,7 +639,8 @@ class PowerpointPresentation(SlideHelpers):
             self._add_image_placeholder(
                 slide, "Image could not be loaded", left, top + Inches(1), width
             )
-            self._warn(index, f"image could not be loaded ({error}); a placeholder was drawn.")
+            self._warn(index, W.IMAGE_FAILED,
+                       f"image could not be loaded ({error}); a placeholder was drawn.")
 
         self._add_speaker_notes(slide, slide_data.notes)
 
@@ -638,7 +658,8 @@ class PowerpointPresentation(SlideHelpers):
                                 picture_placeholder.width)
             self._remove_placeholder(picture_placeholder)
             self._add_image_placeholder(slide, "Image could not be loaded", left, top, width)
-            self._warn(index, f"image could not be loaded ({error}); a placeholder was drawn.")
+            self._warn(index, W.IMAGE_FAILED,
+                       f"image could not be loaded ({error}); a placeholder was drawn.")
 
         if body_placeholder is None:
             self._add_speaker_notes(slide, slide_data.notes)
@@ -769,7 +790,7 @@ class PowerpointPresentation(SlideHelpers):
                 slide, f"[Chart error: {e}]",
                 left, top, width, Inches(1), alignment=PP_ALIGN.CENTER,
             )
-            self._warn(index, f"chart could not be built ({e}).")
+            self._warn(index, W.CHART_FAILED, f"chart could not be built ({e}).")
             self._add_speaker_notes(slide, slide_data.notes)
             return
 
@@ -778,7 +799,7 @@ class PowerpointPresentation(SlideHelpers):
         for series in slide_data.series:
             if len(series.values) != len(slide_data.categories):
                 self._warn(
-                    index,
+                    index, W.CHART_SERIES_LENGTH,
                     f"series {series.name!r} has {len(series.values)} values for "
                     f"{len(slide_data.categories)} categories.",
                 )
@@ -805,7 +826,7 @@ class PowerpointPresentation(SlideHelpers):
                 slide, f"[Chart error: {e}]",
                 left, top, width, Inches(1), alignment=PP_ALIGN.CENTER,
             )
-            self._warn(index, f"scatter chart could not be built ({e}).")
+            self._warn(index, W.CHART_FAILED, f"scatter chart could not be built ({e}).")
 
         self._add_speaker_notes(slide, slide_data.notes)
 
@@ -888,7 +909,7 @@ class PowerpointPresentation(SlideHelpers):
 
         if len(items) > 4:
             self._warn(
-                index,
+                index, W.KPI_CROWDED,
                 f"{len(items)} figures on one KPI slide will be cramped; "
                 "two to four read best.",
             )
@@ -910,7 +931,7 @@ class PowerpointPresentation(SlideHelpers):
 
         if not items:
             self._warn(
-                index,
+                index, W.AGENDA_EMPTY,
                 "agenda has no items and the deck has no section slides to derive "
                 "them from; the slide is empty.",
             )
@@ -926,7 +947,8 @@ class PowerpointPresentation(SlideHelpers):
                 self._fill_bullets(placeholders[0].text_frame, bullets)
                 self._fit_text(placeholders[0], bullets, index)
             else:
-                self._warn(index, "this layout has no body placeholder; the agenda was dropped.")
+                self._warn(index, W.AGENDA_DROPPED,
+                           "this layout has no body placeholder; the agenda was dropped.")
 
         if derived and items:
             logger.debug("Agenda derived from %d section slides", len(items))
@@ -952,7 +974,7 @@ class PowerpointPresentation(SlideHelpers):
                 self._fill_bullets(target.text_frame, [Bullet(text=line) for line in lines])
             else:
                 self._warn(
-                    index,
+                    index, W.CLOSING_LINES_DROPPED,
                     "this layout has no subtitle or body placeholder; the closing "
                     "lines were dropped.",
                 )
@@ -1026,7 +1048,8 @@ class PowerpointPresentation(SlideHelpers):
                 height = slide_h - top
 
             if left >= slide_w or top >= slide_h:
-                self._warn(index, f"element {number} ({element.kind}) starts off the slide; skipped.")
+                self._warn(index, W.ELEMENT_OFF_SLIDE,
+                           f"element {number} ({element.kind}) starts off the slide; skipped.")
                 continue
             reduced = []
             if left + width > slide_w:
@@ -1035,7 +1058,7 @@ class PowerpointPresentation(SlideHelpers):
                 height, reduced = slide_h - top, reduced + ["height"]
             if reduced:
                 self._warn(
-                    index,
+                    index, W.ELEMENT_CLAMPED,
                     f"element {number} ({element.kind}) ran past the slide edge; "
                     f"{' and '.join(reduced)} reduced to fit.",
                 )
@@ -1043,7 +1066,8 @@ class PowerpointPresentation(SlideHelpers):
             # so a zero here is what the caller asked for: a 0-wide text box or
             # a 1-EMU picture that draws nothing and says nothing.
             if width <= 0 or height <= 0:
-                self._warn(index, f"element {number} ({element.kind}) has no size; skipped.")
+                self._warn(index, W.ELEMENT_ZERO_SIZE,
+                           f"element {number} ({element.kind}) has no size; skipped.")
                 continue
 
             if element.kind == "text":
@@ -1064,7 +1088,7 @@ class PowerpointPresentation(SlideHelpers):
                 if not picture:
                     self._add_image_placeholder(slide, "Image could not be loaded", left, top, width)
                     self._warn(
-                        index,
+                        index, W.IMAGE_FAILED,
                         f"element {number} image could not be loaded ({error}); "
                         "a placeholder was drawn.",
                     )
@@ -1098,7 +1122,7 @@ class PowerpointPresentation(SlideHelpers):
             return TIMELINE_DETAIL_GAP, TIMELINE_DETAIL_HEIGHT
 
         self._warn(
-            index,
+            index, W.TIMELINE_DETAIL_DROPPED,
             "the content area is too short to fit step detail under the timeline "
             "shapes; the detail lines were dropped. Use a layout with a taller "
             "body area, or move the detail into speaker notes.",
@@ -1188,7 +1212,7 @@ class PowerpointPresentation(SlideHelpers):
         # further would produce text nobody can read from a room.
         if fill > 1.0 / 0.6:
             self._warn(
-                index,
+                index, W.TEXT_OVERFLOW,
                 f"body text is about {fill:.1f}x the space available and will be "
                 "shrunk to fit; consider splitting it across slides.",
             )
@@ -1268,9 +1292,10 @@ class PowerpointPresentation(SlideHelpers):
         if missing_footer:
             # Previously this just produced a deck with no footer and no
             # explanation of why the argument appeared to do nothing.
-            self.warnings.append(
+            self._warn_deck(
+                W.FOOTER_UNSUPPORTED,
                 f"footer_text was dropped on {missing_footer} slide(s): their layout "
-                "has no footer placeholder."
+                "has no footer placeholder.",
             )
 
         logger.debug("Applied footer/slide numbers to all slides")

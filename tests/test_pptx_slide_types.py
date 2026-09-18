@@ -83,7 +83,7 @@ class TestKpi:
         pres = build([{"type": "kpi", "items": [
             {"value": str(n), "label": f"L{n}"} for n in range(6)
         ]}])
-        assert any("cramped" in w for w in pres.warnings)
+        assert any("cramped" in w for w in pres.warning_messages)
 
     def test_more_than_six_is_rejected(self):
         with pytest.raises(ValueError):
@@ -131,7 +131,7 @@ class TestAgenda:
 
     def test_no_sections_and_no_items_warns(self):
         pres = build([{"type": "agenda"}])
-        assert any("no items" in w for w in pres.warnings)
+        assert any("no items" in w for w in pres.warning_messages)
 
 
 # =============================================================================
@@ -243,7 +243,7 @@ class TestTimeline:
         gap, height = pres._timeline_detail_band(pres.slides[0].steps, Inches(1.0), 0)
 
         assert (gap, height) == (0, 0)
-        assert any("too short to fit step detail" in w for w in pres.warnings)
+        assert any("too short to fit step detail" in w for w in pres.warning_messages)
 
     def test_detail_band_survives_a_merely_tight_content_box(self):
         """The drop is a last resort; 1.2in is still enough to caption."""

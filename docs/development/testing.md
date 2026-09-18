@@ -23,7 +23,7 @@ backend:
 |---------|---------|
 | Word | call `_markdown_to_doc()` and inspect the `Document`, or `_markdown_to_word_buffer()` and reopen the bytes |
 | Excel | `tests/test_xlsx_creation.py::_create_workbook_from_markdown()` patches `xlsx_tools.base_xlsx_tool.upload_file`, captures the buffer and returns `load_workbook()` of it |
-| PowerPoint | instantiate `PowerpointPresentation(slides, ...)`, call `.save()`, reopen with `Presentation()`; read `.warnings` for the warnings channel |
+| PowerPoint | instantiate `PowerpointPresentation(slides, ...)`, call `.save()`, reopen with `Presentation()`; read `.warnings` for the warning records (`code`, `slide`, `severity`, `message`) or `.warning_messages` to assert on their text |
 | Email, XML | call the buffer function directly |
 | Dynamic templates | register against a fresh `FastMCP()` instance and call the tool function; patch `upload_file` in the tool module |
 

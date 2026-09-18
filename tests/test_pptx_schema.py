@@ -381,7 +381,7 @@ class TestCharts:
             "type": "chart", "title": "C", "chart_type": "column",
             "categories": ["a", "b", "c"], "series": [{"name": "short", "values": [1]}],
         }])
-        assert any("short" in w and "categories" in w for w in pres.warnings)
+        assert any("short" in w and "categories" in w for w in pres.warning_messages)
 
     def test_null_value_is_allowed(self):
         pres = build([{
@@ -447,7 +447,7 @@ class TestInlineImages:
 
     def test_failed_image_warns_instead_of_silently_placeholdering(self):
         pres = build([{"type": "image", "title": "X", "source": "data:image/png;base64,!!!"}])
-        assert any("image could not be loaded" in w for w in pres.warnings)
+        assert any("image could not be loaded" in w for w in pres.warning_messages)
 
 
 # =============================================================================
@@ -471,29 +471,29 @@ class TestWarnings:
         itself is covered in test_pptx_templates.py.
         """
         pres = build([{"type": "content", "title": "C", "body": "- a", "layout": "Brand Body"}])
-        assert any("Brand Body" in w for w in pres.warnings)
+        assert any("Brand Body" in w for w in pres.warning_messages)
 
     def test_overfull_body_warns(self):
         long_bullets = [{"text": "A fairly long bullet line that will wrap once or twice " * 3}
                         for _ in range(24)]
         pres = build([{"type": "content", "title": "Too much", "body": long_bullets}])
-        assert any("shrunk to fit" in w for w in pres.warnings)
+        assert any("shrunk to fit" in w for w in pres.warning_messages)
 
     def test_tall_table_warns_and_shrinks(self):
         rows = [["Col A", "Col B"]] + [[f"row {i}", str(i)] for i in range(40)]
         pres = build([{"type": "table", "title": "Big", "rows": rows}])
-        assert any("table" in w for w in pres.warnings)
+        assert any("table" in w for w in pres.warning_messages)
 
     def test_empty_table_warns(self):
         pres = build([{"type": "table", "title": "Empty", "rows": []}])
-        assert any("no rows" in w for w in pres.warnings)
+        assert any("no rows" in w for w in pres.warning_messages)
 
     def test_warnings_name_the_slide_index(self):
         pres = build([
             {"type": "title", "title": "T"},
             {"type": "image", "title": "X", "source": "data:image/png;base64,!!!"},
         ])
-        assert any(w.startswith("slide 1:") for w in pres.warnings)
+        assert any(w.startswith("slide 1:") for w in pres.warning_messages)
 
 
 # =============================================================================
@@ -574,5 +574,6 @@ def test_buffer_function_returns_warnings():
         [{"type": "content", "title": "C", "body": "- a", "layout": "Nope"}], "16:9"
     )
     assert isinstance(buffer, io.BytesIO)
-    assert any("Nope" in w for w in warnings)
+    assert any("Nope" in w.message for w in warnings)
+    assert all(w.code and w.severity for w in warnings)
     assert len(PptxReader(buffer).slides) == 1
