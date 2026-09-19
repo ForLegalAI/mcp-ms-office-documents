@@ -44,7 +44,7 @@ from starlette.routing import Mount
 
 from config import Config
 from admin import auth, base_templates, views
-from admin.analysis import analyze
+from admin.analysis import analyze, is_unusable
 from admin.components import head_tags
 from admin.forms import build_spec, checked
 from admin.kinds import (
@@ -344,8 +344,7 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         analysis = None
         if not error:
             analysis = analyze(s.analysis_kind, data)
-            if any("Could not open" in w for w in analysis.warnings):
-                error = analysis.warnings[0]
+            error = is_unusable(analysis)
         if error:
             return _base_page(sess, focus=key, message=error, message_kind="err")
 
@@ -369,12 +368,16 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         if bad:
             return bad
 
+        # unlink() decides, rather than is_file() deciding and unlink()
+        # assuming: between the two, a concurrent revert (a second tab) would
+        # leave this one raising FileNotFoundError into a 500.
         target = base_templates.custom_path(ctx.store.custom_dir, s)
-        if not target.is_file():
+        try:
+            target.unlink()
+        except FileNotFoundError:
             return _base_page(sess, focus=key,
                               message="There is no custom file to remove.",
                               message_kind="warn")
-        target.unlink()
         logger.info("[admin] Removed custom %s base template", key)
         if s.has_default:
             message = f"Removed {target.name}; the bundled default is in use again."
@@ -410,8 +413,9 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             return views.new_page(ctx, kind, csrf=csrf, error=error)
 
         analysis = analyze(kind, data)
-        if any("Could not open" in w for w in analysis.warnings):
-            return views.new_page(ctx, kind, csrf=csrf, error=analysis.warnings[0])
+        unusable = is_unusable(analysis)
+        if unusable:
+            return views.new_page(ctx, kind, csrf=csrf, error=unusable)
 
         # Keep the uploaded extension (a .potx stays a .potx) rather than
         # forcing the canonical one onto a file that is not in that format.
@@ -486,8 +490,8 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
 
         _upload, data, error = await _read_upload(form)
         analysis = analyze(kind, data) if data else None
-        if not error and analysis and any("Could not open" in w for w in analysis.warnings):
-            error = analysis.warnings[0]
+        if not error and analysis:
+            error = is_unusable(analysis)
         if error:
             # Prefill from the file that is still installed, but do not report on
             # it: the admin asked about the file they just submitted, and this is

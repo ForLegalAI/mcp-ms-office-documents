@@ -179,6 +179,72 @@ def test_upload_rejects_a_file_it_cannot_open(admin_client):
     assert not (custom / "custom_docx_template.docx").exists(), "a reject must not install"
 
 
+def test_revert_survives_the_file_vanishing_underneath_it(admin_client, monkeypatch):
+    """Two tabs reverting at once must not 500.
+
+    is_file() then unlink() is a check-then-act: the second request finds the
+    file gone between the two calls. The route lets unlink() decide instead,
+    so this pins the except branch rather than the check.
+    """
+    client, custom = admin_client
+    _post(client, "/admin/base/docx/upload",
+          files={"file": ("m.docx", _docx_bytes(), "application/octet-stream")})
+
+    real_unlink = Path.unlink
+
+    def vanishing(self, *a, **kw):
+        real_unlink(self, *a, **kw)          # the "other tab" won the race
+        raise FileNotFoundError(str(self))   # ...so this one finds it gone
+
+    monkeypatch.setattr(Path, "unlink", vanishing)
+    r = _post(client, "/admin/base/docx/revert")
+    assert r.status_code == 200, "a lost race must not surface as a server error"
+    assert "no custom file to remove" in r.text.lower()
+
+
+def test_a_workbook_whose_styles_cannot_be_read_is_not_installed(admin_client,
+                                                                 monkeypatch):
+    """The upload gate must catch every "Could not …", not just "Could not open".
+
+    analyze_xlsx has a second failure — the workbook opens but its named
+    styles do not read — which the old inline `"Could not open"` match let
+    through, installing a file whose whole purpose had failed.
+    """
+    import admin.analysis as analysis_mod
+    from admin.analysis import Analysis
+
+    client, custom = admin_client
+    monkeypatch.setattr(
+        analysis_mod, "analyze",
+        lambda kind, data: Analysis(
+            kind="xlsx", warnings=["Could not read named styles: boom"]),
+    )
+    monkeypatch.setattr("admin.app.analyze", analysis_mod.analyze)
+
+    r = _post(client, "/admin/base/xlsx/upload",
+              files={"file": ("s.xlsx", _xlsx_bytes("Callout"),
+                              "application/octet-stream")})
+    assert "could not read named styles" in r.text.lower()
+    assert not (custom / "custom_xlsx_template.xlsx").exists()
+
+
+def test_is_unusable_separates_fatal_from_advisory(admin_client):
+    """Only "Could not …" stops an upload; observations about a readable file don't."""
+    from admin.analysis import Analysis, is_unusable
+
+    assert is_unusable(Analysis(kind="docx")) is None
+    assert is_unusable(Analysis(
+        kind="pptx", warnings=["No layout was detected for: section."])) is None
+    assert is_unusable(Analysis(
+        kind="docx", warnings=["Unbalanced {{#if}}/{{/if}} markers."])) is None
+    assert is_unusable(Analysis(
+        kind="docx",
+        warnings=["Could not open as a Word document: boom"])) is not None
+    assert is_unusable(Analysis(
+        kind="xlsx",
+        warnings=["Could not read named styles: boom"])) is not None
+
+
 def test_upload_requires_csrf(admin_client):
     client, custom = admin_client
     r = client.post("/admin/base/docx/upload",

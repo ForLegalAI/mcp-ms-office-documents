@@ -105,6 +105,14 @@ for a path part called `custom_templates`, which is right in the normal layout
 and wrong when the bundled defaults sit under such a directory — it would
 report a default as custom and offer to revert a file the UI cannot delete.
 
+**One predicate decides whether a file is usable.** The analysers report two
+different things: a file that could not be read at all, and observations about
+a file that read fine. Only the first should refuse an upload, and
+`analysis.is_unusable()` is what every upload route asks — it matches any
+warning opening "Could not …". The routes used to match `"Could not open"`
+inline, which missed `analyze_xlsx`'s "Could not read named styles" and
+installed a workbook whose whole purpose had failed.
+
 **3. Colours are tokens.** Custom properties on `:root`, redefined under
 `@media (prefers-color-scheme: dark)`. A rule written with a literal colour
 will be wrong in one of the two themes.

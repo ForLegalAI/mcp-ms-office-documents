@@ -417,6 +417,26 @@ def _add_pptx_warnings(analysis: PptxAnalysis) -> None:
         )
 
 
+def is_unusable(analysis) -> Optional[str]:
+    """The warning saying the file cannot be used at all, or ``None``.
+
+    The analysers report two kinds of thing: a file that could not be read
+    (fatal — there is nothing to install), and observations about a file that
+    read fine (a missing style, a layout that serves no role). Only the first
+    should stop an upload.
+
+    Fatal warnings are the ones that open "Could not …". Callers used to match
+    ``"Could not open"`` inline, which missed
+    :func:`analyze_xlsx`'s "Could not read named styles" — a workbook that
+    opened but whose styles could not be read would install anyway, with only
+    a note on screen.
+    """
+    for warning in getattr(analysis, "warnings", None) or []:
+        if warning.startswith("Could not "):
+            return warning
+    return None
+
+
 def analyze_xlsx(data: bytes) -> Analysis:
     """Analyse an Excel template: the named cell styles it defines.
 
