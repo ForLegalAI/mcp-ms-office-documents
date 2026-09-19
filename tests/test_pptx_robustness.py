@@ -23,7 +23,7 @@ from pptx.dml.color import RGBColor
 from pptx_tools import slide_builder
 from pptx_tools.chart_utils import CHART_TYPE_MAP, ChartDataError, validate_chart_data
 from pptx_tools.constants import DEFAULT_SLIDE_FORMAT, TABLE_HEADER_FILL
-from pptx_tools.helpers import cell_to_text, coerce_indent_level, parse_color, parse_table_data
+from pptx_tools.helpers import cell_to_text, parse_color, parse_table_data
 from pptx_tools.inline_formatting import needs_inline_processing
 from pptx_tools.slide_builder import PowerpointPresentation
 
@@ -272,15 +272,10 @@ class TestInlineFormattingPrecision:
 # =============================================================================
 
 class TestIndentationLevel:
-
-    @pytest.mark.parametrize("value,expected", [
-        (1, 0), (2, 1), ("2", 1), (None, 0),
-        (7, 4),      # clamped to MAX_INDENT_LEVEL
-        (0, 0), (-3, 0),
-        ("two", 0),  # unparseable -> top level
-    ])
-    def test_coercion(self, value, expected):
-        assert coerce_indent_level(value) == expected
+    """Clamping is exercised through the builder rather than a helper of its
+    own: `coerce_indent_level()` had no caller but a unit test of itself and
+    was removed in #116. `schema.coerce_slides()` clamps on the way in, and
+    `_write_bullets()` again at the paragraph."""
 
     def test_string_level_does_not_fail_the_deck(self):
         pres = build([{

@@ -85,10 +85,10 @@ content. Body only.
 
 The body renders the HTML with a default `pystache.Renderer` (so `{{x}}`
 escapes and `{{{x}}}` is raw), wraps it in a base64 `MIMEText`, sets
-`Subject`, recipients and `X-Unsent`, and uploads. One special case exists:
-a `promo_code` argument automatically produces a `promo_code_block` context
-value when the template does not declare one. That is a leftover from the
-first example template and is worth removing once no template relies on it.
+`Subject`, recipients and `X-Unsent`, and uploads. The context is exactly the
+declared arguments, with `None` flattened to `""` — nothing is synthesised.
+An optional value is shown with a Mustache section over the argument itself
+(`{{#arg}}…{{/arg}}`), in the template where it can be seen and styled.
 
 ## Live registration
 
@@ -101,6 +101,39 @@ template is callable immediately.
 
 `metrics.record_call()` and `record_error()` are called from the tool body,
 keyed by kind and template name, for the Status page.
+
+## What the admin UI reads a template with
+
+Two modules under `admin/` serve the UI rather than the MCP tools, and are
+the pieces of that package with no page of their own. Both are deliberately
+import-light — no FastHTML — so they can be unit tested without standing the
+UI up.
+
+`admin/analysis.py` reads an uploaded asset and reports what the renderer
+will act on, which is what lets the UI offer arguments instead of asking an
+admin to type them:
+
+| Function | Reports |
+|---|---|
+| `analyze_docx()` | `{{placeholders}}`, `{{#if}}` conditionals, the paragraph styles the file defines (for the style-mapping dropdowns) and which styles the renderer expects but the file lacks |
+| `analyze_html()` | Mustache variables and sections |
+| `analyze_pptx()` | Layouts, their placeholders, theme fonts and colours, plus warnings from `_add_pptx_warnings()` |
+| `analyze()` | Dispatches on kind |
+| `reconcile()` | Compares what was detected against the spec's declared `args`, so the UI can offer to add the missing ones and flag orphans |
+
+It shares `PLACEHOLDER_PATTERN` with `dynamic_docx_tools`, so detection and
+substitution cannot disagree about what a placeholder looks like.
+
+`admin/preview.py` renders a managed template with sample values, in memory:
+`render_docx_preview()`, `render_pptx_preview()` and `render_email_preview()`,
+with `sample_values()` inventing plausible values from the declared args.
+Two properties matter. It **never touches the upload backend** — the bytes
+are returned, so a preview works on a server configured for S3 — and the Word
+path goes through the *production* substitution pipeline
+(`resolve_conditionals` + `replace_placeholders_in_document`), so the preview
+cannot drift from what the live tool produces. The email path mirrors the
+dynamic email tool's pystache rendering, building the context the same way:
+declared arguments only, `None` flattened to `""`.
 
 ## The argument-schema rules
 
@@ -141,12 +174,12 @@ template name, for the filename.
 - **Single instance.** Live registration assumes one process owns the
   template files. With replicas, use shared storage and restart.
 - **Block content is body-only** in Word templates; see rendering above.
-- **The `promo_code` special case** in the email body, as above ([#116](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/116)).
 
 ## Tests
 
 | File | Covers |
 |------|--------|
+| `tests/test_admin_config.py`, `tests/test_admin_app.py`, `tests/test_admin_pptx.py` | Spec analysis, reconciliation and preview rendering for the admin UI |
 | `tests/test_docx_templates.py` | Registration from YAML, placeholder replacement across runs, block content insertion |
 | `tests/test_docx_placeholder_formatting.py` | Run formatting preserved through replacement |
 | `tests/test_docx_conditionals.py` | Marker parsing, balance, nesting, unknown names |

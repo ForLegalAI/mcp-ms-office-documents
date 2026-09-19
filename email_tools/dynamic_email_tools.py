@@ -186,11 +186,6 @@ def _register_single_email_template(mcp: FastMCP, spec: Dict[str, Any]) -> bool:
                 payload = data.model_dump()
                 safe_payload = {k: ("" if v is None else v) for k, v in payload.items()}
 
-                if "promo_code" in safe_payload and "promo_code_block" not in safe_payload:
-                    promo_val = safe_payload.get("promo_code")
-                    safe_payload["promo_code_block"] = (
-                        f"<div class=\"promo\">Use promo code <strong>{promo_val}</strong>.</div>" if promo_val else ""
-                    )
                 try:
                     html_rendered = _renderer.render(_html, safe_payload)
                 except Exception as e:  # pragma: no cover

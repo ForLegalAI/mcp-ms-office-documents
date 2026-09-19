@@ -448,6 +448,3 @@ assert on shapes and XML. See [`../testing.md`](../testing.md).
 - **No SmartArt.** KPI and timeline slides are built from autoshapes.
 - **Category charts only in `chart`.** Scatter is its own slide type because
   it needs a different data object; bubble and combo charts are not offered.
-- **`coerce_indent_level()` and `_add_image_from_url()` in `helpers.py` have
-  no callers** outside tests. They are backwards-compatibility leftovers and
-  candidates for removal ([#116](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/116)).

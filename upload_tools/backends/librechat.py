@@ -13,26 +13,19 @@ from typing import Optional
 import httpx
 
 from config import LibreChatSettings
+# One MIME table for the whole upload layer; re-exported here because this
+# module's name for it is part of its published surface.
+from ..utils import MIME_TYPES, file_extension
 
 logger = logging.getLogger(__name__)
-
-# MIME type mapping for document extensions
-MIME_TYPES = {
-    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    "pdf": "application/pdf",
-    "eml": "message/rfc822",
-    "xml": "application/xml",
-    "txt": "text/plain",
-    "md": "text/markdown",
-    "json": "application/json",
-    "csv": "text/csv",
-}
 
 
 def get_mime_type(filename: str) -> str:
     """Get MIME type for a filename.
+
+    Falls back to the ``mimetypes`` module, and then to a generic binary type,
+    rather than raising: LibreChat receives whatever a caller attaches, and an
+    attachment typed as a guess still reaches the conversation.
 
     Args:
         filename: Filename with extension
@@ -40,7 +33,7 @@ def get_mime_type(filename: str) -> str:
     Returns:
         MIME type string
     """
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    ext = file_extension(filename)
     if ext in MIME_TYPES:
         return MIME_TYPES[ext]
     # Fallback to mimetypes module

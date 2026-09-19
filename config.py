@@ -333,6 +333,18 @@ class Config(BaseModel):
         default_factory=AdminSettings,
         description="Settings for the optional template-admin UI.",
     )
+    email_default_language: str = Field(
+        default="en-US",
+        description=(
+            "BCP-47 tag stamped on an email draft when the caller does not "
+            "give one, setting the proofing language Outlook checks it in. "
+            "It was a hard-coded cs-CZ until #116 — this server was written "
+            "for a Czech deployment — which meant everyone else got Czech "
+            "proofing on an English draft unless they patched the source. "
+            "Set EMAIL_DEFAULT_LANGUAGE (e.g. cs-CZ) to change it; the "
+            "tool's own `language` argument still wins per call."
+        ),
+    )
     run_blocking_by_asyncio_thread_enabled: bool = Field(
         default=True,
         description=(
@@ -512,6 +524,13 @@ class Config(BaseModel):
         except (ValueError, TypeError):
             run_blocking_max_workers = 4
 
+        # Default proofing language for email drafts. An empty or absent
+        # value falls back to the default rather than becoming "", which
+        # would put lang="" on every draft.
+        email_default_language = (
+            os.environ.get("EMAIL_DEFAULT_LANGUAGE") or ""
+        ).strip() or "en-US"
+
         # Stateless streamable-http transport. Absent or empty env var
         # means False (existing behaviour). Truthy ("1"/"true"/"yes"/"on")
         # enables stateless mode for horizontal scaling.
@@ -523,6 +542,7 @@ class Config(BaseModel):
                 storage=storage_settings,
                 api_key=raw_api_key,
                 admin=admin_settings,
+                email_default_language=email_default_language,
                 run_blocking_by_asyncio_thread_enabled=run_blocking_by_asyncio_thread_enabled,
                 run_blocking_max_workers=run_blocking_max_workers,
                 allow_private_image_addresses=cls._parse_bool(

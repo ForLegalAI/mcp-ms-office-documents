@@ -339,26 +339,6 @@ def resolve_fill(color: Optional[str], default: RGBColor):
     return parse_color(text, default)
 
 
-def coerce_indent_level(value: Any) -> int:
-    """Map a 1-based ``indentation_level`` onto a 0-based pptx paragraph level.
-
-    Tolerant by design: the value reaches us from a model, so a numeric string
-    ("2") is accepted, a level past the supported depth is clamped instead of
-    producing an invalid paragraph, and an unparseable value falls back to the
-    top level with a warning rather than failing the presentation.
-    """
-    if value is None:
-        return 0
-
-    try:
-        level = int(value)
-    except (TypeError, ValueError):
-        logger.warning("Invalid indentation_level %r; using 1", value)
-        level = 1
-
-    return max(1, min(level, MAX_INDENT_LEVEL)) - 1
-
-
 # =============================================================================
 # Consolidated Slide Helpers Mixin
 # =============================================================================
@@ -808,17 +788,6 @@ class SlideHelpers:
         except Exception as e:
             logger.error("Failed to add image from %r: %s", source[:80], e, exc_info=True)
             return None, str(e)
-
-    def _add_image_from_url(self, slide, image_url: str, left: int, top: int,
-                            max_width: int, max_height: int,
-                            center_horizontal: bool = True,
-                            center_vertical: bool = False) -> Optional[Any]:
-        """Backwards-compatible wrapper returning only the picture."""
-        picture, _ = self._add_image(
-            slide, image_url, left, top, max_width, max_height,
-            center_horizontal, center_vertical,
-        )
-        return picture
 
     def _fill_picture_placeholder(self, placeholder, source: str):
         """Put an image in a PICTURE placeholder, letting the template frame it.
