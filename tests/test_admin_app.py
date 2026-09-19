@@ -202,13 +202,16 @@ def test_invalid_name_rejected(admin_client):
 
 
 def test_ui_theme_and_controls_present(admin_client):
-    """The self-contained theme and dynamic-row controls are wired in."""
+    """The self-contained theme and dynamic-row controls are wired in.
+
+    That the theme reaches for nothing external is a property of every page,
+    not just this one, and is tested in tests/test_admin_assets.py.
+    """
     client, _ = admin_client
-    # Index ships the inline theme + topbar (no CDN dependency).
+    # Index ships the inline theme + topbar.
     idx = client.get("/admin/").text
     assert "Template Admin" in idx
     assert "--brand" in idx  # inline CSS variables
-    assert "cdn" not in idx.lower()  # no external stylesheet/script
 
     data = _docx_with_placeholders("Dear {{recipient}},", "{{#if ps}}", "{{note}}", "{{/if}}")
     r = _post(client, "/admin/docx/draft", data={"name": "ux_tpl"},
@@ -268,6 +271,101 @@ def test_reupload_rescans_new_placeholder(admin_client):
     assert r.status_code == 200
     assert "Re-scanned" in r.text
     assert "case_no" in r.text  # newly detected placeholder surfaced
+
+
+ANALYSIS_CARD = "What we found in the document"
+
+
+def _saved_docx_template(client, name="reup_err_tpl"):
+    """A saved, live docx template with one placeholder."""
+    _post(client, f"/admin/docx/draft", data={"name": name},
+          files={"file": (f"{name}.docx", _docx_with_placeholders("Hi {{name}}"),
+                          "application/octet-stream")})
+    _post(client, "/admin/docx/save", data={
+        "kind": "docx", "asset_filename": f"{name}.docx", "name": name,
+        "title": "R", "description": "d", "arg_name": ["name"], "arg_type": ["string"],
+        "arg_required": ["true"], "arg_default": [""], "arg_desc": [""],
+    })
+    return name
+
+
+@pytest.mark.parametrize("payload, expected", [
+    (b"", "choose a file"),
+    (b"not a docx at all", "could not open"),
+])
+def test_reupload_rejects_bad_file(admin_client, payload, expected):
+    """A rejected re-upload re-renders the editor with the error."""
+    client, _ = admin_client
+    name = _saved_docx_template(client)
+    r = _post(client, f"/admin/docx/{name}/reupload",
+              files={"file": (f"{name}.docx", payload, "application/octet-stream")})
+    assert r.status_code == 200
+    assert expected in r.text.lower()
+    assert "Re-scanned" not in r.text
+    # The arguments are still editable, and the replace card is still offered.
+    assert 'name="arg_name"' in r.text
+    assert "Replace document" in r.text
+
+
+def test_reupload_oversized_is_rejected(admin_client):
+    client, _ = admin_client
+    from admin.app import MAX_UPLOAD_BYTES
+    name = _saved_docx_template(client, "reup_big_tpl")
+    r = _post(client, f"/admin/docx/{name}/reupload",
+              files={"file": (f"{name}.docx", b"x" * (MAX_UPLOAD_BYTES + 1),
+                              "application/octet-stream")})
+    assert r.status_code == 200
+    assert "too large" in r.text.lower()
+    assert "Re-scanned" not in r.text
+
+
+def test_reupload_rejection_keeps_the_installed_file(admin_client):
+    """A rejected re-upload must not overwrite what is on disk."""
+    client, _ = admin_client
+    name = _saved_docx_template(client, "reup_keep_tpl")
+    before = (store_mod.FileTemplateStore.from_config()
+              .read_asset("docx", f"{name}.docx"))
+    _post(client, f"/admin/docx/{name}/reupload",
+          files={"file": (f"{name}.docx", b"junk", "application/octet-stream")})
+    after = (store_mod.FileTemplateStore.from_config()
+             .read_asset("docx", f"{name}.docx"))
+    assert after == before
+
+
+def test_reupload_rejection_does_not_report_on_the_old_file(admin_client):
+    """The rejected page must not describe the file still on disk.
+
+    "What we found in the document" means the file just uploaded everywhere
+    else it appears; on this path that file was refused, so showing the card
+    would describe a different document under the same heading.
+    """
+    client, _ = admin_client
+    name = _saved_docx_template(client, "reup_report_tpl")
+    # The card is on the ordinary edit page...
+    assert ANALYSIS_CARD in client.get(f"/admin/docx/{name}/edit").text
+    # ...and on a successful re-scan...
+    ok = _post(client, f"/admin/docx/{name}/reupload",
+               files={"file": (f"{name}.docx", _docx_with_placeholders("Hi {{name}}"),
+                               "application/octet-stream")})
+    assert ANALYSIS_CARD in ok.text
+    # ...but not when the upload was refused.
+    bad = _post(client, f"/admin/docx/{name}/reupload",
+                files={"file": (f"{name}.docx", b"junk", "application/octet-stream")})
+    assert ANALYSIS_CARD not in bad.text
+
+
+def test_login_form_carries_no_csrf_field(admin_client):
+    """Login authenticates by password; there is no session to hold a token.
+
+    Rendering an empty one would imply a protection this route does not have.
+    """
+    client, _ = admin_client
+    html = client.get("/admin/login", follow_redirects=False).text
+    if "password" not in html.lower():  # already authed -> redirected
+        client.get("/admin/logout")
+        html = client.get("/admin/login").text
+    assert 'name="password"' in html
+    assert 'name="csrf"' not in html
 
 
 def test_post_without_csrf_is_rejected(admin_client):

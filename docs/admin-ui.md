@@ -59,6 +59,10 @@ tool; it becomes one more value you can pass as the `template` argument of
   the layout choices on screen *including ones you have not saved yet*.
 - **Save** — the presentation tool can build on it immediately, no restart.
 
+The UI follows your system's **light or dark appearance** automatically, and
+loads nothing from the internet — no CDN, no web font — so it looks right on an
+air-gapped host.
+
 **How it's stored:** the UI writes one file per template into
 `config/docx_templates.d/`, `config/email_templates.d/` or
 `config/pptx_templates.d/` (plus the asset into `custom_templates/`). Your

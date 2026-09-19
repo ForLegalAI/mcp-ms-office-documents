@@ -1,0 +1,105 @@
+# Admin UI internals
+
+The optional template-admin UI (`ADMIN_ENABLED`) is a FastHTML app mounted in
+the same ASGI process as the MCP server, so saving a template takes effect with
+no restart. This page is about **how it is built**. For what an admin can do
+with it, see [`../admin-ui.md`](../admin-ui.md); for what a template spec may
+contain, [`dynamic-templates.md`](dynamic-templates.md).
+
+## Module map
+
+| Module | Owns |
+|--------|------|
+| `admin/app.py` | `AdminContext` (the services a view needs), the routes, `build_admin_app()` / `build_combined_app()` — and nothing else |
+| `admin/components.py` | markup primitives (`card`, `field`, `data_table`, …) and the inlined theme |
+| `admin/kinds.py` | one `KindDescriptor` per template kind: label, icon, wording, `has_args` |
+| `admin/forms.py` | reading a submitted form back into a spec dict |
+| `admin/views/` | the pages — `shell`, `templates`, `status`, `login` |
+| `admin/store.py` | persistence: `config/<kind>_templates.d/<name>.yaml` + the asset |
+| `admin/analysis.py` | what is inside an uploaded `.docx` / `.html` / `.pptx` |
+| `admin/preview.py` | rendering a template without touching the upload backend |
+| `admin/auth.py` | the shared-password gate and CSRF tokens |
+
+`components`, `kinds`, `forms`, `store` and `analysis` do not import
+`admin.app`; views take the `AdminContext` as a parameter. `store`, `analysis`
+and `forms` have no FastHTML dependency at all, so their rules can be unit
+tested without rendering anything.
+
+A request is: route in `app.py` → load from `store` (and maybe `analysis`) →
+a function in `views/` → primitives from `components.py`.
+
+## The three invariants
+
+**1. No external assets.** No CDN stylesheet, no `<script src>`, no web font,
+no off-origin image — the UI must render correctly offline, in an air-gapped
+deployment and behind a restrictive CSP. This is why `build_admin_app()`
+constructs `FastHTML(..., default_hdrs=False, htmx=False, surreal=False)`:
+FastHTML's own defaults are CDN-loaded. The theme and the ~8 lines of
+JavaScript are inlined by `components.head_tags()`, which also injects a blank
+argument row as `window.__ARG_ROW_HTML__` so "Add argument" can clone it
+without a client-side templating library.
+
+`tests/test_admin_assets.py` walks every page type and enforces this. It also
+asserts the theme and script *are* present, so deleting them is not a way to
+pass.
+
+**2. Every control is labelled.** `components.field()` mints an `id` from the
+control's `name` and points the `<label>` at it. Building a field by hand
+silently loses the association, which is what the whole UI used to do. Use
+`static_row()` for a read-only labelled value — there is no control for a label
+to point at, and it must not be used for input.
+
+**One gotcha inside that.** `views.edit_page()` takes the analysis twice over:
+once to prefill the argument rows, once to render "What we found in the
+document". The rejected-re-upload path passes `report=False` to get the first
+without the second — the file on disk is still the old one, so it is the right
+thing to prefill from and the wrong thing to describe under a heading that
+means "the file you just uploaded" everywhere else it appears.
+
+**3. Colours are tokens.** Custom properties on `:root`, redefined under
+`@media (prefers-color-scheme: dark)`. A rule written with a literal colour
+will be wrong in one of the two themes.
+
+## Adding a template kind
+
+Two tables, no new branches:
+
+1. `admin/store._KIND_META` — spec subdirectory, accepted extensions, the spec
+   key naming the asset.
+2. `admin/kinds.DESCRIPTORS` — label, icon, `has_args`, and the wording for the
+   name field, the table's detail column, the post-upload flash and the save
+   confirmation.
+
+`KindDescriptor` re-exposes the storage fields as properties, so a view needs
+one lookup (`descriptor(kind)`) rather than reaching into both.
+
+Where behaviour genuinely differs, branch on `descriptor(kind).has_args` — the
+real distinction, not the kind name. A docx or email template is a
+parameterised document: it declares arguments and becomes an MCP tool, so
+"live" means a tool is registered. A pptx template is a design with no
+arguments; it becomes one more value for the presentation tool's `template`
+argument, so "live" means the registry re-read it.
+
+## Known limitations
+
+- PowerPoint has no "New template" link once one template exists — the top bar
+  omits it and the table only offers one in its empty state
+  ([#157](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/157)).
+  `kinds.NAV_KINDS` is where that is decided.
+- The style-mapping editor exposes 5 of the 16 keys `docx_tools/style_map.py`
+  recognises ([#160](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/160));
+  `kinds.STYLE_KEYS` is the list.
+- Deleting a template always keeps its asset, and nothing lists orphans
+  ([#158](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/158),
+  [#166](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/166)).
+- Uploads are read fully into memory and capped at 10 MB, which is low for a
+  brand deck ([#172](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/172)).
+
+## Tests
+
+| File | Covers |
+|------|--------|
+| `tests/test_admin_app.py` | routes, auth, CSRF, live registration, the docx/email flow |
+| `tests/test_admin_pptx.py` | pptx analysis, the layout form, preview |
+| `tests/test_admin_assets.py` | the no-external-assets and `lang` invariants, on every page |
+| `tests/test_admin_config.py` | `ADMIN_*` settings |

@@ -36,7 +36,9 @@ warning_channel.py  DocumentWarning + WarningChannel: what a build worked around
 image_utils.py      image download/decode with the SSRF guard
 metrics.py          in-process counters for the admin Status page
 docx_tools/ xlsx_tools/ pptx_tools/ email_tools/ xml_tools/   one package per type
-admin/              optional FastHTML admin UI (ADMIN_ENABLED)
+admin/              optional FastHTML admin UI (ADMIN_ENABLED); app.py holds
+                    routes only — components.py (markup + theme), kinds.py
+                    (one descriptor per kind), forms.py, views/
 docs/               user reference (docs/*.md) and development docs (docs/development/)
 ```
 
@@ -105,6 +107,21 @@ backend → URL string or LibreChat artifact dict. Details:
   text field, and a direct assignment prints the markers instead.
 - Every warning takes a code from `pptx_tools/warnings.py`, and every code
   takes a severity in `WARNING_SEVERITY`.
+
+**Admin UI**
+- Build pages from `admin/components.py`, never hand-written FastHTML trees.
+  A labelled control goes through `field()` — it is what mints the `id` and
+  points the `<label>` at it; a table goes through `data_table()`, which is
+  what keeps a wide table from scrolling the whole page.
+- Per-kind wording and flags live in `admin/kinds.py`, storage metadata in
+  `admin/store.py`. Add a kind by editing those two tables, not by adding a
+  branch to a view.
+- No external assets, ever: no CDN stylesheet, no `<script src>`, no web font.
+  The theme and scripts are inlined by `components.head_tags()` and
+  `tests/test_admin_assets.py` enforces it on every rendered page.
+- Colours are CSS custom properties on `:root`, redefined under
+  `prefers-color-scheme: dark`. A new rule takes a token, never a literal, or
+  it will be wrong in one of the two themes.
 
 **Dynamic tools and schemas**
 - Never `Optional[...]` on a dynamic-tool argument; optionality is the
