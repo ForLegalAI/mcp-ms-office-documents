@@ -63,6 +63,16 @@ state linked to the page, adding a template removed the last route to it, which
 was invisible for Word and Email (the top bar covered them) and a dead end for
 PowerPoint (it did not) — #157.
 
+**Deleting never removes a file something else uses.** Assets share one flat
+`custom_templates/` directory, so several templates can name the same file.
+`AdminContext.other_specs_using_asset()` checks both sources — the managed
+`*.d` specs *and* the hand-written master YAML — and the delete page withholds
+the "also delete the source file" option when anything else points at it; the
+POST re-derives the answer server-side rather than trusting the form. A master
+entry sharing the name being deleted counts too: the managed spec was
+overriding it, so deleting the override revives the master definition, still
+pointing at that file.
+
 **3. Colours are tokens.** Custom properties on `:root`, redefined under
 `@media (prefers-color-scheme: dark)`. A rule written with a literal colour
 will be wrong in one of the two themes.

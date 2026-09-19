@@ -161,13 +161,36 @@ class AdminContext:
             return []
         found: List[str] = []
         for other in KINDS:
+            d = descriptor(other)
             for spec in self.store.list_specs(other):
                 if other == kind and spec.get("name") == name:
                     continue
-                if spec.get(descriptor(other).path_key) == filename:
-                    found.append(f"{descriptor(other).label} template "
-                                 f"'{spec.get('name')}'")
-        return found
+                if spec.get(d.path_key) == filename:
+                    found.append(f"{d.label} template '{spec.get('name')}'")
+            # Hand-written master-YAML templates count too, and a master entry
+            # sharing the name being deleted counts most of all: the managed
+            # spec was overriding it, so deleting the override brings the master
+            # entry back to life — still pointing at this file.
+            for spec in self._master_specs(other):
+                if spec.get(d.path_key) == filename:
+                    found.append(f"{d.label} template '{spec.get('name')}' "
+                                 "(from the master YAML)")
+        # Preserve order, drop repeats.
+        return list(dict.fromkeys(found))
+
+    def _master_specs(self, kind: str) -> List[Dict[str, Any]]:
+        """Templates declared in *kind*'s hand-written master YAML.
+
+        Read with no spec directory, so these are the master entries as
+        written — not the merged view the registry serves.
+        """
+        master = self.store.config_dir / descriptor(kind).master_file
+        try:
+            templates, _cfg = gather_specs(master, None)
+        except Exception:
+            logger.exception("[admin] Could not read the %s master YAML", kind)
+            return []
+        return [t for t in templates if isinstance(t, dict)]
 
     def analyze_asset(self, kind: str, spec: Dict[str, Any]):
         """Analyse a spec's installed source file, or ``None`` when it is gone."""

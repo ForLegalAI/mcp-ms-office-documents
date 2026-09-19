@@ -77,6 +77,13 @@ class KindDescriptor:
         return tuple(self._meta["asset_exts"])
 
     @property
+    def master_file(self) -> str:
+        """The hand-written master YAML's filename, beside the ``*.d`` dir."""
+        subdir = self.subdir
+        stem = subdir[:-2] if subdir.endswith(".d") else subdir
+        return f"{stem}.yaml"
+
+    @property
     def path_key(self) -> str:
         """The spec key naming the asset file (``docx_path``, ``pptx_path``…)."""
         return self._meta["path_key"]

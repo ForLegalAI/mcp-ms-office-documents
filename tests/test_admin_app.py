@@ -505,6 +505,77 @@ def test_delete_never_removes_an_asset_another_template_uses(admin_client):
     assert store.get_spec("docx", "del_sharer") is not None
 
 
+def _write_master_yaml(kind, body):
+    """Write a hand-written master YAML beside the managed *.d directory."""
+    store = store_mod.FileTemplateStore.from_config()
+    store.config_dir.mkdir(parents=True, exist_ok=True)
+    from admin.kinds import descriptor
+    path = store.config_dir / descriptor(kind).master_file
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def test_delete_never_removes_an_asset_a_master_template_uses(admin_client):
+    """A hand-written template counts as a user of the file too.
+
+    other_specs_using_asset() reads the managed *.d specs; the master YAML is
+    a separate source the UI lists as read-only, and its templates point at
+    the same flat custom_templates/ directory.
+    """
+    client, _ = admin_client
+    name, asset = _delete_fixture(client, "del_master")
+    _write_master_yaml("docx", f"""templates:
+  - name: handwritten_letter
+    description: hand-written
+    docx_path: {asset}
+    args: []
+""")
+    store = store_mod.FileTemplateStore.from_config()
+
+    page = client.get(f"/admin/docx/{name}/delete").text
+    assert "handwritten_letter" in page
+    assert "master YAML" in page
+    assert 'name="delete_asset"' not in page
+
+    _post(client, f"/admin/docx/{name}/delete", data={"delete_asset": "1"})
+    assert store.get_spec("docx", name) is None
+    assert store.asset_exists("docx", asset), "master-YAML template's asset must survive"
+
+
+def test_delete_respects_a_master_entry_of_the_same_name(admin_client):
+    """Deleting an override revives the master entry, which still needs the file.
+
+    The managed spec was shadowing a master template of the same name, so
+    removing it does not retire that name — it restores the hand-written
+    definition, still pointing at this asset.
+    """
+    client, _ = admin_client
+    name, asset = _delete_fixture(client, "del_shadow")
+    _write_master_yaml("docx", f"""templates:
+  - name: {name}
+    description: hand-written original
+    docx_path: {asset}
+    args: []
+""")
+    store = store_mod.FileTemplateStore.from_config()
+
+    page = client.get(f"/admin/docx/{name}/delete").text
+    assert 'name="delete_asset"' not in page, (
+        "the shadowed master entry still uses this file")
+
+    _post(client, f"/admin/docx/{name}/delete", data={"delete_asset": "1"})
+    assert store.asset_exists("docx", asset)
+
+
+def test_delete_without_csrf_is_rejected(admin_client):
+    """The destructive route is pinned directly, not only via /save."""
+    client, _ = admin_client
+    name, _asset = _delete_fixture(client, "del_csrf")
+    r = client.post(f"/admin/docx/{name}/delete", data={})
+    assert r.status_code == 403
+    assert store_mod.FileTemplateStore.from_config().get_spec("docx", name) is not None
+
+
 def test_delete_unknown_template_is_not_found(admin_client):
     client, _ = admin_client
     assert "Not found" in client.get("/admin/docx/no_such_tpl/delete").text
