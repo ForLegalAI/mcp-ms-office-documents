@@ -116,6 +116,9 @@ backend → URL string or LibreChat artifact dict. Details:
 - Per-kind wording and flags live in `admin/kinds.py`, storage metadata in
   `admin/store.py`. Add a kind by editing those two tables, not by adding a
   branch to a view.
+- `admin/kinds.py`'s `STYLE_KEYS` must match the keys `docx_tools/style_map.py`
+  recognises; `tests/test_admin_style_keys.py` enforces it. Style-name labels
+  come from `DEFAULT_STYLE_MAP`, never a second copy.
 - No external assets, ever: no CDN stylesheet, no `<script src>`, no web font.
   The theme and scripts are inlined by `components.head_tags()` and
   `tests/test_admin_assets.py` enforces it on every rendered page.

@@ -31,8 +31,16 @@ http://localhost:8958/admin
   and the description the AI sees.
 - **Preview** with sample values (generates a real file; never uploaded anywhere).
 - **Save** — the template becomes a live MCP tool **immediately**, no restart.
-- **Edit** later — adjust arguments, or **Replace document** to upload a new
-  version and re-scan it for placeholders (existing arguments are kept).
+- **Edit** later — adjust arguments, **download** the source file the template
+  is actually using, or upload a new version over it and re-scan for
+  placeholders (existing arguments are kept). The edit page also shows the
+  **YAML** the template is stored as, so what you built by clicking is readable
+  in the same format `docs/templates.md` teaches.
+- **Style names** — if your Word template renames the built-in styles, map them
+  under *Advanced*. Every style the renderer understands is there (all six
+  heading levels, three numbered and three bulleted list levels, quote, table,
+  normal and code), and each dropdown's default option names what that key
+  resolves to today — including when a global `style_mapping` sets it.
 - **Delete** — asks first, on its own page, listing what goes: the
   configuration and the live tool. The uploaded source file is kept unless you
   tick the box, and it is never removed while another template still uses it.

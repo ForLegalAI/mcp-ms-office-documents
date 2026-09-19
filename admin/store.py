@@ -117,15 +117,31 @@ def validate_name(name: str) -> str:
     return name
 
 
+# Characters no real Office filename needs, and which break a quoted HTTP
+# header value or a log line if one reaches them. A spec file is plain YAML a
+# person can hand-write, so the filename inside it is not necessarily one this
+# code produced. Spaces and non-ASCII are deliberately still allowed —
+# "Brand Deck.pptx" and "naïve.docx" are ordinary names.
+_UNSAFE_FILENAME_CHARS = frozenset('"\\\r\n\t') | {chr(c) for c in range(0x20)}
+
+
 def validate_asset_filename(filename: str, kind: str) -> str:
     """Validate that *filename* is a bare filename with the kind's extension.
 
     Mirrors the filename-only guard enforced by the dynamic-tool loaders so the
-    asset can never reference a directory or absolute path.
+    asset can never reference a directory or absolute path, and rejects the
+    quoting/control characters that would otherwise travel into a
+    ``Content-Disposition`` header when the file is served.
     """
     meta = _require_kind(kind)
     if not filename:
         raise TemplateStoreError("Asset filename must not be empty.")
+    bad = sorted(_UNSAFE_FILENAME_CHARS.intersection(filename))
+    if bad:
+        raise TemplateStoreError(
+            f"Asset filename must not contain {', '.join(repr(c) for c in bad)}; "
+            f"got {filename!r}."
+        )
     p = Path(filename)
     if p.is_absolute() or len(p.parts) != 1:
         raise TemplateStoreError(
@@ -299,7 +315,7 @@ class FileTemplateStore(TemplateStore):
 
         spec_path = self._spec_path(kind, name)
         spec_path.parent.mkdir(parents=True, exist_ok=True)
-        spec_path.write_text(self._dump_spec(spec), encoding="utf-8")
+        spec_path.write_text(self.dump_spec(spec), encoding="utf-8")
         logger.info("[template-store] Saved %s template %r -> %s", kind, name, spec_path)
         return spec
 
@@ -323,8 +339,13 @@ class FileTemplateStore(TemplateStore):
         return existed
 
     @staticmethod
-    def _dump_spec(spec: Dict[str, Any]) -> str:
-        """Serialise a spec to YAML with a header marking it UI-managed."""
+    def dump_spec(spec: Dict[str, Any]) -> str:
+        """Serialise a spec to YAML with a header marking it UI-managed.
+
+        Public because the admin UI shows it: the YAML is the format the rest
+        of the documentation teaches, so an admin who built a template by
+        clicking can still read it in that vocabulary (#163).
+        """
         header = (
             "# Managed by the template-admin UI. Edits here are merged on top of\n"
             "# the master YAML at startup. Prefer editing via the admin UI.\n"

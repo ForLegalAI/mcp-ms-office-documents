@@ -10,6 +10,8 @@ importing it, so this package never imports :mod:`admin.app`.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 
 from fasthtml.common import A, Button, Div, H1, Input, P
 
@@ -70,10 +72,11 @@ def form_actions(ctx, kind: str):
     return c.card(*body)
 
 
-def replace_card(ctx, kind: str, name: str, csrf: str = ""):
-    """Upload a new version of a template's source file."""
+def replace_card(ctx, kind: str, name: str, csrf: str = "",
+                 asset: Optional[str] = None):
+    """Download the installed source file, or upload a new one over it."""
     d = descriptor(kind)
-    return c.card(
+    body = [
         P("Upload a new version of the source file. We'll re-scan it for placeholders "
           "and keep the arguments you've already configured.", cls="muted"),
         c.post_form(
@@ -83,8 +86,16 @@ def replace_card(ctx, kind: str, name: str, csrf: str = ""):
             Button("Upload & re-scan", type="submit", cls="btn btn-secondary"),
             csrf=csrf, enctype="multipart/form-data",
         ),
-        title="Replace document",
-    )
+    ]
+    if asset:
+        body.append(Div(
+            A(f"⭳ Download {asset}", href=ctx.u(f"/{kind}/{name}/download"),
+              cls="btn btn-secondary btn-sm"),
+            P("The file this template is using right now — useful before "
+              "replacing it, or to copy it to another server.", cls="muted"),
+            cls="table-actions",
+        ))
+    return c.card(*body, title="Source file")
 
 
 def save_failed_page(ctx, message: str):

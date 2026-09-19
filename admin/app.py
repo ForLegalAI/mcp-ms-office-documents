@@ -47,7 +47,9 @@ from admin import auth, views
 from admin.analysis import analyze
 from admin.components import head_tags
 from admin.forms import build_spec, checked
-from admin.kinds import KINDS, descriptor, is_kind
+from admin.kinds import (
+    KINDS, content_disposition, descriptor, is_kind, media_type,
+)
 from admin.preview import (
     sample_values, render_docx_preview, render_email_preview, render_pptx_preview,
 )
@@ -334,6 +336,36 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             return views.not_found_page(ctx, name)
         return views.edit_page(ctx, kind, name, spec, ctx.analyze_asset(kind, spec),
                                csrf=auth.ensure_csrf(sess))
+
+    @rt("/{kind}/{name}/download")
+    def download(kind: str, name: str):
+        """Serve the source file a template is actually using (#162).
+
+        Sits behind the same gate as every other route — `auth.make_before`
+        now exempts nothing but the login endpoint, which matters here because
+        this is the first route that serves an admin-uploaded file. The
+        filename is resolved through `store.asset_path()`, whose
+        `validate_asset_filename` refuses anything but a bare name, so a spec
+        cannot point the download out of `custom_templates/`.
+        """
+        if not is_kind(kind):
+            return _home()
+        spec = ctx.store.get_spec(kind, name)
+        if spec is None:
+            return views.not_found_page(ctx, name)
+        asset = spec.get(descriptor(kind).path_key)
+        if not asset or not ctx.store.asset_exists(kind, asset):
+            return views.not_found_page(ctx, f"{name}'s source file")
+        try:
+            data = ctx.store.read_asset(kind, asset)
+        except TemplateStoreError:
+            logger.exception("[admin] Could not read %s asset for %r", kind, name)
+            return views.not_found_page(ctx, f"{name}'s source file")
+        return Response(
+            content=data,
+            media_type=media_type(asset),
+            headers={"Content-Disposition": content_disposition(asset)},
+        )
 
     @rt("/{kind}/{name}/reupload", methods=["post"])
     async def reupload(req, sess, kind: str, name: str):

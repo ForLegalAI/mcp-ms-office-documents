@@ -73,6 +73,23 @@ entry sharing the name being deleted counts too: the managed spec was
 overriding it, so deleting the override revives the master definition, still
 pointing at that file.
 
+**The style editor offers exactly what the renderer recognises.**
+`kinds.STYLE_KEYS` must match the keys `docx_tools/style_map.py` acts on —
+offering fewer hides part of the feature (it offered 5 of 16 for a long time),
+offering more promises a setting that silently does nothing.
+`tests/test_admin_style_keys.py` compares the two lists directly, so adding a
+key to the renderer fails the suite until the UI catches up. The labels come
+from `DEFAULT_STYLE_MAP` for the same reason: a second hand-written copy of the
+defaults would drift.
+
+**A spec's filename is untrusted input.** `save_spec()` validates what the UI
+writes, but a `*.d` spec is plain YAML a person can hand-write, so the filename
+in it is not necessarily one this code produced. It reaches the filesystem
+*and* a `Content-Disposition` header, so `validate_asset_filename()` rejects
+quotes, backslashes and control characters (spaces and non-ASCII stay legal —
+`Brand Deck.pptx` is an ordinary name), and `kinds.content_disposition()`
+builds the header per RFC 6266 rather than interpolating the name.
+
 **3. Colours are tokens.** Custom properties on `:root`, redefined under
 `@media (prefers-color-scheme: dark)`. A rule written with a literal colour
 will be wrong in one of the two themes.
@@ -99,9 +116,14 @@ argument, so "live" means the registry re-read it.
 
 ## Known limitations
 
-- The style-mapping editor exposes 5 of the 16 keys `docx_tools/style_map.py`
-  recognises ([#160](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/160));
-  `kinds.STYLE_KEYS` is the list.
+- The **global** `style_mapping` is still read-only: the editor now says what
+  each key inherits from it, but there is no way to change it from the UI
+  ([#161](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/161)).
+  Editing it needs a home for global config in the `*.d` merge layer —
+  `gather_specs()` reads top-level keys from the master YAML only — and
+  `style_map.load_global_style_map()` caches its result for the process, so
+  both would have to change together for an edit to take effect without a
+  restart.
 - A kept source file is still invisible: deleting now offers to remove it, but
   nothing lists the files in `custom_templates/` that no template points at
   ([#166](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/166)).
@@ -115,4 +137,5 @@ argument, so "live" means the registry re-read it.
 | `tests/test_admin_app.py` | routes, auth, CSRF, live registration, the docx/email flow |
 | `tests/test_admin_pptx.py` | pptx analysis, the layout form, preview |
 | `tests/test_admin_assets.py` | the no-external-assets and `lang` invariants, on every page |
+| `tests/test_admin_style_keys.py` | the style-key lists cannot drift from the renderer |
 | `tests/test_admin_config.py` | `ADMIN_*` settings |

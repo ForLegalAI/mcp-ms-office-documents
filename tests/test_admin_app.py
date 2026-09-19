@@ -302,9 +302,9 @@ def test_reupload_rejects_bad_file(admin_client, payload, expected):
     assert r.status_code == 200
     assert expected in r.text.lower()
     assert "Re-scanned" not in r.text
-    # The arguments are still editable, and the replace card is still offered.
+    # The arguments are still editable, and another upload is still offered.
     assert 'name="arg_name"' in r.text
-    assert "Replace document" in r.text
+    assert f"/admin/docx/{name}/reupload" in r.text
 
 
 def test_reupload_oversized_is_rejected(admin_client):
@@ -579,6 +579,187 @@ def test_delete_without_csrf_is_rejected(admin_client):
 def test_delete_unknown_template_is_not_found(admin_client):
     client, _ = admin_client
     assert "Not found" in client.get("/admin/docx/no_such_tpl/delete").text
+
+
+def test_edit_page_offers_every_style_key_grouped(admin_client):
+    """#160: the editor used to expose 5 of the 16 keys style_map recognises."""
+    from admin.kinds import STYLE_GROUPS, STYLE_KEYS
+
+    client, _ = admin_client
+    name, _asset = _delete_fixture(client, "styles_tpl")
+    html = client.get(f"/admin/docx/{name}/edit").text
+    for key in STYLE_KEYS:
+        assert f'name="style_{key}"' in html, f"{key} has no control"
+    for title, _keys in STYLE_GROUPS:
+        assert title in html, f"group {title!r} not rendered"
+
+
+def test_default_option_says_what_it_inherits(admin_client, tmp_path):
+    """#161: "(use built-in)" is a lie wherever the global mapping sets a key."""
+    client, _ = admin_client
+    name, _asset = _delete_fixture(client, "inherit_tpl")
+
+    # No global mapping: the label names the renderer's own default.
+    html = client.get(f"/admin/docx/{name}/edit").text
+    assert "(use built-in: Heading 1)" in html
+    assert "(use built-in: Table Grid)" in html
+    assert "(use built-in: none)" in html  # `code` has no default style
+
+    # With one, the label names what is actually inherited.
+    _write_master_yaml("docx", """style_mapping:
+  heading_1: Brand Title
+templates: []
+""")
+    html = client.get(f"/admin/docx/{name}/edit").text
+    assert "(inherit from global: Brand Title)" in html
+    assert "(use built-in: Heading 2)" in html  # untouched keys unaffected
+
+
+def test_edit_page_shows_the_stored_yaml(admin_client):
+    """#163: the YAML the UI writes is the format the docs teach."""
+    client, _ = admin_client
+    name, asset = _delete_fixture(client, "yaml_tpl")
+    html = client.get(f"/admin/docx/{name}/edit").text
+    assert "The YAML this is stored as" in html
+    assert "Managed by the template-admin UI" in html
+    assert f"docx_path: {asset}" in html
+
+
+def test_download_serves_the_installed_file(admin_client):
+    """#162: you could replace the source file but never fetch it."""
+    client, _ = admin_client
+    name, asset = _delete_fixture(client, "dl_tpl")
+    installed = store_mod.FileTemplateStore.from_config().read_asset("docx", asset)
+
+    r = client.get(f"/admin/docx/{name}/download")
+    assert r.status_code == 200
+    assert r.content == installed, "served bytes differ from what is on disk"
+    assert asset in r.headers["content-disposition"]
+    assert "wordprocessingml" in r.headers["content-type"]
+
+
+def test_download_is_offered_on_the_edit_page(admin_client):
+    client, _ = admin_client
+    name, _asset = _delete_fixture(client, "dl_link_tpl")
+    assert f"/admin/docx/{name}/download" in client.get(
+        f"/admin/docx/{name}/edit").text
+
+
+def test_download_requires_authentication(tmp_path, monkeypatch):
+    """The first route to serve an uploaded file must sit behind the gate."""
+    monkeypatch.setattr(store_mod, "_LOCAL_CUSTOM_DIR", tmp_path / "c")
+    monkeypatch.setattr(store_mod, "_LOCAL_CONFIG_DIR", tmp_path / "cfg")
+    monkeypatch.setenv("ADMIN_ENABLED", "true")
+    monkeypatch.setenv("ADMIN_PASSWORD", "pw")
+    from fastmcp import FastMCP
+    from admin.app import build_combined_app
+    app = build_combined_app(FastMCP("t"), Config.from_env())
+    with TestClient(app) as c:
+        r = c.get("/admin/docx/anything/download", follow_redirects=False)
+        assert r.status_code == 303
+        assert r.headers["location"].endswith("/admin/login")
+
+
+def test_download_cannot_escape_the_template_directory(admin_client, tmp_path):
+    """A spec's path key must not be able to point the download anywhere.
+
+    save_spec() validates the filename, but a *.d spec file is plain YAML that
+    a person can hand-write, so the route resolves through store.asset_path()
+    rather than joining the string itself.
+    """
+    client, _ = admin_client
+    store = store_mod.FileTemplateStore.from_config()
+    secret = store.custom_dir.parent / "secret.txt"
+    secret.write_text("do not serve me", encoding="utf-8")
+
+    # Hand-write a spec whose asset escapes custom_templates/.
+    spec_dir = store.config_dir / "docx_templates.d"
+    spec_dir.mkdir(parents=True, exist_ok=True)
+    (spec_dir / "escape_tpl.yaml").write_text(
+        "name: escape_tpl\ndescription: d\ndocx_path: ../secret.txt\nargs: []\n",
+        encoding="utf-8")
+
+    r = client.get("/admin/docx/escape_tpl/download")
+    assert b"do not serve me" not in r.content
+    assert r.status_code == 200 and "Not found" in r.text
+
+
+@pytest.mark.parametrize("bad", ['evil".docx', 'a\r\nX-Injected: 1.docx',
+                                 "back\\slash.docx", "bell\x07.docx"])
+def test_asset_filename_rejects_header_breaking_characters(bad):
+    """A spec is hand-writable YAML, so its filename reaches a header.
+
+    Quotes and control characters cannot appear in a real Office filename but
+    can break out of a quoted Content-Disposition value.
+    """
+    with pytest.raises(store_mod.TemplateStoreError):
+        store_mod.validate_asset_filename(bad, "docx")
+
+
+@pytest.mark.parametrize("ok", ["Brand Deck.pptx", "na\u00efve.pptx", "a-b_c.1.pptx"])
+def test_asset_filename_still_accepts_ordinary_names(ok):
+    """The guard must not outlaw spaces or non-ASCII — those are normal."""
+    assert store_mod.validate_asset_filename(ok, "pptx") == ok
+
+
+def test_content_disposition_is_a_legal_header_value():
+    """Non-ASCII names need RFC 6266 encoding, not raw interpolation."""
+    from admin.kinds import content_disposition
+
+    value = content_disposition("na\u00efve deck.pptx")
+    value.encode("ascii")  # a raw name would raise here
+    assert 'filename="na?ve deck.pptx"' in value
+    assert "filename*=UTF-8''na%C3%AFve%20deck.pptx" in value
+    assert "\r" not in value and "\n" not in value
+
+
+def test_download_header_survives_a_non_ascii_filename(admin_client):
+    client, _ = admin_client
+    name, _asset = _delete_fixture(client, "unicode_tpl")
+    store = store_mod.FileTemplateStore.from_config()
+    # Install the same document under a non-ASCII name and point the spec at it.
+    data = store.read_asset("docx", f"{name}.docx")
+    store.write_asset("docx", "sm\u011blouva.docx", data)
+    spec = store.get_spec("docx", name)
+    spec["docx_path"] = "sm\u011blouva.docx"
+    store.save_spec("docx", spec)
+
+    r = client.get(f"/admin/docx/{name}/download")
+    assert r.status_code == 200
+    assert r.content == data
+    r.headers["content-disposition"].encode("ascii")  # must be a legal header
+    assert "sm%C4%9Blouva.docx" in r.headers["content-disposition"]
+
+
+def test_yaml_block_escapes_template_text(admin_client):
+    """The YAML dump is the most literal path from admin text to the page.
+
+    Review on #177 inferred FastHTML escapes plain string children but could
+    not run code to check; this pins it end to end.
+    """
+    client, _ = admin_client
+    _post(client, "/admin/docx/draft", data={"name": "xss_tpl"},
+          files={"file": ("xss_tpl.docx", _docx_with_placeholders("Hi {{who}}"),
+                          "application/octet-stream")})
+    _post(client, "/admin/docx/save", data={
+        "kind": "docx", "asset_filename": "xss_tpl.docx", "name": "xss_tpl",
+        "title": "T", "description": "<script>alert(1)</script> & <b>bold</b>",
+        "arg_name": ["who"], "arg_type": ["string"], "arg_required": ["true"],
+        "arg_default": [""], "arg_desc": [""],
+    })
+    html = client.get("/admin/docx/xss_tpl/edit").text
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+
+
+def test_download_of_a_missing_file_is_not_found(admin_client):
+    client, _ = admin_client
+    name, asset = _delete_fixture(client, "dl_gone_tpl")
+    store = store_mod.FileTemplateStore.from_config()
+    store.asset_path("docx", asset).unlink()
+    r = client.get(f"/admin/docx/{name}/download")
+    assert "Not found" in r.text
+    assert r.status_code == 200  # rendered page, not a raw error
 
 
 def test_post_without_csrf_is_rejected(admin_client):
