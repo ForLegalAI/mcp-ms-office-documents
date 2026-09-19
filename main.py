@@ -11,6 +11,7 @@ from pptx_tools.templates import load_specs as load_template_specs, validate_tem
 from email_tools import _create_eml_buffer
 from email_tools.dynamic_email_tools import register_email_template_tools_from_yaml
 from pathlib import Path
+import metrics
 from config import get_config
 from xml_tools import _create_xml_buffer
 from middleware import ApiKeyAuthMiddleware
@@ -153,8 +154,14 @@ except Exception as e:
 # ---------------------------------------------------------------------------
 # Warnings in the response
 # ---------------------------------------------------------------------------
-def _with_warnings(result, warnings, **extra):
-    """Attach a build's warnings to the tool result.
+def _with_warnings(result, warnings, kind, name, **extra):
+    """Attach a build's warnings to the tool result, and count them.
+
+    *kind* and *name* identify the tool for :mod:`metrics`, which the admin
+    Status page reads. They are required rather than optional because this is
+    the one place every channel-carrying tool passes through on success: a new
+    tool that forgets them fails here instead of going silently uncounted
+    (#173).
 
     Warnings describe a file that was produced but not exactly as asked (a
     block that would not render, an image that would not load, a formula
@@ -169,6 +176,9 @@ def _with_warnings(result, warnings, **extra):
     the string form is widened into a dict; the artifact dict carries its own
     metadata already.
     """
+    metrics.record_call(kind, name)
+    metrics.record_warnings(kind, name, warnings)
+
     reported = [warning.as_dict() for warning in warnings]
     if not reported:
         return result
@@ -223,9 +233,10 @@ async def create_excel_document(
         file_buffer.close()
         
         logger.info("Excel document created successfully")
-        return _with_warnings(result, warnings)
+        return _with_warnings(result, warnings, "xlsx", "create_excel_document")
     except Exception as e:
         logger.error(f"Error creating Excel document: {e}", exc_info=True)
+        metrics.record_error("xlsx", "create_excel_document", str(e))
         raise ToolError(f"Error creating Excel document: {e}")
 
 @mcp.tool(
@@ -324,9 +335,10 @@ async def create_word_document(
         file_buffer.close()
         
         logger.info("Word document created successfully")
-        return _with_warnings(result, warnings)
+        return _with_warnings(result, warnings, "docx", "create_word_document")
     except Exception as e:
         logger.error(f"Error creating Word document: {e}", exc_info=True)
+        metrics.record_error("docx", "create_word_document", str(e))
         raise ToolError(f"Error creating Word document: {e}")
 
 @mcp.tool(
@@ -447,13 +459,17 @@ async def create_powerpoint_presentation(
 
         logger.info("PowerPoint presentation created successfully")
 
-        return _with_warnings(result, warnings, slide_count=len(slides))
+        return _with_warnings(result, warnings, "pptx",
+                              "create_powerpoint_presentation",
+                              slide_count=len(slides))
     except ValueError as e:
         # Schema/validation problems: the message names the slide and field.
         logger.error(f"Invalid presentation input: {e}")
+        metrics.record_error("pptx", "create_powerpoint_presentation", str(e))
         raise ToolError(str(e))
     except Exception as e:
         logger.error(f"Error creating PowerPoint presentation: {e}", exc_info=True)
+        metrics.record_error("pptx", "create_powerpoint_presentation", str(e))
         raise ToolError(f"Error creating PowerPoint presentation: {e}")
 
 @mcp.tool(

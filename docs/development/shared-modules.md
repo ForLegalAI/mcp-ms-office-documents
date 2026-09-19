@@ -149,18 +149,35 @@ Each tool owns its codes and their severities: `docx_tools/warnings.py`,
 vocabulary but keeps its own `SlideWarning` record — a slide index is not a
 line or a cell, and its published shape predates this module.
 `main._with_warnings()` is the one place a result is widened from a bare URL
-string into `{"file", …, "warnings"}`.
+string into `{"file", …, "warnings"}` — and, because it is the one place every
+channel-carrying tool passes through on success, the one place those warnings
+are counted for the Status page. It takes the tool's `kind` and `name` as
+required arguments for that reason: a new tool that forgets them fails there
+rather than going silently uncounted.
 
 `tests/test_warning_channel.py` covers the record and the collector; each
 tool's own codes are covered by `tests/test_<tool>_warnings.py`.
 
 ## `metrics.py`
 
-In-process counters per dynamic template (`record_call`, `record_error`,
-`tool_stats`) under a lock, plus a `RecentLogHandler` ring buffer of 300
-records that the admin app attaches to the root logger when enabled. No
-external dependencies, so the core tool modules can import it. `reset()` is
-for tests.
+In-process counters per tool (`record_call`, `record_error`,
+`record_warnings`, `tool_stats`) under a lock, plus a `RecentLogHandler` ring
+buffer of 300 records that the admin app attaches to the root logger when
+enabled. No external dependencies, so the core tool modules can import it.
+`reset()` is for tests.
+
+`record_warnings()` is what makes a degrading build visible. A build that
+substitutes a style or drops a row still *succeeds*, so `calls` counts it and
+`errors` does not — without this it looked identical to a clean one on the
+Status page (#173). Warnings are counted per severity rather than totalled,
+because `info` is a substitution the caller will not mind and would otherwise
+mask an `error`, which means something they asked for is not in the file;
+`ToolStat.degraded` is the total excluding `info`. A severity the table does
+not recognise counts as degraded rather than being dropped.
+
+Counters cover static tools as well as template-backed ones — a Word
+conversion quietly degrading is the same operator question as a template tool
+doing it.
 
 ## Where the other root files fit
 

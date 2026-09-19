@@ -89,8 +89,10 @@ backend → URL string or LibreChat artifact dict. Details:
   asked, `info` = a substitution the caller will not mind). Each package's
   `test_every_code_has_a_severity` enforces it.
 - A tool with a channel returns `(BytesIO, warnings)` from its buffer
-  function; `main.py` attaches them with `_with_warnings()`. PowerPoint keeps
-  its own `SlideWarning` record and shares the severities.
+  function; `main.py` attaches them with `_with_warnings()`, passing the
+  tool's `kind` and `name` — that call also records them for the admin Status
+  page, and the arguments are required so a new tool cannot go uncounted.
+  PowerPoint keeps its own `SlideWarning` record and shares the severities.
 
 **Word**
 - One line-break model: every newline reaching the inline layer is a soft

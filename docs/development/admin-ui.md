@@ -171,4 +171,5 @@ argument, so "live" means the registry re-read it.
 | `tests/test_admin_assets.py` | the no-external-assets and `lang` invariants, on every page |
 | `tests/test_admin_style_keys.py` | the style-key lists cannot drift from the renderer |
 | `tests/test_admin_base_templates.py` | the five base-template slots: state, upload, download, revert |
+| `tests/test_metrics_warnings.py` | warnings reach the counters and the Status page |
 | `tests/test_admin_config.py` | `ADMIN_*` settings |

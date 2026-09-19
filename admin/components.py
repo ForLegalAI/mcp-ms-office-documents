@@ -178,6 +178,7 @@ hr{border:none;border-top:1px solid var(--line);margin:1.25rem 0}
 .lvl-DEBUG{color:var(--muted)}
 .toggle-row{display:flex;gap:.5rem;align-items:center;margin-bottom:.6rem}
 .num-err{color:var(--err)}
+.sev{display:inline-block;margin-right:.5rem;font-size:.82rem;font-weight:600}
 """
 
 # Vanilla JS for dynamic argument rows (add / remove) — avoids a CDN htmx dep.
