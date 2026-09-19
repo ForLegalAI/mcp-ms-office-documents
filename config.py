@@ -333,6 +333,19 @@ class Config(BaseModel):
         default_factory=AdminSettings,
         description="Settings for the optional template-admin UI.",
     )
+    email_default_language: str = Field(
+        default="cs-CZ",
+        description=(
+            "BCP-47 tag stamped on an email draft when the caller does not "
+            "give one, setting the proofing language Outlook checks it in. "
+            "The default is Czech for historical reasons — this server was "
+            "written for a Czech deployment — which is wrong for everyone "
+            "else and used to need a code change to fix. Set "
+            "EMAIL_DEFAULT_LANGUAGE (e.g. en-US) to change it. It remains "
+            "cs-CZ by default so no existing deployment's drafts change "
+            "language underneath it."
+        ),
+    )
     run_blocking_by_asyncio_thread_enabled: bool = Field(
         default=True,
         description=(
@@ -512,6 +525,13 @@ class Config(BaseModel):
         except (ValueError, TypeError):
             run_blocking_max_workers = 4
 
+        # Default proofing language for email drafts. An empty or absent
+        # value keeps the historical cs-CZ rather than becoming "", which
+        # would put lang="" on every draft.
+        email_default_language = (
+            os.environ.get("EMAIL_DEFAULT_LANGUAGE") or ""
+        ).strip() or "cs-CZ"
+
         # Stateless streamable-http transport. Absent or empty env var
         # means False (existing behaviour). Truthy ("1"/"true"/"yes"/"on")
         # enables stateless mode for horizontal scaling.
@@ -523,6 +543,7 @@ class Config(BaseModel):
                 storage=storage_settings,
                 api_key=raw_api_key,
                 admin=admin_settings,
+                email_default_language=email_default_language,
                 run_blocking_by_asyncio_thread_enabled=run_blocking_by_asyncio_thread_enabled,
                 run_blocking_max_workers=run_blocking_max_workers,
                 allow_private_image_addresses=cls._parse_bool(

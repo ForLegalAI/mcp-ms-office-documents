@@ -16,6 +16,7 @@ start). Every variable below is read once at startup.
 | `RUN_BLOCKING_MAX_WORKERS` | Maximum concurrent worker threads for blocking tool calls | `4` |
 | `STATELESS_HTTP` | Run the streamable-HTTP transport without server-side sessions, so requests may land on any replica. Required for two or more replicas; see [Deployment](deployment.md) | `false` |
 | `SSRF_ALLOW_PRIVATE_ADDRESSES` | Allow image URLs that resolve to private, loopback or link-local addresses. Removes the SSRF guard entirely; enable only when images are served from inside your own network | `false` |
+| `EMAIL_DEFAULT_LANGUAGE` | BCP-47 tag stamped on an email draft when the call does not give one, setting the proofing language Outlook checks it in. The default is this server's historical one, not a universal one — set your own (e.g. `en-US`) if you are not writing Czech. The tool's `language` argument still wins per call | `cs-CZ` |
 
 ## Authentication
 

@@ -39,12 +39,19 @@ traditional backend from the event loop.
   `<safe>.<suffix>` or `<8 hex>_<safe>.<suffix>`. `sanitize_filename()` keeps
   word characters, whitespace (collapsed to `_`), hyphens and dots, cuts at
   100 characters, and falls back to `document`.
-- `get_content_type(file_name)` maps the extension to a MIME type for the
-  cloud backends and **raises `ValueError` for an unknown extension**. A new
-  document type must be added here or every cloud upload of it fails.
-  Matching is by substring, so a name such as `notes.pptx_v2.docx` is
-  detected as PowerPoint; the sanitiser keeps dots, so this can happen
-  ([#116](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/116)).
+- `get_content_type(file_name)` maps the extension — the part after the last
+  dot — to a MIME type for the cloud backends, and **raises `ValueError` for
+  an unknown extension**. A new document type must be added to `MIME_TYPES`
+  or every cloud upload of it fails. It matched by substring until #116,
+  which made `notes.pptx_v2.docx` a PowerPoint: the sanitiser keeps dots, so
+  such a name is reachable.
+- `MIME_TYPES` is the one table for the whole upload layer;
+  `backends/librechat.py` imports it rather than keeping a second copy, which
+  is how the two came to disagree about `.eml`. The LibreChat side still
+  *guesses* where this one raises — it falls back to `mimetypes` and then to
+  `application/octet-stream` — because it receives whatever a caller
+  attaches, while the traditional backends only ever upload what this server
+  generates.
 
 The unique-prefix default lives in the dispatcher: `None` becomes `True` for
 traditional backends and `False` for LibreChat, which prefixes files itself.

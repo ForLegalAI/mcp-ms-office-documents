@@ -536,7 +536,7 @@ async def create_email_draft(
     cc: Annotated[Optional[List[str]], Field(description="List of CC recipient email addresses", default=None)],
     bcc: Annotated[Optional[List[str]], Field(description="List of BCC recipient email addresses", default=None)],
     priority: Annotated[str, Field(description="Email priority: 'low', 'normal', or 'high'", default="normal")],
-    language: Annotated[str, Field(description="Language code for proofreading in Outlook (e.g., 'cs-CZ' for Czech, 'en-US' for English, 'de-DE' for German, 'sk-SK' for Slovak)", default="cs-CZ")],
+    language: Annotated[str, Field(description="Language code for proofreading in Outlook (e.g., 'cs-CZ' for Czech, 'en-US' for English, 'de-DE' for German, 'sk-SK' for Slovak). Defaults to the server's EMAIL_DEFAULT_LANGUAGE setting.", default=config.email_default_language)],
     file_name: Annotated[Optional[str], Field(description="Custom filename for the output file (without extension). If not provided, a unique identifier will be used.", default=None)] = None,
     add_unique_prefix: Annotated[Optional[bool], Field(description="If true, adds 8-char UUID prefix to filename for uniqueness. If not set, defaults to True for traditional storage backends (LOCAL/S3/GCS/AZURE/MINIO) and False for LibreChat.", default=None)] = None,
 ) -> Union[str, dict]:

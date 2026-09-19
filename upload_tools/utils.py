@@ -1,6 +1,28 @@
 import re
 import uuid
 
+# The canonical extension → MIME map for everything this server uploads.
+# ``backends/librechat.py`` imports it rather than keeping a second copy that
+# drifts: the two disagreed about ``.eml`` until #116, one calling it
+# ``application/octet-stream`` and the other ``message/rfc822``.
+MIME_TYPES = {
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "pdf": "application/pdf",
+    "eml": "message/rfc822",
+    "xml": "application/xml",
+    "txt": "text/plain",
+    "md": "text/markdown",
+    "json": "application/json",
+    "csv": "text/csv",
+}
+
+
+def file_extension(file_name: str) -> str:
+    """The lower-cased extension after the last dot, or ``''`` if there is none."""
+    return file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
+
 
 def generate_unique_object_name(suffix: str) -> str:
     """Generate a unique object name using UUID and preserve the file extension."""
@@ -47,22 +69,23 @@ def generate_named_object_name(
 
 
 def get_content_type(file_name: str) -> str:
-    """Determine content type based on file extension.
+    """Determine content type from the file's extension.
+
+    The extension is the part after the LAST dot. This used to be a substring
+    test — ``"pptx" in file_name`` — which made ``notes.pptx_v2.docx`` a
+    PowerPoint, and any name merely containing ``xml`` an XML document (#116).
+
+    Unlike :func:`upload_tools.backends.librechat.get_mime_type`, an unknown
+    extension raises rather than falling back: the traditional backends upload
+    only what this server generates, so anything else is a bug worth surfacing
+    at the call site instead of shipping an object typed as a guess.
 
     :param file_name: Name of the file
     :return: MIME type string
     :raises ValueError: If file type is unknown
     """
-    if "pptx" in file_name:
-        return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-    elif "docx" in file_name:
-        return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    elif "xlsx" in file_name:
-        return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    elif "eml" in file_name:
-        return "application/octet-stream"
-    elif "xml" in file_name:
-        return "application/xml"
-    else:
-        raise ValueError("Unknown file type")
+    extension = file_extension(file_name)
+    if extension not in MIME_TYPES:
+        raise ValueError(f"Unknown file type: {file_name!r}")
+    return MIME_TYPES[extension]
 

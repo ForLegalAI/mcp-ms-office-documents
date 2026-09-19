@@ -16,6 +16,7 @@ import pystache
 import html
 import logging
 
+from config import get_config
 from upload_tools import upload_file
 from template_utils import find_email_template
 
@@ -45,11 +46,16 @@ def _load_template() -> str:
         raise
 
 
-def _create_eml_buffer(to=None, cc=None, bcc=None, re=None, content=None, priority="normal", language="cs-CZ") -> io.BytesIO:
+def _create_eml_buffer(to=None, cc=None, bcc=None, re=None, content=None, priority="normal", language=None) -> io.BytesIO:
     """Create an unsent email draft (EML) and return as BytesIO buffer.
 
     This function is useful when the caller needs to handle upload separately,
     such as for LibreChat file artifact uploads.
+
+    *language* is the BCP-47 tag Outlook proofs the draft in. Omitted, it
+    comes from ``EMAIL_DEFAULT_LANGUAGE`` — which was a hard-coded ``cs-CZ``
+    in two places until #116, so a deployment writing in any other language
+    had to patch the source.
 
     Template variables:
       {{language}}  - inserted into lang attributes (sanitized)
@@ -67,6 +73,9 @@ def _create_eml_buffer(to=None, cc=None, bcc=None, re=None, content=None, priori
         raise ValueError("Email content is required")
     if not re:
         raise ValueError("Email subject is required")
+
+    if not language:
+        language = get_config().email_default_language
 
     try:
         template_html = _load_template()
@@ -122,7 +131,7 @@ def _create_eml_buffer(to=None, cc=None, bcc=None, re=None, content=None, priori
         raise RuntimeError(f"Failed to create email draft: {e}") from e
 
 
-def create_eml(to=None, cc=None, bcc=None, re=None, content=None, priority="normal", language="cs-CZ", file_name=None):
+def create_eml(to=None, cc=None, bcc=None, re=None, content=None, priority="normal", language=None, file_name=None):
     """Create an unsent email draft (EML) using a Mustache HTML template.
 
     Template variables:

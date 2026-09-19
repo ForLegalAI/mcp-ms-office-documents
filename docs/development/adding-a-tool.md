@@ -55,9 +55,9 @@ artifact; that is expected.
 
 ## 4. Register the MIME type
 
-Add the extension to `upload_tools/utils.get_content_type()` and to
-`MIME_TYPES` in `upload_tools/backends/librechat.py`. Without the first,
-every cloud upload of the new type raises `ValueError`.
+Add the extension to `MIME_TYPES` in `upload_tools/utils.py` — one table,
+which `backends/librechat.py` imports. Without it, every cloud upload of the
+new type raises `ValueError`.
 
 ## 5. Declare the tool in `main.py`
 
