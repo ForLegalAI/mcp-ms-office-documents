@@ -49,6 +49,13 @@ silently loses the association, which is what the whole UI used to do. Use
 `static_row()` for a read-only labelled value — there is no control for a label
 to point at, and it must not be used for input.
 
+**One gotcha inside that.** `views.edit_page()` takes the analysis twice over:
+once to prefill the argument rows, once to render "What we found in the
+document". The rejected-re-upload path passes `report=False` to get the first
+without the second — the file on disk is still the old one, so it is the right
+thing to prefill from and the wrong thing to describe under a heading that
+means "the file you just uploaded" everywhere else it appears.
+
 **3. Colours are tokens.** Custom properties on `:root`, redefined under
 `@media (prefers-color-scheme: dark)`. A rule written with a literal colour
 will be wrong in one of the two themes.

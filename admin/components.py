@@ -278,6 +278,10 @@ def field(label: str, control, hint: Optional[str] = None, cls: str = "field",
     control's ``name`` (see :func:`control_id`); pass an explicit ``id=`` on the
     control when two fields on one page would otherwise collide.
 
+    The ``id`` is set on *control* in place, so pass a freshly built element.
+    Handing the same instance to two ``field()`` calls silently rewrites the
+    first one's ``id`` and leaves its label pointing at nothing.
+
     *hint_cls* lets a hint be a warning ("no layout matches this role") rather
     than the usual muted aside.
     """

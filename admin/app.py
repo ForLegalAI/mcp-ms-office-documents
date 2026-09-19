@@ -308,9 +308,12 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         if not error and analysis and any("Could not open" in w for w in analysis.warnings):
             error = analysis.warnings[0]
         if error:
-            # Re-render against the file that is still installed, not the reject.
+            # Prefill from the file that is still installed, but do not report on
+            # it: the admin asked about the file they just submitted, and this is
+            # not that file. See views.edit_page's `report`.
             return views.edit_page(ctx, kind, name, spec, ctx.analyze_asset(kind, spec),
-                                   csrf=csrf, message=error, message_kind="err")
+                                   csrf=csrf, message=error, message_kind="err",
+                                   report=False)
 
         d = descriptor(kind)
         filename = spec.get(d.path_key) or f"{name}{d.asset_ext}"

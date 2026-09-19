@@ -39,6 +39,23 @@ def _is_external(value: str) -> bool:
     return bool(value) and bool(_ABSOLUTE.match(value))
 
 
+def _candidates(attr: str, value) -> list:
+    """Every URL inside one attribute value.
+
+    ``srcset`` holds a comma-separated candidate list, each entry a URL plus an
+    optional descriptor. Checking the whole string only ever tests the first
+    candidate, so ``"/local.png 1x, https://evil.example/x.png 2x"`` would sail
+    past a single anchored match.
+    """
+    if isinstance(value, list):
+        value = " ".join(value)
+    if not value:
+        return []
+    if attr == "srcset":
+        return [part.strip().split()[0] for part in value.split(",") if part.strip()]
+    return [value]
+
+
 @pytest.fixture
 def admin_client(tmp_path, monkeypatch):
     """A logged-in TestClient over the combined app, isolated to tmp dirs."""
@@ -123,13 +140,32 @@ def _all_pages(client):
         "arg_required": "true", "arg_default": "", "arg_desc": "who",
     })
     pages.append(("edit-docx", client.get("/admin/docx/assets_tpl/edit").text))
+
+    # A PowerPoint template too. Its analysis report is the only page built
+    # from an uploaded file's *contents* — theme colours become `style=`
+    # attributes via components.swatch() — so leaving it out of the sweep
+    # leaves the style-attribute check with nothing to look at.
+    pptx_bytes = (project_root / "default_templates"
+                  / "default_pptx_template_16_9.pptx").read_bytes()
+    draft_pptx = client.post(
+        "/admin/pptx/draft",
+        data={"name": "assets_deck", "csrf": token},
+        files={"file": ("assets_deck.pptx", pptx_bytes, "application/octet-stream")},
+    )
+    pages.append(("draft-pptx", draft_pptx.text))
+    client.post("/admin/pptx/save", data={
+        "csrf": token, "kind": "pptx", "name": "assets_deck",
+        "asset_filename": "assets_deck.pptx", "description": "d",
+        "strip_slides": "1",
+    })
+    pages.append(("edit-pptx", client.get("/admin/pptx/assets_deck/edit").text))
     return pages
 
 
 def test_every_page_is_rendered(admin_client):
     """Guard the guard: the sweep below is worthless if a page came back empty."""
     pages = _all_pages(admin_client)
-    assert len(pages) == 10
+    assert len(pages) == 12
     for label, html in pages:
         assert "<html" in html, f"{label} did not render a page"
 
@@ -170,11 +206,38 @@ def test_no_element_loads_an_external_resource(admin_client):
         soup = BeautifulSoup(html, "html.parser")
         for element in soup.find_all(True):
             for attr in ("src", "srcset", "poster", "data", "xlink:href"):
-                value = element.get(attr)
-                if isinstance(value, list):
-                    value = " ".join(value)
-                assert not _is_external(value or ""), (
-                    f"{label}: <{element.name} {attr}={value!r}> is off-origin")
+                for target in _candidates(attr, element.get(attr)):
+                    assert not _is_external(target), (
+                        f"{label}: <{element.name} {attr}> reaches {target!r}")
+
+
+def test_sweep_reaches_a_style_attribute_built_from_upload_data(admin_client):
+    """Without this, the style-attribute check can pass by looking at nothing.
+
+    The swatches on a PowerPoint template's analysis report are the only
+    `style=` values derived from a file an admin uploaded.
+    """
+    styled = [
+        label for label, html in _all_pages(admin_client)
+        if BeautifulSoup(html, "html.parser").find(class_="swatch", style=True)
+    ]
+    assert styled, "no page in the sweep renders a theme swatch"
+
+
+def test_no_external_urls_in_style_attributes(admin_client):
+    """A `style=` attribute can fetch just as well as a <style> block.
+
+    `components.swatch()` builds one from a colour read out of an uploaded
+    template's theme, so this is the attribute most likely to grow a url() by
+    accident.
+    """
+    for label, html in _all_pages(admin_client):
+        soup = BeautifulSoup(html, "html.parser")
+        for element in soup.find_all(style=True):
+            css = element.get("style") or ""
+            for target in _CSS_IMPORT.findall(css) + _CSS_URL.findall(css):
+                assert not _is_external(target), (
+                    f"{label}: <{element.name} style> reaches {target!r}")
 
 
 def test_theme_and_scripts_are_actually_inline(admin_client):

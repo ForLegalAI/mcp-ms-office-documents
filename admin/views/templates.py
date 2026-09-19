@@ -461,17 +461,27 @@ def configure_page(ctx, kind: str, name: str, filename: str,
 
 def edit_page(ctx, kind: str, name: str, spec: Dict[str, Any], analysis,
               csrf: str = "", message: Optional[str] = None,
-              message_kind: str = "ok"):
+              message_kind: str = "ok", report: bool = True):
+    """The edit page. *analysis* prefills the argument rows; *report* shows it.
+
+    The two are separate on purpose. When a re-upload is rejected, the file on
+    disk is still the old one, so its analysis is the right thing to prefill
+    the argument rows from — but the wrong thing to show under "What we found
+    in the document", which on every other path describes the file the admin
+    just uploaded. Same card, two meanings, nothing on screen to tell them
+    apart; so the reject path passes ``report=False`` and shows only its error.
+    """
     from admin.views.shell import replace_card
 
     body: List[Any] = [H1(f"Edit {name}")]
     if message:
         body.append(c.flash(message, message_kind))
-    if analysis is not None:
-        body.append(analysis_report(analysis, spec))
-    else:
-        body.append(c.flash("The template's source file is missing — arguments can "
-                            "still be edited.", "warn"))
+    if report:
+        if analysis is not None:
+            body.append(analysis_report(analysis, spec))
+        else:
+            body.append(c.flash("The template's source file is missing — arguments "
+                                "can still be edited.", "warn"))
     body.append(edit_form(ctx, kind, spec, analysis, is_new=False, csrf=csrf))
     body.append(replace_card(ctx, kind, name, csrf))
     return page(ctx, f"Edit {name}", *body)

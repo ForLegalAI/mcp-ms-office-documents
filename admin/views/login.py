@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fasthtml.common import A, Button, Div, H1, Input, P
+from fasthtml.common import A, Button, Div, Form, H1, Input, P
 
 from admin import components as c
 from admin.views.shell import BRAND, page
@@ -22,12 +22,16 @@ def login_page(ctx, login_url: str, error: Optional[str] = None):
                 H1(BRAND),
                 P("Sign in to manage document templates.", cls="muted"),
                 c.flash(error, "err"),
-                c.post_form(
-                    login_url,
+                # Plain Form, not c.post_form: there is no session yet, so there
+                # is no CSRF token to carry. Rendering an empty one would imply a
+                # protection this route does not have — it authenticates by
+                # password alone.
+                Form(
                     c.field("Password",
                             Input(name="password", type="password", required=True,
                                   autofocus=True)),
                     Button("Sign in", type="submit", cls="btn btn-primary"),
+                    action=login_url, method="post",
                 ),
             ),
             cls="login-wrap",
