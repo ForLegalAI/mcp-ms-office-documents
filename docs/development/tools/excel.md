@@ -119,7 +119,13 @@ requested name will then point at the wrong sheet.
    remembered. Partial inline markup is left as literal text.
 2. `=` prefix → formula. The text is kept for the reference rewriter.
 3. Trailing `%` with a numeric body → a fraction, with a percent format
-   carrying as many decimals as the source text, capped at four.
+   carrying as many decimals as the source text, capped at four. A *formula*
+   has no source text to take that precision from, so in a `types: percent`
+   column it takes the widest precision the column's own literals use —
+   otherwise a computed 4.3% rendered as `4%` beside literals that kept their
+   decimals ([#126](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/126)).
+   `percent:<format>` declares the precision outright and then applies to
+   every cell in the column, literal and computed alike.
 4. A number, after stripping digit-group separators only where the grouping
    is unambiguous (`1,234` and `1.234,56` yes; `1,5` no, since it is 1.5 in
    most of Europe). `nan`, `inf` and PEP 515 underscores are refused because
@@ -170,7 +176,11 @@ between are fine; any other content clears it.
 
 - `types:` one spec per column, comma-separated. `_parse_types_directive()`
   re-joins fragments that do not start with a type keyword, because Excel
-  formats themselves contain commas (`number:#,##0.00`).
+  formats themselves contain commas (`number:#,##0.00`) — `percent:#,##0.0%`
+  included. Three specs take a suffix that is a number format
+  (`number:`, `date:`, `percent:`) and one takes a symbol (`currency:`);
+  `_number_format_for_type()` turns a spec into the format a formula cell in
+  that column gets, and is the one place that mapping lives.
 - `styles:` parsed in `styles.py`. Targets are absolute (`B2`), table-relative
   (`B[0]` is the first data row, `B[-1]` the header) or ranges of either. A
   range over 10,000 cells is dropped with a warning. Named styles apply
@@ -332,7 +342,7 @@ report in the `else` branch below it.
 |------|--------|
 | `tests/test_xlsx_creation.py` | Multi-sheet layout and cross-sheet references end to end; defines the `_create_workbook_from_markdown()` helper that patches `upload_file` and reloads the saved bytes |
 | `tests/test_xlsx_tier1_fixes.py` | Cross-sheet range prefix form, comma handling in the `types` directive, thousands separators, accounting negatives, formulas in typed columns, unresolved-reference warnings, formula reference extraction, circular-reference detection |
-| `tests/test_xlsx_tier2_semantics.py` | Row-relative versus table-relative reference semantics, percent precision, thousands format, unambiguous digit grouping |
+| `tests/test_xlsx_tier2_semantics.py` | Row-relative versus table-relative reference semantics, percent precision (literals, formula cells and a declared `percent:<format>`), thousands format, unambiguous digit grouping |
 | `tests/test_xlsx_tier4_robustness.py` | Sheet-name quoting, `nan`/`inf`/underscore refusal, font family preserved by inline formatting, Excel Table header uniqueness, formula-length guard, buffer and upload paths agreeing |
 | `tests/test_xlsx_styling.py` | The `styles` directive and template-defined named styles |
 | `tests/test_xlsx_warnings.py` | The warnings channel: every code, sheet/cell/line locations, the cap, the tool-boundary response shape |

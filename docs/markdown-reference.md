@@ -168,7 +168,7 @@ would otherwise show a warning dialog and silently resolve those cells to 0.
 | Directive | Effect |
 |-----------|--------|
 | `<!-- freeze -->` | Freeze panes below the header row (header stays visible when scrolling) |
-| `<!-- types: text, currency:$, date, bool, number, percent -->` | Force per-column data types (one entry per column; blank = auto). Options: `text` (preserves leading zeros), `currency:<symbol>` (`$ € £ ¥ Kč zł kr CHF R$ ₹`), `date` / `date:<format>`, `bool`, `number` / `number:<format>`, `percent` (`50%` → `0.5`) |
+| `<!-- types: text, currency:$, date, bool, number, percent -->` | Force per-column data types (one entry per column; blank = auto). Options: `text` (preserves leading zeros), `currency:<symbol>` (`$ € £ ¥ Kč zł kr CHF R$ ₹`), `date` / `date:<format>`, `bool`, `number` / `number:<format>`, `percent` / `percent:<format>` (`50%` → `0.5`; each value keeps the precision it was written with, and a formula in the column takes the widest precision the column uses — declare `percent:0.0%` to fix it) |
 | `<!-- styles: B2=bg:yellow, C[0]:C[3]=color:red;bold -->` | Set cell background and font colour (see below) |
 
 **Cell styling.** Comma-separated `<target>=<attributes>` entries; attributes separated by `;`.
