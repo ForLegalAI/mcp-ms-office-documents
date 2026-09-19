@@ -71,6 +71,13 @@ LineEvent = SheetEvent | HeaderEvent | TableEvent
 _DROPPED_LINE_EXCERPT = 60
 
 
+def _excerpt(line: str) -> str:
+    """The line, quoted and cut short enough to find it by without echoing it."""
+    if len(line) > _DROPPED_LINE_EXCERPT:
+        return f"'{line[:_DROPPED_LINE_EXCERPT]}…'"
+    return f"'{line}'"
+
+
 def walk_markdown_lines(lines: list[str], warnings=None) -> list[LineEvent]:
     """Parse markdown lines and return a list of structured events.
 
@@ -83,6 +90,11 @@ def walk_markdown_lines(lines: list[str], warnings=None) -> list[LineEvent]:
     is dropped. That is the right call for a workbook, but it is content the
     caller wrote, so each dropped line is reported on *warnings* (the build's
     :class:`~warning_channel.WarningChannel`) with its 1-based source line.
+
+    Lines that begin with ``|`` but do not form a table get their own report:
+    they are consumed by :func:`~xlsx_tools.helpers.parse_table` before the
+    dropped-line branch can see them, and the fix for them is a specific one —
+    add the separator row — rather than "put this somewhere else".
     """
     events: list[LineEvent] = []
 
@@ -142,6 +154,7 @@ def walk_markdown_lines(lines: list[str], warnings=None) -> list[LineEvent]:
 
         # Tables
         elif line.startswith('|'):
+            table_start = i
             table_data, i = parse_table(lines, i)
             if table_data:
                 table_key = f"T{table_counter}"
@@ -154,18 +167,30 @@ def walk_markdown_lines(lines: list[str], warnings=None) -> list[LineEvent]:
                 ))
                 current_row += len(table_data) + TABLE_BOTTOM_SPACING
                 table_counter += 1
+            elif warnings is not None:
+                # parse_table consumed the run of pipe lines and found no table
+                # in it — a row with no separator, or separators with no header.
+                # The lines are gone from the workbook, and this is the only
+                # branch that can say so: having been consumed here, they never
+                # reach the dropped-line report below.
+                warnings.add(
+                    W.TABLE_INCOMPLETE,
+                    f"{_excerpt(line)} starts something that looks like a "
+                    f"table but is not one, so it is not in the workbook. A "
+                    f"table needs a header row, a separator row (|---|---|) "
+                    f"and at least one data row.",
+                    sheet=current_sheet,
+                    line=table_start + 1,
+                )
             pending_directives = {}
 
         # Skip other content — directives must be directly above a table
         else:
             pending_directives = {}
             if warnings is not None:
-                excerpt = line[:_DROPPED_LINE_EXCERPT]
-                if len(line) > _DROPPED_LINE_EXCERPT:
-                    excerpt += "…"
                 warnings.add(
                     W.LINE_DROPPED,
-                    f"'{excerpt}' is not a heading, a '## Sheet:' marker, a "
+                    f"{_excerpt(line)} is not a heading, a '## Sheet:' marker, a "
                     f"directive or a table row, so it is not in the workbook. "
                     f"Put prose in a heading or a table cell.",
                     sheet=current_sheet,

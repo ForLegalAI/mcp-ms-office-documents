@@ -79,6 +79,27 @@ class TestContentThatDidNotArrive:
         assert "x" * 60 in message
         assert "x" * 61 not in message
 
+    def test_a_pipe_line_that_is_not_a_table_is_reported(self):
+        """It looks like a table, so parse_table eats it before the
+        dropped-line branch can see it — and it is gone from the workbook."""
+        warnings = build(f"{TABLE}\n| Item | Qty |\n")
+
+        warning = only(warnings, W.TABLE_INCOMPLETE)
+        assert warning.severity == SEVERITY_ERROR
+        assert warning.location["line"] == 5
+        assert warning.location["sheet"] == "Data Report"
+        assert "| Item | Qty |" in warning.message
+        assert "separator row" in warning.message
+
+    def test_separator_rows_with_no_header_are_reported(self):
+        """The other way parse_table comes back with nothing."""
+        warnings = build(f"{TABLE}\n|---|---|\n|---|---|\n")
+
+        assert codes(warnings) == [W.TABLE_INCOMPLETE]
+
+    def test_a_well_formed_table_reports_nothing(self):
+        assert build(TABLE) == []
+
     def test_a_cell_that_cannot_be_written_is_reported(self, monkeypatch):
         import xlsx_tools.helpers as helpers
         monkeypatch.setattr(helpers, "apply_cell_formatting",

@@ -25,6 +25,7 @@ from warning_channel import (
 
 # Content the caller wrote that is not in the workbook.
 LINE_DROPPED = "line_dropped"
+TABLE_INCOMPLETE = "table_incomplete"
 CELL_FAILED = "cell_failed"
 
 # Formulas that were written, but will not compute what was asked.
@@ -45,6 +46,7 @@ STYLE_FAILED = "style_failed"
 #: One severity per code, in one place.
 WARNING_SEVERITY: dict[str, str] = {
     LINE_DROPPED: SEVERITY_ERROR,
+    TABLE_INCOMPLETE: SEVERITY_ERROR,
     CELL_FAILED: SEVERITY_ERROR,
 
     TABLE_REFERENCE_MISSING: SEVERITY_ERROR,

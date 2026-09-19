@@ -42,6 +42,7 @@ markdown_content
   ├─ # … ######            → HeaderEvent at the current row, then +2 rows
   ├─ | … |                 → helpers.parse_table() → TableEvent at the current row,
   │                           then +len(rows)+2; directives attached; T-number assigned
+  │                           no table in them → `table_incomplete`
   └─ anything else         → dropped, reported as `line_dropped` (clears pending directives)
   ▼
   parser.collect_table_positions(events)            {sheet: {"T1": header_row, …}}
@@ -233,6 +234,7 @@ still markdown.
 | Code | Severity | Raised when |
 |------|----------|-------------|
 | `line_dropped` | error | A line is not a heading, sheet marker, directive or table row, so it is not in the workbook |
+| `table_incomplete` | error | Lines starting with `\|` that `parse_table()` could not make a table of (no separator row, or no header); they are consumed there and never reach `line_dropped` |
 | `cell_failed` | error | The per-cell loop caught an exception; the cell is empty |
 | `table_reference_missing` | error | `T<n>` names a table the target sheet does not have; the reference fell back to the current row |
 | `sheet_reference_missing` | error | A cross-sheet reference names a sheet that does not exist; Excel will show `#REF!` |
@@ -252,10 +254,14 @@ matters most here: a page of prose fed to this tool drops one line per line,
 and the cap turns that into fifty warnings plus a `warnings_truncated` note
 rather than hundreds.
 
-One rule for the sites: a warning explains itself once. `_expand_target()`
+Two rules for the sites. A warning explains itself once: `_expand_target()`
 returns `None` rather than `[]` when it has already reported why a target was
 rejected, so `parse_styles_directive()` does not add a vaguer second entry
-about the same range.
+about the same range. And a branch that consumes lines owns reporting them:
+`parse_table()` eats a run of `|` lines whether or not it finds a table in
+them, so the table branch of `walk_markdown_lines()` raises
+`table_incomplete` itself — those lines can never reach the `line_dropped`
+report in the `else` branch below it.
 
 ## Extension points
 
