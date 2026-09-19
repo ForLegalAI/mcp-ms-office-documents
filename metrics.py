@@ -19,7 +19,7 @@ import logging
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Deque, Dict, List, Optional
 
 _LOCK = threading.Lock()
@@ -30,7 +30,7 @@ START_TIME = time.time()
 
 @dataclass
 class ToolStat:
-    """Usage counters for a single dynamic template tool."""
+    """Usage counters for a single tool, static or template-backed."""
     name: str
     kind: str
     calls: int = 0
@@ -38,6 +38,27 @@ class ToolStat:
     last_called: Optional[float] = None
     last_error: Optional[str] = None
     last_error_at: Optional[float] = None
+    #: Warnings reported by finished builds, counted per severity. A build
+    #: that succeeds while substituting a style or dropping a row is a success
+    #: as far as ``calls`` is concerned — this is the only place it shows.
+    warnings_by_severity: Dict[str, int] = field(default_factory=dict)
+    last_warnings: List[str] = field(default_factory=list)
+    last_warning_at: Optional[float] = None
+
+    @property
+    def warnings(self) -> int:
+        """Every warning reported, across severities."""
+        return sum(self.warnings_by_severity.values())
+
+    @property
+    def degraded(self) -> int:
+        """Warnings that mean the file is not what was asked for.
+
+        ``info`` is a substitution the caller will not mind, so it is counted
+        but kept out of the number an operator scans for.
+        """
+        return sum(count for severity, count in self.warnings_by_severity.items()
+                   if severity != "info")
 
 
 _TOOL_STATS: Dict[str, ToolStat] = {}
@@ -64,6 +85,49 @@ def record_error(kind: str, name: str, message: str) -> None:
         st.errors += 1
         st.last_error = (message or "")[:500]
         st.last_error_at = time.time()
+
+
+#: How many of a tool's most recent warnings to keep for the Status page.
+LAST_WARNINGS_KEPT = 10
+
+
+def record_warnings(kind: str, name: str, warnings) -> None:
+    """Record the warnings a finished build reported.
+
+    *warnings* is anything iterable of objects carrying ``severity`` and a
+    readable ``str()`` — a :class:`warning_channel.WarningChannel`, its
+    ``records()``, or PowerPoint's own list. Nothing is recorded for a build
+    that reported none, so a quiet tool stays absent from the counters.
+
+    Called for successful builds: a warning means the file was produced and
+    something in it is not as asked. Failures go through :func:`record_error`.
+    """
+    entries = list(warnings or [])
+    if not entries:
+        return
+    with _LOCK:
+        st = _TOOL_STATS.get(name)
+        if st is None:
+            st = _TOOL_STATS[name] = ToolStat(name=name, kind=kind)
+        st.kind = kind
+        for entry in entries:
+            severity = getattr(entry, "severity", "warning") or "warning"
+            st.warnings_by_severity[severity] = (
+                st.warnings_by_severity.get(severity, 0) + 1)
+        rendered = [str(entry)[:300] for entry in entries]
+        # Newest build's warnings first, older ones behind them.
+        st.last_warnings = (rendered + st.last_warnings)[:LAST_WARNINGS_KEPT]
+        st.last_warning_at = time.time()
+
+
+def degraded_total() -> int:
+    """Warnings across every tool that mean a file is not as asked.
+
+    Built on :attr:`ToolStat.degraded` rather than re-filtering severities, so
+    what counts as degraded is decided in exactly one place.
+    """
+    with _LOCK:
+        return sum(st.degraded for st in _TOOL_STATS.values())
 
 
 def tool_stats() -> List[ToolStat]:

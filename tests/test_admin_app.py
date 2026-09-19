@@ -233,7 +233,7 @@ def test_status_page_renders(admin_client):
     assert r.status_code == 200
     assert "Uptime" in r.text
     assert "Upload backend" in r.text
-    assert "Template usage" in r.text
+    assert "Tool usage" in r.text
     # The errors-only filter is a valid view too.
     assert client.get("/admin/status?level=error").status_code == 200
 
@@ -255,6 +255,42 @@ async def test_status_reflects_tool_calls(admin_client):
     assert st is not None and (st.calls + st.errors) >= 1
     r = client.get("/admin/status")
     assert "metric_tpl" in r.text
+
+
+def test_status_shows_what_a_build_worked_around(admin_client):
+    """#173: a degraded build used to look identical to a clean one.
+
+    Goes through metrics the way main.py's _with_warnings does, then reads the
+    rendered page — the counters are only worth having if they surface.
+    """
+    from warning_channel import WarningChannel
+
+    client, _ = admin_client
+    channel = WarningChannel({"dropped": "error", "swapped": "info"})
+    channel.add("dropped", "a table row was dropped", line=12)
+    channel.add("swapped", "substituted a font")
+    metrics.record_call("docx", "create_word_document")
+    metrics.record_warnings("docx", "create_word_document", channel)
+
+    html = client.get("/admin/status").text
+    assert "1 error" in html and "1 info" in html, "severities must be split"
+    assert "Warnings reported" in html
+    assert "line 12: a table row was dropped" in html
+    assert "What builds worked around" in html
+
+
+def test_status_says_nothing_when_no_build_has_warned(admin_client):
+    client, _ = admin_client
+    html = client.get("/admin/status").text
+    assert "No build has reported a warning this session." in html
+
+
+def test_status_lists_static_tools_not_only_template_tools(admin_client):
+    """The usage table was template-only; a degrading Word build is the same question."""
+    client, _ = admin_client
+    metrics.record_call("docx", "create_word_document")
+    html = client.get("/admin/status").text
+    assert "create_word_document" in html
 
 
 def test_reupload_rescans_new_placeholder(admin_client):

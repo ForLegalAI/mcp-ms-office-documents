@@ -107,7 +107,7 @@ Stage by stage:
 | Authenticate | `middleware.py` | `ApiKeyAuthMiddleware.on_request` | Bearer, plain token, or `x-api-key`; constant-time compare; throttled warning log |
 | Validate input | `main.py` | Pydantic `Annotated[..., Field(...)]` | Field descriptions are what the calling model reads. Slides are deliberately typed loosely here (`SlidesInput` publishes a flat schema and accepts any list) so that clients which mangle `oneOf` schemas still reach the server |
 | Build document | `<type>_tools/base_<type>_tool.py` | `_markdown_to_word_buffer`, `_markdown_to_excel_buffer`, `_create_presentation_buffer`, `_create_eml_buffer`, `_create_xml_buffer` | Input to bytes. No upload, no request context. May fetch images over the network. Word, Excel and PowerPoint return `(BytesIO, warnings)`; see [`shared-modules.md`](shared-modules.md#warning_channelpy) |
-| Report workarounds | `main.py` | `_with_warnings` | Widens a bare URL string into `{"file", …, "warnings"}`, or adds `warnings` to the LibreChat artifact dict. A clean build returns exactly what it always did |
+| Report workarounds | `main.py` | `_with_warnings` | Widens a bare URL string into `{"file", …, "warnings"}`, or adds `warnings` to the LibreChat artifact dict. A clean build returns exactly what it always did. Also records the call and its warnings with `metrics`, since this is the one point every channel-carrying tool passes through on success — hence the required `kind` and `name` |
 | Validate slides | `pptx_tools/schema.py`, called from `pptx_tools/slide_builder.py` | `coerce_slides` | Runs inside the build step, on the worker thread. Raises `ValueError` with messages like `slide 2 -> rows.0: …`, which the handler passes through as a `ToolError` |
 | Offload | `async_runner.py` | `run_blocking` | See [Threading model](#threading-model) |
 | User context | `librechat_integration.py` | `extract_user_context_from_request` | Headers are trusted verbatim; see [Security boundaries](#security-boundaries) |
@@ -273,8 +273,9 @@ file per template into the `.d` directory plus the asset into
 appears immediately. `template_registry.safe_remove_tool()` handles
 re-registration and deletion across FastMCP versions.
 
-`metrics.py` keeps in-process counters per dynamic template and a bounded ring
-buffer of recent log records, both shown on the admin Status page. It has no
+`metrics.py` keeps in-process counters per tool — calls, errors and the
+warnings a finished build reported, counted per severity — and a bounded ring
+buffer of recent log records, all shown on the admin Status page. It has no
 external dependencies and is safe to import from core tool modules.
 
 Live registration assumes a single instance owns the template files. With
