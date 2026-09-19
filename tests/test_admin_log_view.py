@@ -165,12 +165,19 @@ def test_auto_refresh_emits_an_inline_timer(admin_client):
     assert 'value="30" selected' in html
 
 
-@pytest.mark.parametrize("raw", ["", "nonsense", "-5", "abc", "1e4"])
+@pytest.mark.parametrize("raw", ["", "nonsense", "-5", "abc", "1e4",
+                                 "999999", "45"])
 def test_an_unusable_refresh_value_turns_it_off(admin_client, raw):
-    """A bad query parameter must not break the page or start a timer."""
+    """A bad query parameter must not break the page or start a timer.
+
+    A number outside `REFRESH_CHOICES` counts as bad: accepting it would arm
+    a timer no option in the <select> shows as chosen, so the control would
+    read "off" while the page reloaded under you.
+    """
     r = admin_client.get(f"/admin/status?refresh={raw}")
     assert r.status_code == 200
     assert "location.reload" not in r.text
+    assert 'value="0" selected' in r.text, "the control must show it is off"
 
 
 def test_the_limit_is_reported_when_it_bites(admin_client):

@@ -114,6 +114,20 @@ def level_no(level: str) -> int:
     return _LEVEL_NO.get((level or "").strip().lower(), logging.INFO)
 
 
+def refresh_seconds(raw) -> int:
+    """The refresh interval for a query-string value, or 0 (off).
+
+    Clamped to `REFRESH_CHOICES`: anything else — a negative number, junk, or
+    `?refresh=999999` — turns it off rather than arming a timer no option in
+    the <select> would show as chosen.
+    """
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 0
+    return value if value in {v for v, _ in REFRESH_CHOICES} else 0
+
+
 def available_levels():
     """The level choices that can actually match something.
 

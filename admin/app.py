@@ -324,12 +324,8 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
                refresh: str = "0"):
         """The Status page. Every filter is a query parameter, so a filtered
         view is a URL that can be bookmarked or pasted to a colleague."""
-        try:
-            refresh_seconds = max(0, int(refresh))
-        except (TypeError, ValueError):
-            refresh_seconds = 0
         return views.status_page(ctx, level=level, source=logger, search=q,
-                                 refresh=refresh_seconds)
+                                 refresh=views.refresh_seconds(refresh))
 
     # ---- Base templates (#169) -------------------------------------------
     # Registered BEFORE the generic /{kind}/{name}/… routes below: Starlette

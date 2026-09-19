@@ -162,8 +162,9 @@ tool's own codes are covered by `tests/test_<tool>_warnings.py`.
 
 In-process counters per tool (`record_call`, `record_error`,
 `record_warnings`, `tool_stats`) under a lock, plus a `RecentLogHandler` ring
-buffer of 300 records that the admin app attaches to the root logger when
-enabled. No external dependencies, so the core tool modules can import it.
+buffer of `LOG_BUFFER_CAPACITY` records that the admin app attaches to the
+root logger when enabled. No external dependencies, so the core tool modules
+can import it.
 `reset()` is for tests.
 
 `recent_logs()` filters the buffer by level, top-level logger package and a

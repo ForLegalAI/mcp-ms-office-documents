@@ -241,7 +241,9 @@ def recent_logs(min_level: int = logging.INFO, limit: int = 200,
     source = (source or "").strip()
 
     items = []
-    for record in _LOG_HANDLER.records:
+    # Snapshot first: another thread appending mid-iteration raises
+    # RuntimeError: deque mutated during iteration (same as counts_by_level).
+    for record in list(_LOG_HANDLER.records):
         if record["levelno"] < min_level:
             continue
         if source and not _matches_source(str(record.get("logger") or ""), source):

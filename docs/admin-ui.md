@@ -48,9 +48,7 @@ http://localhost:8958/admin
   server logged it, or by a search over the message and logger name, and
   optionally have the page refresh itself. Every filter is in the URL, so a
   filtered view can be bookmarked or pasted to someone else. Also see live
-  tool counts, per-template usage (calls/errors/last
-  used this session), and a recent activity & error log (filterable to
-  warnings/errors).
+  tool counts and per-template usage (calls/errors/last used this session).
 
 ## Base templates
 
