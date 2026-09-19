@@ -116,6 +116,29 @@ class TestPriority:
         with pytest.raises(ValueError, match="Priority must be"):
             draft(priority="urgent")
 
+    @pytest.mark.parametrize("unset", [None, ""])
+    def test_an_unset_priority_is_the_normal_one(self, unset):
+        """The MCP parameter defaults to `"normal"`, so an unset priority is
+        the absence of a choice, not a bad one. Until #112 `None` reached a
+        second `priority.lower()` past the guard and surfaced as a
+        RuntimeError; `""` was quietly accepted here but by a different
+        route, so the two disagreed about what "unset" meant."""
+        message = draft(priority=unset)
+
+        assert message["X-Priority"] is None
+        assert message["X-MSMail-Priority"] is None
+        assert message["Importance"] is None
+
+    @pytest.mark.parametrize("not_a_priority", [5, 0, ["high"], object()])
+    def test_a_priority_that_is_not_a_string_is_refused_not_a_crash(self, not_a_priority):
+        """A truthy non-string used to reach `.lower()` in the guard itself
+        and escape as a bare AttributeError, outside the try; a falsy one
+        got as far as the header block and came back as RuntimeError. Same
+        mistake by the caller, three different answers. It is input they can
+        fix, so it is a ValueError like any other (#112)."""
+        with pytest.raises(ValueError, match="Priority must be"):
+            draft(priority=not_a_priority)
+
 
 class TestTheBody:
 
