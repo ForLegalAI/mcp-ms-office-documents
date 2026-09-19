@@ -36,6 +36,7 @@ FORMULA_TOO_LONG = "formula_too_long"
 CIRCULAR_REFERENCE = "circular_reference"
 
 # Names and formatting the workbook did not take as asked.
+TABLE_SEPARATOR_MISSING = "table_separator_missing"
 SHEET_NAME_COLLISION = "sheet_name_collision"
 SHEET_NAME_INVALID = "sheet_name_invalid"
 HEADER_RENAMED = "header_renamed"
@@ -55,6 +56,7 @@ WARNING_SEVERITY: dict[str, str] = {
     FORMULA_TOO_LONG: SEVERITY_ERROR,
     CIRCULAR_REFERENCE: SEVERITY_ERROR,
 
+    TABLE_SEPARATOR_MISSING: SEVERITY_WARNING,
     SHEET_NAME_COLLISION: SEVERITY_WARNING,
     SHEET_NAME_INVALID: SEVERITY_WARNING,
     HEADER_RENAMED: SEVERITY_WARNING,

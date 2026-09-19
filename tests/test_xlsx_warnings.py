@@ -161,6 +161,36 @@ class TestFormulasThatWillNotCompute:
 
 class TestNamesAndFormatting:
 
+    def test_a_table_without_a_separator_row_is_reported(self):
+        """parse_table() does not require the separator, it only skips rows
+        that look like one — so the table parses and its first row silently
+        becomes the header."""
+        warnings = build("| Item | Qty |\n| A    | 1   |\n")
+
+        warning = only(warnings, W.TABLE_SEPARATOR_MISSING)
+        assert warning.severity == SEVERITY_WARNING
+        assert warning.location["line"] == 1
+        assert warning.location["sheet"] == "Data Report"
+        assert "first row was used as the header" in warning.message
+
+    def test_the_warning_describes_what_actually_happened(self):
+        """The first row really is the header, which is why this is worth
+        saying: T1.B[0] counts from the row after it."""
+        from openpyxl import load_workbook
+
+        buffer, _ = _markdown_to_excel_buffer(
+            "| Item | Qty |\n| A    | 1   |\n| B | =T1.B[0] |\n")
+        sheet = load_workbook(buffer).active
+        buffer.close()
+
+        assert sheet["A1"].value == "Item"        # header, not data
+        assert sheet["A2"].value == "A"           # first data row
+        assert sheet["B3"].value == "=B2"         # T1.B[0] → the row after A1
+
+    def test_a_table_with_a_separator_reports_nothing(self):
+        assert build("| Item | Qty |\n|------|-----|\n| A | 1 |\n") == []
+
+
     def test_a_colliding_sheet_name_is_reported(self):
         warnings = build("## Sheet: Report\n| A |\n|---|\n| 1 |\n\n"
                          "## Sheet: Report\n| B |\n|---|\n| 2 |\n")

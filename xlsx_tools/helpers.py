@@ -232,24 +232,37 @@ def parse_table(lines: list[str], start_idx: int) -> tuple[list[list[str]] | Non
     # Parse table data, extracting alignment from separator row
     table_data: list[list[str]] = []
     col_alignments: list[str | None] = []
+    saw_separator = False
     for line in table_lines:
         if _is_separator_row(line):
             col_alignments = _parse_column_alignments(line)
+            saw_separator = True
             continue
         cells = [cell.strip() for cell in line.split('|')[1:-1]]
         table_data.append(cells)
 
     # Attach alignment info to the table_data list
-    table_data_with_align = TableData(table_data, col_alignments)
+    table_data_with_align = TableData(table_data, col_alignments,
+                                      has_separator=saw_separator)
     return table_data_with_align, i
 
 
 class TableData(list):
-    """A list subclass that carries column alignment metadata."""
+    """A list subclass that carries column alignment metadata.
 
-    def __init__(self, data: list[list[str]], col_alignments: list[str | None] | None = None):
+    *has_separator* records whether the markdown actually had a ``|---|---|``
+    row. :func:`parse_table` does not require one — it only skips the rows that
+    look like one — so a table written without it still parses, with its first
+    row taken as the header. That is usually what the caller meant, but it is a
+    decision made on their behalf, so the parser reports it (#114). It defaults
+    to True: only markdown that was really parsed can say otherwise.
+    """
+
+    def __init__(self, data: list[list[str]], col_alignments: list[str | None] | None = None,
+                 has_separator: bool = True):
         super().__init__(data)
         self.col_alignments: list[str | None] = col_alignments or []
+        self.has_separator: bool = has_separator
 
 
 # ── Cell Resolution ───────────────────────────────────────────────────────────

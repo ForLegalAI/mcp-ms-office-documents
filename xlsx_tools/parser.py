@@ -157,6 +157,24 @@ def walk_markdown_lines(lines: list[str], warnings=None) -> list[LineEvent]:
             table_start = i
             table_data, i = parse_table(lines, i)
             if table_data:
+                if warnings is not None and not getattr(
+                        table_data, "has_separator", True):
+                    # parse_table() does not require the separator row, it only
+                    # skips rows that look like one — so a table written
+                    # without it still parses, and its first row becomes the
+                    # header. Usually what the caller meant, but decided for
+                    # them, and it moves every table-relative reference: those
+                    # count from the first row AFTER the header.
+                    warnings.add(
+                        W.TABLE_SEPARATOR_MISSING,
+                        "the table starting here has no separator row "
+                        "(|---|---|), so its first row was used as the header "
+                        "and the rest as data. Add the separator to say which "
+                        "row is the header — references like T1.B[0] count "
+                        "from the first row after it.",
+                        sheet=current_sheet,
+                        line=table_start + 1,
+                    )
                 table_key = f"T{table_counter}"
                 events.append(TableEvent(
                     table_data=table_data,
