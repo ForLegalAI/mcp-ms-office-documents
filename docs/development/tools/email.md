@@ -118,7 +118,7 @@ it in the HTML `lang` attribute itself.
 
 | File | Covers |
 |------|--------|
-| `tests/test_email_creation.py` | The draft itself: recipient joining, the RFC 2047 subject, the three priority headers moving together, an unset and a non-string priority, `X-Unsent`, the base64 UTF-8 HTML body, what is escaped (`subject`) and what is not (`content`), that the resolved template's content is what reaches the render call and that no template at all raises, the uploading wrapper, and the dynamic tool's deliberately smaller header set |
+| `tests/test_email_creation.py` | The draft itself: recipient joining, the RFC 2047 subject, the three priority headers moving together, an unset and a non-string priority and the message a refused one leaves the caller with, `X-Unsent`, the base64 UTF-8 HTML body, what is escaped (`subject`) and what is not (`content`), that the resolved template's content is what reaches the render call and that no template at all raises, the uploading wrapper, and the dynamic tool's deliberately smaller header set |
 | `tests/test_email_language.py` | The `EMAIL_DEFAULT_LANGUAGE` setting and where the tag lands |
 | `tests/test_template_resolution.py` | Which file `find_email_template()` picks — the custom-over-default precedence itself, shared with Word and PowerPoint |
 | `tests/test_dynamic_args_schema.py`, `tests/test_template_registry.py` | The dynamic email tools' argument schema and registration |

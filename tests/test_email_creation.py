@@ -237,6 +237,16 @@ class TestTheUploadingWrapper:
         assert extension == "eml"
         assert upload.call_args.kwargs["filename"] == "my_draft"
 
+    def test_a_refused_input_reaches_the_caller_as_something_they_can_act_on(self):
+        """`create_eml()` wraps everything in RuntimeError, so the ValueError
+        the buffer function raises arrives as one — the message is what the
+        caller is left with. Before #112 a non-string priority got here as
+        `'int' object has no attribute 'lower'`, which says nothing about
+        what to send instead."""
+        with patch("email_tools.base_email_tool.upload_file"):
+            with pytest.raises(RuntimeError, match="Priority must be"):
+                create_eml(to=["a@x.com"], re="S", content="<p>x</p>", priority=5)
+
     def test_the_buffer_is_closed_even_when_the_upload_fails(self):
         with patch("email_tools.base_email_tool.upload_file",
                    side_effect=RuntimeError("backend down")) as upload:
