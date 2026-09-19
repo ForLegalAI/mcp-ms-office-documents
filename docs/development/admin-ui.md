@@ -12,9 +12,10 @@ contain, [`dynamic-templates.md`](dynamic-templates.md).
 |--------|------|
 | `admin/app.py` | `AdminContext` (the services a view needs), the routes, `build_admin_app()` / `build_combined_app()` — and nothing else |
 | `admin/components.py` | markup primitives (`card`, `field`, `data_table`, …) and the inlined theme |
-| `admin/kinds.py` | one `KindDescriptor` per template kind: label, icon, wording, `has_args` |
+| `admin/kinds.py` | one `KindDescriptor` per *dynamic* template kind: label, icon, wording, `has_args` |
+| `admin/base_templates.py` | one `BaseSlot` per *static* base template (fixed filename, one of each) |
 | `admin/forms.py` | reading a submitted form back into a spec dict |
-| `admin/views/` | the pages — `shell`, `templates`, `status`, `login` |
+| `admin/views/` | the pages — `shell`, `templates`, `base`, `status`, `login` |
 | `admin/store.py` | persistence: `config/<kind>_templates.d/<name>.yaml` + the asset |
 | `admin/analysis.py` | what is inside an uploaded `.docx` / `.html` / `.pptx` |
 | `admin/preview.py` | rendering a template without touching the upload backend |
@@ -90,6 +91,28 @@ quotes, backslashes and control characters (spaces and non-ASCII stay legal —
 `Brand Deck.pptx` is an ordinary name), and `kinds.content_disposition()`
 builds the header per RFC 6266 rather than interpolating the name.
 
+**Base-template routes are registered before the generic ones.**
+`/base/{slot}/download` also matches `/{kind}/{name}/download`, and Starlette
+takes the first route that fits — so the `/base/…` routes are declared ahead of
+the `/{kind}/…` block in `build_admin_app()`. Move them and the download
+silently redirects home instead of serving a file;
+`test_download_route_is_not_swallowed_by_the_generic_pattern` pins it.
+
+**A slot's state is decided by path identity, not directory naming.**
+`base_templates.source_of()` compares the resolved file against the exact path
+a replacement is written to. `template_utils._classify_template_source()` looks
+for a path part called `custom_templates`, which is right in the normal layout
+and wrong when the bundled defaults sit under such a directory — it would
+report a default as custom and offer to revert a file the UI cannot delete.
+
+**One predicate decides whether a file is usable.** The analysers report two
+different things: a file that could not be read at all, and observations about
+a file that read fine. Only the first should refuse an upload, and
+`analysis.is_unusable()` is what every upload route asks — it matches any
+warning opening "Could not …". The routes used to match `"Could not open"`
+inline, which missed `analyze_xlsx`'s "Could not read named styles" and
+installed a workbook whose whole purpose had failed.
+
 **3. Colours are tokens.** Custom properties on `:root`, redefined under
 `@media (prefers-color-scheme: dark)`. A rule written with a literal colour
 will be wrong in one of the two themes.
@@ -138,4 +161,5 @@ argument, so "live" means the registry re-read it.
 | `tests/test_admin_pptx.py` | pptx analysis, the layout form, preview |
 | `tests/test_admin_assets.py` | the no-external-assets and `lang` invariants, on every page |
 | `tests/test_admin_style_keys.py` | the style-key lists cannot drift from the renderer |
+| `tests/test_admin_base_templates.py` | the five base-template slots: state, upload, download, revert |
 | `tests/test_admin_config.py` | `ADMIN_*` settings |

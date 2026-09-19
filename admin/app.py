@@ -43,8 +43,8 @@ from fasthtml.common import FastHTML, RedirectResponse, Response, HTMLResponse, 
 from starlette.routing import Mount
 
 from config import Config
-from admin import auth, views
-from admin.analysis import analyze
+from admin import auth, base_templates, views
+from admin.analysis import analyze, is_unusable
 from admin.components import head_tags
 from admin.forms import build_spec, checked
 from admin.kinds import (
@@ -280,6 +280,113 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
     def status(level: str = "info"):
         return views.status_page(ctx, level=level)
 
+    # ---- Base templates (#169) -------------------------------------------
+    # Registered BEFORE the generic /{kind}/{name}/… routes below: Starlette
+    # matches in registration order, and "/base/docx/download" also fits
+    # "/{kind}/{name}/download", which would redirect home instead of serving
+    # the file. tests/test_admin_base_templates.py pins this ordering.
+
+    def _slot_states():
+        """One (slot, active path, source, analysis) per slot, read fresh."""
+        states = []
+        for s in base_templates.SLOTS:
+            active = base_templates.active_path(s)
+            source = base_templates.source_of(ctx.store.custom_dir, s, active)
+            analysis = None
+            if active is not None:
+                try:
+                    analysis = analyze(s.analysis_kind, active.read_bytes())
+                except Exception:
+                    logger.exception("[admin] Could not analyse base template %s",
+                                     active)
+            states.append((s, active, source, analysis))
+        return states
+
+    def _base_page(sess, focus=None, message=None, message_kind="ok"):
+        return views.base_templates_page(
+            ctx, csrf=auth.ensure_csrf(sess), states=_slot_states(),
+            focus=focus, message=message, message_kind=message_kind,
+        )
+
+    @rt("/base")
+    def base_templates_index(sess):
+        return _base_page(sess)
+
+    @rt("/base/{key}/download")
+    def base_download(key: str):
+        if not base_templates.is_slot(key):
+            return _home()
+        s = base_templates.slot(key)
+        active = base_templates.active_path(s)
+        if active is None:
+            return views.not_found_page(ctx, f"a {s.label} base template")
+        return Response(
+            content=active.read_bytes(),
+            media_type=media_type(active.name),
+            headers={"Content-Disposition": content_disposition(active.name)},
+        )
+
+    @rt("/base/{key}/upload", methods=["post"])
+    async def base_upload(req, sess, key: str):
+        if not base_templates.is_slot(key):
+            return _home()
+        s = base_templates.slot(key)
+        form = await req.form()
+        bad = _csrf_guard(sess, form)
+        if bad:
+            return bad
+
+        upload, data, error = await _read_upload(form)
+        if not error:
+            suffix = Path(getattr(upload, "filename", "") or "").suffix.lower()
+            if suffix not in s.exts:
+                error = f"{s.label} expects a {s.accept} file; got {suffix or 'no'} extension."
+        analysis = None
+        if not error:
+            analysis = analyze(s.analysis_kind, data)
+            error = is_unusable(analysis)
+        if error:
+            return _base_page(sess, focus=key, message=error, message_kind="err")
+
+        # The filename comes from the slot table, never from the upload.
+        target = base_templates.custom_path(ctx.store.custom_dir, s)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        logger.info("[admin] Installed %s base template (%d bytes)", key, len(data))
+        return _base_page(
+            sess, focus=key,
+            message=f"Installed {target.name}. Every new document uses it from "
+                    "now on — no restart needed.")
+
+    @rt("/base/{key}/revert", methods=["post"])
+    async def base_revert(req, sess, key: str):
+        if not base_templates.is_slot(key):
+            return _home()
+        s = base_templates.slot(key)
+        form = await req.form()
+        bad = _csrf_guard(sess, form)
+        if bad:
+            return bad
+
+        # unlink() decides, rather than is_file() deciding and unlink()
+        # assuming: between the two, a concurrent revert (a second tab) would
+        # leave this one raising FileNotFoundError into a 500.
+        target = base_templates.custom_path(ctx.store.custom_dir, s)
+        try:
+            target.unlink()
+        except FileNotFoundError:
+            return _base_page(sess, focus=key,
+                              message="There is no custom file to remove.",
+                              message_kind="warn")
+        logger.info("[admin] Removed custom %s base template", key)
+        if s.has_default:
+            message = f"Removed {target.name}; the bundled default is in use again."
+        else:
+            message = (f"Removed {target.name}. Nothing ships in its place, so no "
+                       "named styles are available until you upload one.")
+        return _base_page(sess, focus=key, message=message,
+                          message_kind="ok" if s.has_default else "warn")
+
     @rt("/new/{kind}")
     def new(sess, kind: str):
         if not is_kind(kind):
@@ -306,8 +413,9 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             return views.new_page(ctx, kind, csrf=csrf, error=error)
 
         analysis = analyze(kind, data)
-        if any("Could not open" in w for w in analysis.warnings):
-            return views.new_page(ctx, kind, csrf=csrf, error=analysis.warnings[0])
+        unusable = is_unusable(analysis)
+        if unusable:
+            return views.new_page(ctx, kind, csrf=csrf, error=unusable)
 
         # Keep the uploaded extension (a .potx stays a .potx) rather than
         # forcing the canonical one onto a file that is not in that format.
@@ -382,8 +490,8 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
 
         _upload, data, error = await _read_upload(form)
         analysis = analyze(kind, data) if data else None
-        if not error and analysis and any("Could not open" in w for w in analysis.warnings):
-            error = analysis.warnings[0]
+        if not error and analysis:
+            error = is_unusable(analysis)
         if error:
             # Prefill from the file that is still installed, but do not report on
             # it: the admin asked about the file they just submitted, and this is

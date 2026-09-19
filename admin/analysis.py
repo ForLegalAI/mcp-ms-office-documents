@@ -417,14 +417,74 @@ def _add_pptx_warnings(analysis: PptxAnalysis) -> None:
         )
 
 
+def is_unusable(analysis) -> Optional[str]:
+    """The warning saying the file cannot be used at all, or ``None``.
+
+    The analysers report two kinds of thing: a file that could not be read
+    (fatal — there is nothing to install), and observations about a file that
+    read fine (a missing style, a layout that serves no role). Only the first
+    should stop an upload.
+
+    Fatal warnings are the ones that open "Could not …". Callers used to match
+    ``"Could not open"`` inline, which missed
+    :func:`analyze_xlsx`'s "Could not read named styles" — a workbook that
+    opened but whose styles could not be read would install anyway, with only
+    a note on screen.
+    """
+    for warning in getattr(analysis, "warnings", None) or []:
+        if warning.startswith("Could not "):
+            return warning
+    return None
+
+
+def analyze_xlsx(data: bytes) -> Analysis:
+    """Analyse an Excel template: the named cell styles it defines.
+
+    An xlsx template declares no placeholders. What it contributes is its
+    named styles, which become referenceable as ``style:<Name>`` in a
+    ``styles:`` directive — a set defined by a binary file on a volume with no
+    other way to ask the server what is in it. They land in ``styles_present``
+    because that is what the field means for the other kinds too: the style
+    names this document actually offers.
+
+    ``Normal`` is excluded to match :func:`xlsx_tools.styles.load_template_styles`,
+    which does not offer openpyxl's built-in default as a referenceable name.
+    """
+    analysis = Analysis(kind="xlsx")
+    try:
+        from openpyxl import load_workbook
+        workbook = load_workbook(io.BytesIO(data))
+    except Exception as e:
+        analysis.warnings.append(f"Could not open as an Excel workbook: {e}")
+        return analysis
+    try:
+        analysis.styles_present = sorted(
+            s.name for s in workbook._named_styles if s.name != "Normal"
+        )
+    except Exception as e:
+        analysis.warnings.append(f"Could not read named styles: {e}")
+        return analysis
+    finally:
+        workbook.close()
+
+    if not analysis.styles_present:
+        analysis.warnings.append(
+            "This workbook defines no named cell styles beyond the built-in "
+            "Normal, so there is nothing a 'style:' directive could reference."
+        )
+    return analysis
+
+
 def analyze(kind: str, data: bytes):
-    """Dispatch analysis by template *kind* (``docx``, ``email`` or ``pptx``)."""
+    """Dispatch analysis by template *kind*."""
     if kind == "docx":
         return analyze_docx(data)
     if kind == "email":
         return analyze_html(data)
     if kind == "pptx":
         return analyze_pptx(data)
+    if kind == "xlsx":
+        return analyze_xlsx(data)
     raise ValueError(f"Unknown template kind: {kind!r}")
 
 
