@@ -65,8 +65,16 @@ def _create_eml_buffer(to=None, cc=None, bcc=None, re=None, content=None, priori
     Returns:
         BytesIO buffer containing the EML file (position at start)
     """
-    # Validate priority
-    if priority and priority.lower() not in ["low", "normal", "high"]:
+    # Normalise priority once. `None` and "" mean "not set" and take the
+    # default the MCP parameter already declares; anything that is not one of
+    # the three names is the caller's to fix. Reading `.lower()` a second time
+    # further down used to raise AttributeError past this guard (#112).
+    if priority is None or priority == "":
+        priority = "normal"
+    if not isinstance(priority, str):
+        raise ValueError("Priority must be 'low', 'normal', or 'high'")
+    priority = priority.lower()
+    if priority not in ("low", "normal", "high"):
         raise ValueError("Priority must be 'low', 'normal', or 'high'")
 
     if not content:
@@ -110,11 +118,11 @@ def _create_eml_buffer(to=None, cc=None, bcc=None, re=None, content=None, priori
         msg['Content-Language'] = safe_language
         msg['Accept-Language'] = safe_language
 
-        if priority.lower() == 'high':
+        if priority == 'high':
             msg['X-Priority'] = '1 (Highest)'
             msg['X-MSMail-Priority'] = 'High'
             msg['Importance'] = 'High'
-        elif priority.lower() == 'low':
+        elif priority == 'low':
             msg['X-Priority'] = '5 (Lowest)'
             msg['X-MSMail-Priority'] = 'Low'
             msg['Importance'] = 'Low'

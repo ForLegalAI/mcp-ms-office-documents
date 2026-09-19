@@ -24,8 +24,9 @@ backend:
 | Word | call `_markdown_to_doc()` and inspect the `Document`, or `_markdown_to_word_buffer()`, which returns `(buffer, warnings)`, and reopen the bytes |
 | Excel | `tests/test_xlsx_creation.py::_create_workbook_from_markdown()` patches `xlsx_tools.base_xlsx_tool.upload_file`, captures the buffer and returns `load_workbook()` of it; `_markdown_to_excel_buffer()` returns `(buffer, warnings)` |
 | PowerPoint | instantiate `PowerpointPresentation(slides, ...)`, call `.save()`, reopen with `Presentation()`; read `.warnings` for the warning records (`code`, `slide`, `severity`, `message`) or `.warning_messages` to assert on their text |
-| Email, XML | call the buffer function directly |
+| Email, XML | call the buffer function directly. For email, parse the result with `email.message_from_bytes()` and base64-decode the payload to see the body — `tests/test_email_creation.py` shows the shape |
 | Dynamic templates | register against a fresh `FastMCP()` instance and call the tool function; patch `upload_file` in the tool module |
+| Template resolution | monkeypatch the four directory constants on `template_utils` at temp dirs and place real files; see `tests/test_template_resolution.py` |
 
 **Warnings without a build.** To assert on what a builder worked around, take
 the warnings half of the buffer function's return value, or pass a channel of
@@ -52,6 +53,19 @@ modules. To test a different configuration, set the environment and reload:
 **Registries.** The PowerPoint template registry is cached on file mtimes;
 call `pptx_tools.templates.clear_cache()` after writing a template in a
 test. `metrics.reset()` clears counters.
+
+**Mutation-testing a change.** A test-only change has no bug to regress
+against, so the way to show a new test has teeth is to break the source and
+watch it fail. Run those with `PYTHONDONTWRITEBYTECODE=1` and clear
+`__pycache__` between rounds. A default timestamp-based `.pyc` records the
+source's mtime **truncated** to whole seconds and its size, and validates on
+those two alone; a mutation that reorders lines or swaps equal-length text
+changes neither, so edit, run and restore inside one second and the
+interpreter serves the stale bytecode instead. (A hash-based `.pyc` does not
+have this failure mode, so the trap is specific to the default.) It fails in the direction that matters — a real
+gap looks covered, and a mutation that was never actually applied looks
+killed. This is not hypothetical; it produced two wrong results while #112's
+review was being worked, one of them reported before it was caught.
 
 **Network.** Anything that would download an image is either marked
 `@pytest.mark.network` or patches `image_utils.download_image`. The SSRF
