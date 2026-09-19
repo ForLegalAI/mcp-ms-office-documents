@@ -288,7 +288,15 @@ under it reports `table_separator_missing` in either, at `warning` severity.
 was in the one position markdown gives it meaning. Only row 1 of the run is
 tested: a row of dashes anywhere else is data — `| - | - |` is how a caller
 writes "not applicable in either column" — and matching by shape alone dropped
-it from the table with nothing said. A separator row must also carry dashes in
+it from the table with nothing said. A run of nothing but separator rows has
+no header for one of them to sit under, so it is not a table at all: it takes
+the `table_not_recognised` path and the lines are written as prose. Excel
+applies both rules too, reporting `table_incomplete` for the second because a
+worksheet has nowhere to put the lines.
+
+`_is_separator_line()` is the shape test both the guard and the loop use, so
+they cannot disagree about what a separator row looks like; position is
+decided by the caller of it. A separator row must also carry dashes in
 *every* cell: the empty-cell exemption this once had made `all()` vacuously
 true for a row of blank cells, so `|  |  |` passed as a separator and the
 caller's blank row was swallowed with the table counted as well formed. Excel's

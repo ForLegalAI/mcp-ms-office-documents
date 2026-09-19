@@ -180,6 +180,19 @@ class TestInstructionsNotFollowed:
         assert len(doc.tables[0].rows) == 3          # the blank row survives
         assert codes(warnings) == [W.TABLE_SEPARATOR_MISSING]
 
+    @pytest.mark.parametrize("lines", [2, 3])
+    def test_separator_rows_with_no_header_are_not_a_table(self, lines):
+        """Nothing for a separator to sit under. Without the guard, the
+        `idx == 1` rule picks one and the rest become a table whose header
+        reads '---' — built, and reported to nobody."""
+        doc = Document()
+        warnings = W.channel()
+        process_markdown_content(doc, "|---|---|\n" * lines, warnings=warnings)
+
+        assert doc.tables == []
+        assert [p.text for p in doc.paragraphs if p.text] == ["|---|---|"] * lines
+        assert codes(warnings) == [W.TABLE_NOT_RECOGNISED] * lines
+
     def test_a_dash_row_below_the_separator_is_data(self):
         """The same rule as Excel: one separator, directly under the header."""
         doc = Document()

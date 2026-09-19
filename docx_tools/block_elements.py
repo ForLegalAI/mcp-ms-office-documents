@@ -39,6 +39,23 @@ ALIGNMENT_MAP = {
 # ---------------------------------------------------------------------------
 _SEPARATOR_RE = re.compile(r'^[|:\-\s]+$')
 
+def _is_separator_line(line):
+    """True if *line* is a markdown table separator row (``|---|:---:|``).
+
+    Every cell must carry dashes. Skipping the empty ones made ``all()``
+    vacuously true for a row of blank cells, so ``|  |  |`` passed as a
+    separator and the caller's blank row was swallowed. Excel's
+    ``_is_separator_row()`` applies the same rule.
+
+    Shape only — whether a row is *the* separator also depends on its
+    position; see :func:`parse_table`.
+    """
+    if not _SEPARATOR_RE.match(line.replace('|', ' | ')):
+        return False
+    cells = [c.strip() for c in line.split('|')[1:-1]]
+    return bool(cells) and all(re.match(r'^:?-+:?$', c) for c in cells)
+
+
 def _parse_alignment_row(line):
     """Extract column alignments from a markdown table separator row.
     Returns a list of alignment values (WD_ALIGN_PARAGRAPH) or None per column.
@@ -78,6 +95,16 @@ def parse_table(lines, start_idx):
             break
     if len(table_lines) < 2:
         return None, None, start_idx + 1, False
+    # A run of nothing but separator rows is not a table: there is no header
+    # for one of them to sit under. Without this, the `idx == 1` rule below
+    # picks one as the separator and appends the rest as data, building a
+    # table whose header reads "---" and reporting nothing. Returning no table
+    # sends the lines down the not-a-table path in the block dispatcher, where
+    # they are reported as table_not_recognised and written as prose — Word
+    # keeps what the caller wrote, where Excel reports table_incomplete
+    # because a worksheet has nowhere to put it.
+    if all(_is_separator_line(line) for line in table_lines):
+        return None, None, start_idx + 1, False
     table_data = []
     col_alignments = None
     separator_in_place = False
@@ -89,12 +116,10 @@ def parse_table(lines, start_idx):
         # made `all()` vacuously true for a row of blank cells, so `|  |  |`
         # passed as a separator and the caller's blank row was swallowed.
         # Excel's parse_table() applies both rules the same way.
-        if idx == 1 and _SEPARATOR_RE.match(line.replace('|', ' | ')):
-            cells = [c.strip() for c in line.split('|')[1:-1]]
-            if cells and all(re.match(r'^:?-+:?$', c) for c in cells):
-                col_alignments = _parse_alignment_row(line)
-                separator_in_place = True
-                continue
+        if idx == 1 and _is_separator_line(line):
+            col_alignments = _parse_alignment_row(line)
+            separator_in_place = True
+            continue
         cells = [cell.strip() for cell in line.split('|')[1:-1]]
         table_data.append(cells)
     return table_data, col_alignments, i, separator_in_place
