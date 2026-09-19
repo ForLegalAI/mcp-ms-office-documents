@@ -64,6 +64,12 @@ convention. The chosen file and whether it was custom or default are logged
 at INFO. The Excel styles module and the PowerPoint registry both go through
 the primitive.
 
+Two orders decide which file wins, and they are independent: the directory
+order settles a filename that exists in more than one directory, the
+candidate-name order settles `custom_` against `default_`. A test that gives
+the two files different names exercises only the second.
+`tests/test_template_resolution.py` covers both.
+
 ## `template_registry.py`
 
 Shared by the Word, email and PowerPoint dynamic registries.

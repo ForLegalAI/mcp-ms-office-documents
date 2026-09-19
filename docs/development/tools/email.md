@@ -88,6 +88,13 @@ it in the HTML `lang` attribute itself.
 
 - **Escaping is disabled in the static renderer.** Anything added to the
   context must be escaped explicitly unless it is meant to be HTML.
+- **The subject goes into the draft twice, in two forms.** `Header(re,…)`
+  takes the caller's text as given; `{{subject}}` in the `<title>` takes the
+  `html.escape()`d copy. They must stay different: a header is read by a mail
+  client, not a browser, so an escaped `&amp;` there is shown literally.
+  `test_the_subject_header_carries_the_raw_text_not_the_escaped_one` pins it —
+  every other subject test used text `html.escape()` leaves alone, so
+  collapsing the two passed the whole suite until #112's review caught it.
 - **The default language comes from `EMAIL_DEFAULT_LANGUAGE`**, not from the
   signatures. It was a hard-coded `cs-CZ` in both the tool parameter and
   `_create_eml_buffer()` until #116, which made it a setting and changed the
@@ -103,14 +110,21 @@ it in the HTML `lang` attribute itself.
 
 | File | Covers |
 |------|--------|
-| `tests/test_email_creation.py` | The draft itself: recipient joining, the RFC 2047 subject, the three priority headers moving together, `X-Unsent`, the base64 UTF-8 HTML body, what is escaped (`subject`) and what is not (`content`), template resolution including the custom override and the missing-template error, the uploading wrapper, and the dynamic tool's deliberately smaller header set |
+| `tests/test_email_creation.py` | The draft itself: recipient joining, the RFC 2047 subject, the three priority headers moving together, `X-Unsent`, the base64 UTF-8 HTML body, what is escaped (`subject`) and what is not (`content`), that the resolved template's content is what reaches the render call and that no template at all raises, the uploading wrapper, and the dynamic tool's deliberately smaller header set |
 | `tests/test_email_language.py` | The `EMAIL_DEFAULT_LANGUAGE` setting and where the tag lands |
+| `tests/test_template_resolution.py` | Which file `find_email_template()` picks — the custom-over-default precedence itself, shared with Word and PowerPoint |
 | `tests/test_dynamic_args_schema.py`, `tests/test_template_registry.py` | The dynamic email tools' argument schema and registration |
 
 The draft is built with `_create_eml_buffer()` and parsed back with
 `email.message_from_bytes()`, so the assertions are on what a mail client
 reads rather than on the code's intermediates. The body is base64, so a test
 that looks at it decodes the payload first.
+
+`test_email_creation.py` patches `find_email_template` out, so it proves only
+that whatever the resolver returns is what gets rendered — never which file
+that is. The precedence itself lives in `template_utils._resolve_from_candidates()`
+and is tested in `tests/test_template_resolution.py`, which is where a change
+to the override rules will be caught.
 
 Both modules were added by [#112](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/112) and [#116](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/116); before them the static tool had no test of its
 own and was exercised only incidentally by `tests/test_run_blocking.py`,

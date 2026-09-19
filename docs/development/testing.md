@@ -26,6 +26,7 @@ backend:
 | PowerPoint | instantiate `PowerpointPresentation(slides, ...)`, call `.save()`, reopen with `Presentation()`; read `.warnings` for the warning records (`code`, `slide`, `severity`, `message`) or `.warning_messages` to assert on their text |
 | Email, XML | call the buffer function directly. For email, parse the result with `email.message_from_bytes()` and base64-decode the payload to see the body — `tests/test_email_creation.py` shows the shape |
 | Dynamic templates | register against a fresh `FastMCP()` instance and call the tool function; patch `upload_file` in the tool module |
+| Template resolution | monkeypatch the four directory constants on `template_utils` at temp dirs and place real files; see `tests/test_template_resolution.py` |
 
 **Warnings without a build.** To assert on what a builder worked around, take
 the warnings half of the buffer function's return value, or pass a channel of

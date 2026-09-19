@@ -65,6 +65,17 @@ class TestHeaders:
         subject travels as an encoded word. Legal, and what clients get."""
         assert draft(re="Hello")["Subject"] == "=?utf-8?q?Hello?="
 
+    def test_the_subject_header_carries_the_raw_text_not_the_escaped_one(self):
+        """The escaping is for the `<title>` only. The header is read by a
+        mail client, not a browser, so `&amp;` there would be shown
+        literally. `Header(re, …)` and `{{subject}}` take deliberately
+        different strings and nothing else pinned that they stay different."""
+        subject = "Q3 <b>report</b> & more"
+
+        message = draft(re=subject)
+
+        assert str(make_header(decode_header(message["Subject"]))) == subject
+
     def test_the_draft_carries_a_date(self):
         assert draft()["Date"] is not None
 
