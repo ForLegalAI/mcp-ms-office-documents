@@ -67,8 +67,13 @@ the primitive.
 Two orders decide which file wins, and they are independent: the directory
 order settles a filename that exists in more than one directory, the
 candidate-name order settles `custom_` against `default_`. A test that gives
-the two files different names exercises only the second.
-`tests/test_template_resolution.py` covers both.
+the two files different names exercises only the second — and one that names
+a single pair of directories exercises only that boundary, which is how the
+`APP_DEFAULT_DIR` / `LOCAL_DEFAULT_DIR` pair went unguarded through the first
+two drafts of its own test. `tests/test_template_resolution.py` therefore
+walks the whole list: the same filename goes into every directory and the
+winner is removed each round, so each boundary is exercised in turn and a
+fifth directory is covered the day it is added.
 
 ## `template_registry.py`
 

@@ -54,6 +54,17 @@ modules. To test a different configuration, set the environment and reload:
 call `pptx_tools.templates.clear_cache()` after writing a template in a
 test. `metrics.reset()` clears counters.
 
+**Mutation-testing a change.** A test-only change has no bug to regress
+against, so the way to show a new test has teeth is to break the source and
+watch it fail. Run those with `PYTHONDONTWRITEBYTECODE=1` and clear
+`__pycache__` between rounds. Python validates a `.pyc` on the source's
+*whole-second* mtime and its size, and a mutation that reorders lines changes
+neither: edit, run, restore within the same second and the interpreter serves
+the stale bytecode instead. It fails in the direction that matters — a real
+gap looks covered, and a mutation that was never actually applied looks
+killed. This is not hypothetical; it produced two wrong results while #112's
+review was being worked, one of them reported before it was caught.
+
 **Network.** Anything that would download an image is either marked
 `@pytest.mark.network` or patches `image_utils.download_image`. The SSRF
 guard is tested by resolving hostnames to fixed addresses, not by

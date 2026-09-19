@@ -83,6 +83,36 @@ class TestTheCustomFileWins:
 
         assert resolved.read_text(encoding="utf-8") == "MOUNTED"
 
+    def test_the_whole_directory_order_is_walked_in_turn(self, template_dirs):
+        """Every boundary, not the pairs someone thought to write.
+
+        The two tests above each pin one adjacent pair, which is how the
+        default pair went unexercised: its directories were created and
+        monkeypatched, and nothing was ever written into `app_default`, so
+        swapping `APP_DEFAULT_DIR` and `LOCAL_DEFAULT_DIR` stayed green.
+        Here the same filename goes into all four and the winner is removed
+        each round, so the order must reveal itself entry by entry — no
+        boundary can be left out, and a fifth directory is covered the day
+        it is added rather than the day someone remembers to add a pair.
+        """
+        expected = ["app_custom", "local_custom", "app_default", "local_default"]
+        for name in expected:
+            write(template_dirs[name], "broadcast.html", name)
+
+        walked = []
+        for _ in expected:
+            resolved = Path(template_utils.find_email_template("broadcast.html"))
+            walked.append(resolved.read_text(encoding="utf-8"))
+            resolved.unlink()
+
+        assert walked == expected
+        assert template_utils.find_email_template("broadcast.html") is None
+
+    def test_every_search_directory_takes_part_in_that_walk(self, template_dirs):
+        """The walk above is only exhaustive while it knows every directory.
+        A fifth one added to `_candidate_dirs()` fails here until it does."""
+        assert set(template_utils._candidate_dirs()) == set(template_dirs.values())
+
 
 class TestTheFallback:
 
