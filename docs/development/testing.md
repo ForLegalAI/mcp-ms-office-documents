@@ -24,7 +24,7 @@ backend:
 | Word | call `_markdown_to_doc()` and inspect the `Document`, or `_markdown_to_word_buffer()`, which returns `(buffer, warnings)`, and reopen the bytes |
 | Excel | `tests/test_xlsx_creation.py::_create_workbook_from_markdown()` patches `xlsx_tools.base_xlsx_tool.upload_file`, captures the buffer and returns `load_workbook()` of it; `_markdown_to_excel_buffer()` returns `(buffer, warnings)` |
 | PowerPoint | instantiate `PowerpointPresentation(slides, ...)`, call `.save()`, reopen with `Presentation()`; read `.warnings` for the warning records (`code`, `slide`, `severity`, `message`) or `.warning_messages` to assert on their text |
-| Email, XML | call the buffer function directly |
+| Email, XML | call the buffer function directly. For email, parse the result with `email.message_from_bytes()` and base64-decode the payload to see the body — `tests/test_email_creation.py` shows the shape |
 | Dynamic templates | register against a fresh `FastMCP()` instance and call the tool function; patch `upload_file` in the tool module |
 
 **Warnings without a build.** To assert on what a builder worked around, take

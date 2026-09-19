@@ -101,17 +101,25 @@ it in the HTML `lang` attribute itself.
 
 ## Tests
 
-There is no dedicated test module for the static email tool. It is
-exercised indirectly by `tests/test_run_blocking.py`,
-`tests/test_upload_unique_prefix.py` and `tests/test_librechat_integration.py`.
-The dynamic email tools are covered by `tests/test_dynamic_args_schema.py`
-and `tests/test_template_registry.py`. A direct test of `_create_eml_buffer()`
-asserting on the headers and body would close the gap; tracked in [#112](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/112).
+| File | Covers |
+|------|--------|
+| `tests/test_email_creation.py` | The draft itself: recipient joining, the RFC 2047 subject, the three priority headers moving together, `X-Unsent`, the base64 UTF-8 HTML body, what is escaped (`subject`) and what is not (`content`), template resolution including the custom override and the missing-template error, the uploading wrapper, and the dynamic tool's deliberately smaller header set |
+| `tests/test_email_language.py` | The `EMAIL_DEFAULT_LANGUAGE` setting and where the tag lands |
+| `tests/test_dynamic_args_schema.py`, `tests/test_template_registry.py` | The dynamic email tools' argument schema and registration |
+
+The draft is built with `_create_eml_buffer()` and parsed back with
+`email.message_from_bytes()`, so the assertions are on what a mail client
+reads rather than on the code's intermediates. The body is base64, so a test
+that looks at it decodes the payload first.
+
+Both modules were added by [#112](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/112) and [#116](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/116); before them the static tool had no test of its
+own and was exercised only incidentally by `tests/test_run_blocking.py`,
+`tests/test_upload_unique_prefix.py` and `tests/test_librechat_integration.py`,
+none of which assert on the draft they produce.
 
 ## Known limitations
 
 - **No HTML sanitisation.** The body fragment is trusted as sent.
-- **Czech default locale** for proofing, as above ([#116](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/116)).
 - **Dynamic drafts carry fewer headers** than static ones, as above.
 - **One template variable set.** The static wrapper knows only `language`,
   `subject` and `content`.
