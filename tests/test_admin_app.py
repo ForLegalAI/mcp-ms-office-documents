@@ -202,13 +202,16 @@ def test_invalid_name_rejected(admin_client):
 
 
 def test_ui_theme_and_controls_present(admin_client):
-    """The self-contained theme and dynamic-row controls are wired in."""
+    """The self-contained theme and dynamic-row controls are wired in.
+
+    That the theme reaches for nothing external is a property of every page,
+    not just this one, and is tested in tests/test_admin_assets.py.
+    """
     client, _ = admin_client
-    # Index ships the inline theme + topbar (no CDN dependency).
+    # Index ships the inline theme + topbar.
     idx = client.get("/admin/").text
     assert "Template Admin" in idx
     assert "--brand" in idx  # inline CSS variables
-    assert "cdn" not in idx.lower()  # no external stylesheet/script
 
     data = _docx_with_placeholders("Dear {{recipient}},", "{{#if ps}}", "{{note}}", "{{/if}}")
     r = _post(client, "/admin/docx/draft", data={"name": "ux_tpl"},
