@@ -194,19 +194,22 @@ def _percent_format_for_column(table_data: list[list[str]], col_idx: int) -> str
     hides part of the number. Returns None when the column has no literal
     percent to learn from, leaving the caller its own fallback.
 
-    A cell only counts if :func:`_apply_column_type` would accept it too —
-    hence the bare ``float()``, matching its test rather than the more
-    forgiving one in :func:`_percent_decimals`. ``1,234%`` fails both: the
-    coercion leaves it as text, so it is not a percent in the sheet and has no
-    business setting the format of the cells that are.
+    A cell counts exactly when :func:`_apply_column_type` would coerce it, and
+    the two tests are deliberately identical: ``rstrip('%')`` then a bare
+    ``float()``. Either half drifting apart from the coercion has already
+    caused this both ways — ``1,234%`` fails ``float()``, so the coercion
+    leaves it as text and it must not set the format of the cells that are
+    percents; while a bare ``50.5`` in a percent column *is* coerced (the
+    ``%`` is optional there), so it must. Neither the sign nor a comma is a
+    test of its own; what the column does with the value is.
     """
     decimals = None
     for row in table_data[1:]:                      # data rows only
         if col_idx >= len(row):
             continue
         text = _strip_markdown_formatting(row[col_idx])[0].strip()
-        if text.startswith('=') or not text.endswith('%'):
-            continue
+        if text.startswith('='):
+            continue                                 # a formula teaches nothing
         body = text.rstrip('%').strip()
         try:
             float(body)                              # exactly what the column

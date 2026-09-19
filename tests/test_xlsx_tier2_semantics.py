@@ -287,6 +287,20 @@ class TestPercentPrecisionInFormulaCells:
 
         assert ws["B2"].number_format == "0%"
 
+    def test_a_percent_written_without_its_sign_still_teaches(self):
+        """The `%` is optional in a percent column — `50.5` is coerced to
+        0.505 and shown as 50.5%. A literal that became a percent must set the
+        format of the computed cells beside it, sign or no sign."""
+        ws = _create_workbook_from_markdown(
+            "<!-- types: text, percent -->\n"
+            "| Metric | Rate |\n|--------|------|\n"
+            "| A      | 50.5 |\n| Calc | =B2*2 |\n"
+        ).active
+
+        assert ws["B2"].value == pytest.approx(0.505)   # coerced, as before
+        assert ws["B2"].number_format == "0.0%"
+        assert ws["B3"].number_format == "0.0%"         # not 0%
+
     def test_a_value_the_column_could_not_coerce_teaches_nothing(self):
         """`1,234%` fails `float()`, so the coercion leaves it as text. It is
         not a percent in the sheet and has no business setting the format of
