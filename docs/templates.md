@@ -150,6 +150,8 @@ templates:
 - Each template becomes a separate AI tool at startup
 - Standard email fields (`subject`, `to`, `cc`, `bcc`) are added automatically; declare `file_name` or `add_unique_prefix` as args if a template needs them
 - Use `{{variable}}` for escaped text, `{{{variable}}}` for raw HTML
+- The context is exactly the arguments you declare. The tool does not invent
+  values alongside them — show an optional value with a section, as above
 
 ## Dynamic Word (DOCX) Templates
 

@@ -1,10 +1,11 @@
 """The default proofing language of an email draft (#116).
 
 `cs-CZ` was hard-coded in two places — the tool parameter and
-`_create_eml_buffer()` — so a deployment writing in any other language had to
-patch the source. `EMAIL_DEFAULT_LANGUAGE` sets it instead. The default is
-still `cs-CZ`, deliberately: changing it would alter the drafts every
-existing deployment produces.
+`_create_eml_buffer()` — so every deployment that was not Czech got Czech
+proofing on an English draft unless it patched the source.
+`EMAIL_DEFAULT_LANGUAGE` sets it instead, and the default is now `en-US`.
+A Czech deployment sets the variable; the `language` argument still wins per
+call.
 """
 import base64
 import email
@@ -45,38 +46,37 @@ def env_language(monkeypatch):
 
 class TestTheSetting:
 
-    def test_unset_keeps_the_historical_default(self, env_language):
-        """Existing deployments must not have their drafts change language."""
+    def test_the_shipped_default_is_english(self, env_language):
         env_language(None)
-        assert Config.from_env().email_default_language == "cs-CZ"
+        assert Config.from_env().email_default_language == "en-US"
 
     def test_the_environment_sets_it(self, env_language):
-        env_language("en-US")
-        assert Config.from_env().email_default_language == "en-US"
+        env_language("cs-CZ")
+        assert Config.from_env().email_default_language == "cs-CZ"
 
     @pytest.mark.parametrize("blank", ["", "   "])
     def test_a_blank_value_is_not_a_language(self, blank, env_language):
         """An empty tag would put lang="" on every draft."""
         env_language(blank)
-        assert Config.from_env().email_default_language == "cs-CZ"
+        assert Config.from_env().email_default_language == "en-US"
 
 
 class TestWhatReachesTheDraft:
 
     def test_the_default_is_used_when_the_call_gives_none(self, env_language):
-        env_language("en-US")
+        env_language("cs-CZ")
         lang_attr, header = draft_language()
-        assert 'lang="en-US"' in lang_attr
-        assert header == "en-US"
+        assert 'lang="cs-CZ"' in lang_attr
+        assert header == "cs-CZ"
 
     def test_the_call_still_wins(self, env_language):
-        env_language("en-US")
+        env_language("cs-CZ")
         lang_attr, header = draft_language(language="de-DE")
         assert 'lang="de-DE"' in lang_attr
         assert header == "de-DE"
 
-    def test_the_shipped_default_is_unchanged(self, env_language):
+    def test_a_draft_with_no_configuration_is_english(self, env_language):
         env_language(None)
         lang_attr, header = draft_language()
-        assert 'lang="cs-CZ"' in lang_attr
-        assert header == "cs-CZ"
+        assert 'lang="en-US"' in lang_attr
+        assert header == "en-US"

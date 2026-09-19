@@ -85,10 +85,10 @@ content. Body only.
 
 The body renders the HTML with a default `pystache.Renderer` (so `{{x}}`
 escapes and `{{{x}}}` is raw), wraps it in a base64 `MIMEText`, sets
-`Subject`, recipients and `X-Unsent`, and uploads. One special case exists:
-a `promo_code` argument automatically produces a `promo_code_block` context
-value when the template does not declare one. That is a leftover from the
-first example template and is worth removing once no template relies on it.
+`Subject`, recipients and `X-Unsent`, and uploads. The context is exactly the
+declared arguments, with `None` flattened to `""` — nothing is synthesised.
+An optional value is shown with a Mustache section over the argument itself
+(`{{#arg}}…{{/arg}}`), in the template where it can be seen and styled.
 
 ## Live registration
 
@@ -132,9 +132,8 @@ are returned, so a preview works on a server configured for S3 — and the Word
 path goes through the *production* substitution pipeline
 (`resolve_conditionals` + `replace_placeholders_in_document`), so the preview
 cannot drift from what the live tool produces. The email path mirrors the
-dynamic email tool's pystache rendering, including the `promo_code` special
-case noted above, which is the one place it deliberately duplicates logic
-rather than calling it.
+dynamic email tool's pystache rendering, building the context the same way:
+declared arguments only, `None` flattened to `""`.
 
 ## The argument-schema rules
 
@@ -175,7 +174,6 @@ template name, for the filename.
 - **Single instance.** Live registration assumes one process owns the
   template files. With replicas, use shared storage and restart.
 - **Block content is body-only** in Word templates; see rendering above.
-- **The `promo_code` special case** in the email body, as above ([#116](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/116)).
 
 ## Tests
 

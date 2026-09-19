@@ -88,9 +88,12 @@ it in the HTML `lang` attribute itself.
 
 - **Escaping is disabled in the static renderer.** Anything added to the
   context must be escaped explicitly unless it is meant to be HTML.
-- **The default language is `cs-CZ`.** Both the tool parameter default and
-  the buffer function default are Czech. Callers who do not set `language`
-  get Czech proofing.
+- **The default language comes from `EMAIL_DEFAULT_LANGUAGE`**, not from the
+  signatures. It was a hard-coded `cs-CZ` in both the tool parameter and
+  `_create_eml_buffer()` until #116, which made it a setting and changed the
+  default to `en-US`; a Czech deployment now sets the variable. The buffer
+  function takes `language=None` and resolves it from config, so there is one
+  place the default lives.
 - **`priority` is validated case-insensitively** but the check reads
   `priority.lower()` twice; a `None` priority would fail on the second read.
   The tool parameter defaults to `"normal"`, so this cannot happen through

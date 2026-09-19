@@ -168,10 +168,4 @@ def render_email_preview(
     """Render an email HTML template with *values*; return rendered HTML."""
     html_source = template_bytes.decode("utf-8", errors="replace")
     safe = {k: ("" if v is None else v) for k, v in values.items()}
-    # Mirror the dynamic email tool's convenience promo block, if present.
-    if "promo_code" in safe and "promo_code_block" not in safe:
-        promo = safe.get("promo_code")
-        safe["promo_code_block"] = (
-            f'<div class="promo">Use promo code <strong>{promo}</strong>.</div>' if promo else ""
-        )
     return pystache.Renderer(file_encoding="utf-8").render(html_source, safe)
