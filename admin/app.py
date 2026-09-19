@@ -60,11 +60,6 @@ from template_registry import gather_specs
 
 logger = logging.getLogger(__name__)
 
-#: Fallback ceiling when no config is to hand. The live limit is
-#: ``config.admin.max_upload_bytes`` (``ADMIN_MAX_UPLOAD_MB``).
-DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024
-
-
 class AdminContext:
     """Shared services the views depend on."""
 
@@ -244,9 +239,13 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
     def _upload_size(upload) -> Optional[int]:
         """The upload's size without reading it, or ``None`` if unknowable.
 
-        Starlette's multipart parser sets ``size``; the seek fallback covers a
-        file object that arrived another way. Both leave the stream positioned
-        at the start, because the caller still has to read it.
+        Starlette's parser computes ``size`` as it writes each chunk to the
+        spooled file, so it counts bytes that actually arrived — it is not a
+        client-declared length that could overstate the body, and a truncated
+        part fails in ``req.form()`` before this is reached. The seek fallback
+        covers a file object that arrived another way, and works either side
+        of ``SpooledTemporaryFile``'s rollover. Both leave the stream at the
+        start, because the caller still has to read it.
         """
         size = getattr(upload, "size", None)
         if size is not None:
