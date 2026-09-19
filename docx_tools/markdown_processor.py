@@ -340,8 +340,23 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
             return next_idx, elements
         # Table (lines starting with |)
         if TABLE_LINE_PATTERN.match(stripped):
-            table_data, col_alignments, next_idx = parse_table(lines, start_idx)
+            table_data, col_alignments, next_idx, has_separator = parse_table(
+                lines, start_idx)
             if table_data:
+                if warnings is not None and not has_separator:
+                    # No |---|---| directly under the first row. The table is
+                    # built either way, with that row as the header — the same
+                    # call Excel makes, and the same one the caller did not ask
+                    # for. Word has no formula offsets to shift, so the cost is
+                    # only that the header row is the one the tool picked.
+                    warnings.add(
+                        W.TABLE_SEPARATOR_MISSING,
+                        "the table starting here has no separator row "
+                        "(|---|---|) directly under its first row, so that "
+                        "row was used as the header and the rest as data. Add "
+                        "the separator to say which row is the header.",
+                        line=source_line,
+                    )
                 # Table options come from comment directives collected above the
                 # table (see the directive branch below).
                 d = directives or {}

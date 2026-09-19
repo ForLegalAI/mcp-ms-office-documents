@@ -58,9 +58,14 @@ def _parse_alignment_row(line):
 def parse_table(lines, start_idx):
     """Parse markdown table and return table data, column alignments, and next line index.
     Returns:
-        Tuple of (table_data, col_alignments, next_line_index).
+        Tuple of (table_data, col_alignments, next_line_index, has_separator).
         table_data is a list of rows (each row is a list of cell strings).
         col_alignments is a list of WD_ALIGN_PARAGRAPH values (or None) per column.
+        has_separator says whether a ``|---|---|`` row sat directly under the
+        first row, which is the only place markdown gives it meaning. A table
+        parses without one — its first row is simply taken as the header — so
+        the flag is what lets the caller report that it was decided for them
+        (#114).
     """
     table_lines = []
     i = start_idx
@@ -72,19 +77,21 @@ def parse_table(lines, start_idx):
         else:
             break
     if len(table_lines) < 2:
-        return None, None, start_idx + 1
+        return None, None, start_idx + 1, False
     table_data = []
     col_alignments = None
-    for line in table_lines:
+    separator_in_place = False
+    for idx, line in enumerate(table_lines):
         # Detect separator row and extract alignment
         if _SEPARATOR_RE.match(line.replace('|', ' | ')):
             cells = [c.strip() for c in line.split('|')[1:-1]]
             if all(re.match(r'^:?-+:?$', c.strip()) for c in cells if c.strip()):
                 col_alignments = _parse_alignment_row(line)
+                separator_in_place = separator_in_place or idx == 1
                 continue
         cells = [cell.strip() for cell in line.split('|')[1:-1]]
         table_data.append(cells)
-    return table_data, col_alignments, i
+    return table_data, col_alignments, i, separator_in_place
 
 def _remove_table_borders(table):
     """Remove all borders from a Word table (makes it invisible)."""

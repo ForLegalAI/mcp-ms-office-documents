@@ -30,6 +30,7 @@ IMAGE_FAILED = "image_failed"
 
 # Instructions the document did not follow.
 TABLE_NOT_RECOGNISED = "table_not_recognised"
+TABLE_SEPARATOR_MISSING = "table_separator_missing"
 STYLE_MISSING = "style_missing"
 STYLE_FALLBACK_MISSING = "style_fallback_missing"
 WIDTHS_INVALID = "widths_invalid"
@@ -42,6 +43,7 @@ WARNING_SEVERITY: dict[str, str] = {
     IMAGE_FAILED: SEVERITY_ERROR,
 
     TABLE_NOT_RECOGNISED: SEVERITY_WARNING,
+    TABLE_SEPARATOR_MISSING: SEVERITY_WARNING,
     STYLE_MISSING: SEVERITY_WARNING,
     STYLE_FALLBACK_MISSING: SEVERITY_WARNING,
     WIDTHS_INVALID: SEVERITY_WARNING,

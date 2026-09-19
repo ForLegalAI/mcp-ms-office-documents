@@ -154,6 +154,30 @@ class TestInstructionsNotFollowed:
         assert "Definitely Not A Style" in warning.message
         assert warning.location["line"] == 1
 
+    def test_a_table_without_a_separator_row_is_reported(self):
+        """Word makes the same call Excel does — first row is the header —
+        and the caller did not ask for it either."""
+        warning = only(render("| Item | Qty |\n| A    | 1   |\n"),
+                       W.TABLE_SEPARATOR_MISSING)
+
+        assert warning.severity == SEVERITY_WARNING
+        assert warning.location["line"] == 1
+        assert "used as the header" in warning.message
+
+    def test_a_separator_row_anywhere_else_does_not_count(self):
+        warnings = render("| A | 1 |\n| B | 2 |\n|---|---|\n")
+
+        assert codes(warnings) == [W.TABLE_SEPARATOR_MISSING]
+
+    def test_the_table_is_still_built(self):
+        """A warning, not an error: every row the caller wrote is in it."""
+        doc = Document()
+        process_markdown_content(doc, "| Item | Qty |\n| A    | 1   |\n")
+
+        rows = doc.tables[0].rows
+        assert [c.text for c in rows[0].cells] == ["Item", "Qty"]
+        assert [c.text for c in rows[1].cells] == ["A", "1"]
+
     def test_a_missing_style_is_reported_once_not_once_per_item(self):
         """A template without 'List Number' would otherwise warn per item."""
         from docx_tools.style_map import build_style_map

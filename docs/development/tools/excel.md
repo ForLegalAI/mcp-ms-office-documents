@@ -241,7 +241,7 @@ still markdown.
 | `formula_unresolved` | error | `adjust_formula_references()` raised; the formula was written unchanged |
 | `formula_too_long` | error | Over Excel's 8,192-character limit; stored as text so the file still opens |
 | `circular_reference` | error | The post-save detector found this cell on a cycle |
-| `table_separator_missing` | warning | A table parsed without a `\|---\|---\|` row; its first row was taken as the header |
+| `table_separator_missing` | warning | A table parsed with no `\|---\|---\|` row directly under its first row; that row was taken as the header |
 | `sheet_name_collision` | warning | A second sheet with the same name; Excel renames it and cross-sheet references break |
 | `sheet_name_invalid` | warning | openpyxl rejected the name; the sheet has a different one |
 | `header_renamed` | warning | A blank or duplicate header, renamed so the Excel Table is valid |
@@ -256,13 +256,20 @@ and the cap turns that into fifty warnings plus a `warnings_truncated` note
 rather than hundreds.
 
 `parse_table()` never *requires* the separator row — it only skips rows that
-look like one — so a table written without it still parses, with its first row
-taken as the header. That is usually what the caller meant, but it is decided
-for them and it moves every table-relative reference, since `T1.B[0]` counts
-from the first row after the header. `TableData.has_separator` carries the
-fact out of the parse so the table branch can report
-`table_separator_missing`; it defaults to True, because only markdown that was
-really parsed can say otherwise.
+look like one, wherever in the run they are — so a table written without one,
+or with one somewhere other than under the header, still parses, with its
+first row taken as the header. That is usually what the caller meant, but it
+is decided for them and it moves every table-relative reference, since
+`T1.B[0]` counts from the first row after the header.
+
+`TableData.has_separator` carries the fact out of the parse so the table
+branch can report `table_separator_missing`. It means *the separator was
+directly under the first row* — the only position markdown gives it meaning —
+not merely that one was seen: a trailing or leading separator leaves which row
+is the header exactly as unclear as writing none at all. It defaults to True,
+because only markdown that was really parsed can say otherwise. Word's
+`parse_table()` returns the same flag as its fourth value and reports the same
+code.
 
 Two rules for the sites. A warning explains itself once: `_expand_target()`
 returns `None` rather than `[]` when it has already reported why a target was

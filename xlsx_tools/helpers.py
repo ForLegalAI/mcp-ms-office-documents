@@ -232,30 +232,37 @@ def parse_table(lines: list[str], start_idx: int) -> tuple[list[list[str]] | Non
     # Parse table data, extracting alignment from separator row
     table_data: list[list[str]] = []
     col_alignments: list[str | None] = []
-    saw_separator = False
-    for line in table_lines:
+    # Markdown puts the separator directly under the header, and nowhere else
+    # means anything. A separator found elsewhere in the run is still skipped
+    # (it is not data), but it does not make this a well-formed table: which
+    # row the caller meant as the header is exactly as unclear as if they had
+    # written none at all, so it does not count as one.
+    separator_in_place = False
+    for idx, line in enumerate(table_lines):
         if _is_separator_row(line):
             col_alignments = _parse_column_alignments(line)
-            saw_separator = True
+            separator_in_place = separator_in_place or idx == 1
             continue
         cells = [cell.strip() for cell in line.split('|')[1:-1]]
         table_data.append(cells)
 
     # Attach alignment info to the table_data list
     table_data_with_align = TableData(table_data, col_alignments,
-                                      has_separator=saw_separator)
+                                      has_separator=separator_in_place)
     return table_data_with_align, i
 
 
 class TableData(list):
     """A list subclass that carries column alignment metadata.
 
-    *has_separator* records whether the markdown actually had a ``|---|---|``
-    row. :func:`parse_table` does not require one — it only skips the rows that
-    look like one — so a table written without it still parses, with its first
-    row taken as the header. That is usually what the caller meant, but it is a
-    decision made on their behalf, so the parser reports it (#114). It defaults
-    to True: only markdown that was really parsed can say otherwise.
+    *has_separator* records whether the markdown had a ``|---|---|`` row
+    **directly under its first row**, which is the only place markdown gives it
+    meaning. :func:`parse_table` does not require one — it only skips the rows
+    that look like one, wherever they are — so a table written without it, or
+    with it somewhere else, still parses, with its first row taken as the
+    header. That is usually what the caller meant, but it is a decision made on
+    their behalf, so the parser reports it (#114). It defaults to True: only
+    markdown that was really parsed can say otherwise.
     """
 
     def __init__(self, data: list[list[str]], col_alignments: list[str | None] | None = None,

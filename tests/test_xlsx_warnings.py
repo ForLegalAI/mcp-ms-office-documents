@@ -187,6 +187,18 @@ class TestNamesAndFormatting:
         assert sheet["A2"].value == "A"           # first data row
         assert sheet["B3"].value == "=B2"         # T1.B[0] → the row after A1
 
+    @pytest.mark.parametrize("markdown, where", [
+        ("| A | 1 |\n| B | 2 |\n|---|---|\n", "last"),
+        ("|---|---|\n| A | 1 |\n| B | 2 |\n", "first"),
+    ])
+    def test_a_separator_row_anywhere_else_does_not_count(self, markdown, where):
+        """Markdown gives the separator meaning in one position only. Found
+        anywhere else it is still skipped, but which row the caller meant as
+        the header is as unclear as if they had written none."""
+        warnings = build(markdown)
+
+        assert only(warnings, W.TABLE_SEPARATOR_MISSING).location["line"] == 1
+
     def test_a_table_with_a_separator_reports_nothing(self):
         assert build("| Item | Qty |\n|------|-----|\n| A | 1 |\n") == []
 
