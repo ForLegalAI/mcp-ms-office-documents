@@ -38,7 +38,8 @@ metrics.py          in-process counters for the admin Status page
 docx_tools/ xlsx_tools/ pptx_tools/ email_tools/ xml_tools/   one package per type
 admin/              optional FastHTML admin UI (ADMIN_ENABLED); app.py holds
                     routes only — components.py (markup + theme), kinds.py
-                    (one descriptor per kind), forms.py, views/
+                    (dynamic kinds), base_templates.py (static base
+                    templates), forms.py, views/
 docs/               user reference (docs/*.md) and development docs (docs/development/)
 ```
 

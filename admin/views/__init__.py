@@ -11,6 +11,7 @@ Markup primitives live in :mod:`admin.components`; per-kind wording lives in
 """
 from __future__ import annotations
 
+from admin.views.base import base_templates_page
 from admin.views.login import login_page, logout_page
 from admin.views.shell import (
     BRAND, form_actions, name_field, not_found_page, page, replace_card,
@@ -25,7 +26,7 @@ from admin.views.templates import (
 )
 
 __all__ = [
-    "BRAND", "analysis_report", "arg_row", "configure_page", "delete_page",
+    "BRAND", "base_templates_page", "analysis_report", "arg_row", "configure_page", "delete_page",
     "edit_form",
     "edit_page", "fmt_ts", "fmt_uptime", "form_actions", "index_page",
     "login_page", "logout_page", "name_field", "new_page", "not_found_page",

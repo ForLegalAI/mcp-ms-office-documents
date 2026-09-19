@@ -48,6 +48,27 @@ http://localhost:8958/admin
   used this session), and a recent activity & error log (filterable to
   warnings/errors).
 
+## Base templates
+
+The **Base templates** page manages the five files that style *every* document
+the server generates — the Word template, the email wrapper, both PowerPoint
+designs and the Excel named-styles workbook. Previously these could only be
+changed by copying files onto the volume by hand.
+
+Each slot shows which file is in use (yours, or the bundled default), lets you
+**download** it, **replace** it, and **revert** to the bundled default. A
+replacement takes effect on the next document — no restart. Uploads are checked
+before they are installed: the wrong extension, or a file that cannot be opened,
+is refused and nothing changes.
+
+Each slot also reports what its file offers: the Word template's styles (and a
+warning when one the renderer needs is missing), the wrapper's Mustache
+variables, a deck's layouts, roles and theme, and — for Excel — every named cell
+style, which is the set a `styles:` directive can reference as `style:<Name>`.
+
+> **Excel is the exception:** no default workbook ships. Removing a custom one
+> leaves no named styles at all, rather than restoring a fallback.
+
 **PowerPoint templates work differently.** A Word or email template is a
 fill-in-the-blanks document: it declares arguments and becomes an MCP tool of
 its own. A PowerPoint template is a *design* — slide master, layouts, theme
