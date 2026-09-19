@@ -77,7 +77,7 @@ def _usage_table():
          "Most recent problem"], rows)
 
 
-def _warnings_card(ctx):
+def _warnings_card():
     """What recent builds worked around, newest first.
 
     The counters say a tool is degrading; this says how. Without it the only
@@ -115,11 +115,9 @@ def status_page(ctx, level: str = "info"):
     live_email = ctx.live_names(KIND_EMAIL)
     lvl_counts = metrics.counts_by_level()
     err_count = lvl_counts.get("ERROR", 0) + lvl_counts.get("CRITICAL", 0)
-    # Only the severities that mean the file is not as asked; `info` is a
-    # substitution nobody needs to chase.
-    severities = metrics.counts_by_severity()
-    degraded = sum(count for severity, count in severities.items()
-                   if severity != "info")
+    # Warnings that mean a file is not as asked; `info` is a substitution
+    # nobody needs to chase, and metrics decides which is which.
+    degraded = metrics.degraded_total()
 
     stats = c.stats_row(
         c.stat("Uptime", fmt_uptime(time.time() - metrics.START_TIME)),
@@ -148,7 +146,7 @@ def status_page(ctx, level: str = "info"):
         H1("Status"),
         stats,
         c.card(_usage_table(), title="Tool usage (this session)", level=2),
-        c.card(_warnings_card(ctx), title="What builds worked around", level=2),
+        c.card(_warnings_card(), title="What builds worked around", level=2),
         c.card(toggle, _log_block(errors_only),
                title="Recent activity & errors", level=2),
     )

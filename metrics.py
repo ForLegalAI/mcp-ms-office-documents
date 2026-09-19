@@ -120,14 +120,14 @@ def record_warnings(kind: str, name: str, warnings) -> None:
         st.last_warning_at = time.time()
 
 
-def counts_by_severity() -> Dict[str, int]:
-    """Warnings across every tool, per severity."""
+def degraded_total() -> int:
+    """Warnings across every tool that mean a file is not as asked.
+
+    Built on :attr:`ToolStat.degraded` rather than re-filtering severities, so
+    what counts as degraded is decided in exactly one place.
+    """
     with _LOCK:
-        totals: Dict[str, int] = {}
-        for st in _TOOL_STATS.values():
-            for severity, count in st.warnings_by_severity.items():
-                totals[severity] = totals.get(severity, 0) + count
-        return totals
+        return sum(st.degraded for st in _TOOL_STATS.values())
 
 
 def tool_stats() -> List[ToolStat]:

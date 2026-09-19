@@ -109,12 +109,12 @@ def test_an_unknown_severity_is_still_counted():
     assert st.degraded == 1, "an unrecognised severity should not be treated as info"
 
 
-def test_global_totals_span_tools():
+def test_degraded_total_spans_tools_and_still_excludes_info():
     metrics.record_warnings("docx", "create_word_document",
                             _channel(("dropped", "a block")))
     metrics.record_warnings("xlsx", "create_excel_document",
                             _channel(("swapped", "a font")))
-    assert metrics.counts_by_severity() == {"error": 1, "info": 1}
+    assert metrics.degraded_total() == 1, "the info substitution must not count"
 
 
 def test_warnings_do_not_disturb_call_and_error_counters():
@@ -129,7 +129,7 @@ def test_reset_clears_warnings():
     metrics.record_warnings("docx", "create_word_document",
                             _channel(("dropped", "a block")))
     metrics.reset()
-    assert metrics.counts_by_severity() == {}
+    assert metrics.degraded_total() == 0
     assert metrics.get_tool_stat("create_word_document") is None
 
 
@@ -175,13 +175,32 @@ def test_with_warnings_requires_the_tool_identity():
 
 
 def test_every_with_warnings_call_site_passes_an_identity():
-    """Guard the guard: a new call site cannot quietly skip the counters."""
-    import re
+    """Guard the guard: a new call site cannot quietly skip the counters.
 
-    source = (project_root / "main.py").read_text(encoding="utf-8")
-    calls = re.findall(r"_with_warnings\((.*?)\)", source, re.S)
-    # The definition itself is the first match; the rest are call sites.
-    sites = [c for c in calls if not c.startswith("result, warnings, kind, name")]
+    Parsed rather than matched. A regex over the source truncates a call at
+    the first `)`, which for the PowerPoint site is the one inside
+    `len(slides)` — so the identity arguments could fall outside the captured
+    text and this would stop enforcing anything without failing.
+    """
+    import ast
+
+    tree = ast.parse((project_root / "main.py").read_text(encoding="utf-8"))
+    sites = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_with_warnings"
+    ]
     assert sites, "no _with_warnings call sites found; this test is stale"
     for site in sites:
-        assert '"' in site, f"call site passes no tool identity: {site!r}"
+        positional = site.args
+        assert len(positional) >= 4, (
+            f"line {site.lineno}: _with_warnings needs result, warnings, kind, name"
+        )
+        kind, name = positional[2], positional[3]
+        for arg, label in ((kind, "kind"), (name, "name")):
+            assert isinstance(arg, ast.Constant) and isinstance(arg.value, str), (
+                f"line {site.lineno}: {label} must be a string literal, "
+                f"got {ast.dump(arg)}"
+            )
+            assert arg.value, f"line {site.lineno}: {label} must not be empty"
