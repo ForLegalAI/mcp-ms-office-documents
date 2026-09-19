@@ -307,6 +307,14 @@ class AdminSettings(BaseModel):
         description="Shared password gating the admin UI. Falls back to the API key when unset.",
     )
     path: str = Field(default="/admin", description="URL prefix the admin UI is mounted under.")
+    max_upload_mb: int = Field(
+        default=25,
+        description="Largest template file the admin UI accepts, in MB.",
+    )
+
+    @property
+    def max_upload_bytes(self) -> int:
+        return self.max_upload_mb * 1024 * 1024
 
     @model_validator(mode="after")
     def _normalize(self) -> "AdminSettings":
@@ -498,7 +506,22 @@ class Config(BaseModel):
         # Template-admin UI (optional, opt-in). Disabled unless ADMIN_ENABLED is
         # truthy. The admin password gates the UI; when unset it falls back to
         # the API key (so a single secret can protect both /mcp and /admin).
+        # Largest template file the admin UI accepts. Starlette spools the
+        # upload to disk, and an oversized one is refused before it is read,
+        # so this bounds the memory an *accepted* upload costs. Invalid or
+        # non-positive values fall back to the default rather than disabling
+        # the limit.
+        raw_upload_mb = os.environ.get("ADMIN_MAX_UPLOAD_MB")
+        try:
+            admin_max_upload_mb = (int(raw_upload_mb)
+                                   if raw_upload_mb and raw_upload_mb.strip() else 25)
+            if admin_max_upload_mb < 1:
+                admin_max_upload_mb = 25
+        except (ValueError, TypeError):
+            admin_max_upload_mb = 25
+
         admin_settings = AdminSettings(
+            max_upload_mb=admin_max_upload_mb,
             enabled=cls._parse_bool(os.environ.get("ADMIN_ENABLED")),
             password=(os.environ.get("ADMIN_PASSWORD") or "").strip() or None,
             path=(os.environ.get("ADMIN_PATH") or "/admin"),

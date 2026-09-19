@@ -40,6 +40,7 @@ def admin_client(tmp_path, monkeypatch):
 
     monkeypatch.setenv("ADMIN_ENABLED", "true")
     monkeypatch.setenv("ADMIN_PASSWORD", "pw")
+    monkeypatch.setenv("ADMIN_MAX_UPLOAD_MB", "1")
     monkeypatch.delenv("API_KEY", raising=False)
 
     # Import here so the patched module globals are in effect.
@@ -56,6 +57,9 @@ def admin_client(tmp_path, monkeypatch):
     yield client, mcp
     client.__exit__(None, None, None)
     metrics.reset()
+
+
+ONE_MB = 1024 * 1024
 
 
 def _docx_with_placeholders(*paragraphs) -> bytes:
@@ -309,13 +313,13 @@ def test_reupload_rejects_bad_file(admin_client, payload, expected):
 
 def test_reupload_oversized_is_rejected(admin_client):
     client, _ = admin_client
-    from admin.app import MAX_UPLOAD_BYTES
     name = _saved_docx_template(client, "reup_big_tpl")
     r = _post(client, f"/admin/docx/{name}/reupload",
-              files={"file": (f"{name}.docx", b"x" * (MAX_UPLOAD_BYTES + 1),
+              files={"file": (f"{name}.docx", b"x" * (ONE_MB + 1),
                               "application/octet-stream")})
     assert r.status_code == 200
     assert "too large" in r.text.lower()
+    assert "max 1 MB" in r.text, "the message must quote the configured limit"
     assert "Re-scanned" not in r.text
 
 
@@ -773,13 +777,38 @@ def test_post_without_csrf_is_rejected(admin_client):
 
 
 def test_oversized_upload_rejected(admin_client):
+    """#172: the limit is configurable, and quoted in the refusal."""
     client, _ = admin_client
-    from admin.app import MAX_UPLOAD_BYTES
-    big = b"x" * (MAX_UPLOAD_BYTES + 1)
     r = _post(client, "/admin/docx/draft", data={"name": "big_tpl"},
-              files={"file": ("big_tpl.docx", big, "application/octet-stream")})
+              files={"file": ("big_tpl.docx", b"x" * (ONE_MB + 1),
+                              "application/octet-stream")})
     assert r.status_code == 200
     assert "too large" in r.text.lower()
+    assert "max 1 MB" in r.text
+
+
+def test_oversized_upload_is_refused_without_being_read(admin_client, monkeypatch):
+    """The size is checked before the body is read.
+
+    Starlette spools the upload to disk; reading it is what materialises it in
+    memory, and an oversized file used to be read in full only to be refused.
+    """
+    from starlette.datastructures import UploadFile
+
+    client, _ = admin_client
+    reads = []
+    real_read = UploadFile.read
+
+    async def counting_read(self, size=-1):
+        reads.append(size)
+        return await real_read(self, size)
+
+    monkeypatch.setattr(UploadFile, "read", counting_read)
+    r = _post(client, "/admin/docx/draft", data={"name": "unread_tpl"},
+              files={"file": ("unread_tpl.docx", b"x" * (ONE_MB + 1),
+                              "application/octet-stream")})
+    assert "too large" in r.text.lower()
+    assert reads == [], "the oversized body was read before being refused"
 
 
 def test_logout_get_does_not_clear_session(admin_client):

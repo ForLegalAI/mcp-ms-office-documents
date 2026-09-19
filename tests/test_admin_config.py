@@ -6,6 +6,7 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from config import Config, AdminSettings
+import pytest
 
 
 def _clear_admin_env(monkeypatch):
@@ -51,3 +52,22 @@ def test_path_normalization():
     assert AdminSettings(path="/console//").path == "/console"
     assert AdminSettings(path="").path == "/admin"
     assert AdminSettings(path="manage").path == "/manage"
+
+
+def test_max_upload_defaults_to_25mb(monkeypatch):
+    monkeypatch.delenv("ADMIN_MAX_UPLOAD_MB", raising=False)
+    cfg = Config.from_env()
+    assert cfg.admin.max_upload_mb == 25
+    assert cfg.admin.max_upload_bytes == 25 * 1024 * 1024
+
+
+def test_max_upload_is_configurable(monkeypatch):
+    monkeypatch.setenv("ADMIN_MAX_UPLOAD_MB", "60")
+    assert Config.from_env().admin.max_upload_mb == 60
+
+
+@pytest.mark.parametrize("raw", ["", "   ", "0", "-5", "nonsense", "12.5"])
+def test_unusable_max_upload_falls_back_to_the_default(monkeypatch, raw):
+    """A bad value must not disable the limit or crash startup."""
+    monkeypatch.setenv("ADMIN_MAX_UPLOAD_MB", raw)
+    assert Config.from_env().admin.max_upload_mb == 25
