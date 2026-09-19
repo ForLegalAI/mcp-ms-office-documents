@@ -142,10 +142,12 @@ Three rules combine here, and each exists because of a real document.
    indistinguishable from a one-item list.
 2. **Numbering continues across interposed content.** Legal filings put a
    heading, a quote, a table or an exhibit list between numbered paragraphs.
-   `process_markdown_content()` carries a `{'next': N}` cell; every top-level
-   ordered list updates it, and `_continues_ordered_run()` lets a later `3.`
-   start a list even when it is not locally genuine, provided it equals the
-   running count exactly. Only a list starting at `1.` re-bases it.
+   `process_markdown_content()` carries a cell holding the running count
+   (`'next'`) and the numbering instance that produced it (`'num_id'`,
+   `'ilvl'`, `'style'`); every top-level ordered list updates it, and
+   `_continues_ordered_run()` lets a later `3.` start a list even when it is
+   not locally genuine, provided it equals the running count exactly. Only a
+   list starting at `1.` re-bases it.
 3. **A restart is a fresh `<w:num>` instance.** python-docx cannot restart
    numbering, so `numbering.py` creates a new numbering instance with a
    `startOverride` whenever `1.` reappears at a level, and attaches it through
@@ -155,6 +157,17 @@ Three rules combine here, and each exists because of a real document.
    synthesised one). Because a direct `numPr` lets the numbering level's
    indents override the style's, `apply_style_indent()` re-asserts the
    style's `w:ind` as direct formatting.
+4. **A continuation is the *same* instance, never a new one** (#136).
+   `process_list_items()` reads the instance out of the running cell and
+   reuses its `numId`/`ilvl` when the first item equals the running count, so
+   the parts of an interrupted list are one Word list: Word computes the later
+   numbers and recomputes them when an earlier item is added or removed.
+   Minting a second instance with `startOverride=3` — what this used to do —
+   only *looks* consecutive and drifts on the first edit. Two cases still get
+   their own instance: a restart at `1.` (rule 3), and a continuation whose
+   level-0 style differs from the recorded one, which would otherwise inherit
+   the earlier list's numeral format and indents. The reuse is tracked at
+   level 0 only; nested levels always mint their own instance.
 
 ### Nesting by relative indentation
 
@@ -269,7 +282,7 @@ it on open.
 |------|--------|
 | `tests/test_docx_base.py` | End-to-end rendering through `_markdown_to_doc()`; writes inspection files to `tests/output/docx/` |
 | `tests/test_docx_code_blocks.py` | Fenced code blocks |
-| `tests/test_docx_list_indentation.py`, `test_docx_list_restart.py`, `test_docx_list_continuation_and_br.py`, `test_docx_ordered_list_date.py`, `test_docx_list_infinite_loop_regression.py` | Lists: nesting, restarts, running count, date disambiguation, forward-progress guard |
+| `tests/test_docx_list_indentation.py`, `test_docx_list_restart.py`, `test_docx_list_continuation_and_br.py`, `test_docx_ordered_list_date.py`, `test_docx_list_infinite_loop_regression.py` | Lists: nesting, restarts, running count, continuation on one instance, date disambiguation, forward-progress guard |
 | `tests/test_docx_style_map.py`, `test_docx_style_numbering.py`, `test_docx_style_tag.py` | Style mapping, style-aware numbering, the `style` directive |
 | `tests/test_docx_escaped_newlines.py` | Literal `\n` and backslash escapes |
 | `tests/test_docx_soft_breaks.py` | The line-break model: `<br>`, trailing spaces, CR, runs stopping before blocks, quotes, cells, headers |
@@ -298,3 +311,7 @@ The first three are tracked in [#115](https://github.com/ForLegalAI/mcp-ms-offic
   a list or heading is rendered with inline formatting only.
 - **Code block font is hard-coded** to Courier New unless `code` is mapped to
   a template style.
+- **Continuation reuse is top-level only.** The running cell tracks one
+  numbering instance, for level 0. A nested list resumed after interposed
+  content still starts a fresh instance, so its numbers are frozen at
+  generation time the way top-level ones were before #136.

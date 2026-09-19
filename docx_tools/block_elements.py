@@ -190,6 +190,11 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
     lists keep their style's numeral format and indents), and any ``w:ind`` the
     style defines is re-asserted as direct formatting so the numbering level's
     indents don't override it (see :mod:`docx_tools.numbering`).
+
+    A top-level list that *continues* the run recorded in *ordered_run* (its
+    first number equals the running count) reuses that run's numbering instance
+    instead of minting a restart one, so Word treats the parts as a single list
+    and renumbers the later parts when the earlier ones are edited (#136).
     Returns:
         Tuple of (next_line_index, list_of_elements | None).
     """
@@ -220,6 +225,20 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
     style_ind_resolved = False
     items_emitted = 0
     last_item_number = None  # last top-level ordered number, to extend ordered_run
+    # A continuation of the most recent top-level ordered list reuses that list's
+    # numbering instance rather than minting a restart one: Word counts every
+    # paragraph carrying the same numId+ilvl as one list however much content sits
+    # between them, so the parts stay linked and renumber together when the
+    # document is edited (#136). Only taken when the style resolves identically —
+    # a differently styled continuation needs its own instance, or it would
+    # silently inherit the earlier list's numeral format and indents.
+    cont_num_id = cont_ilvl = cont_number = None
+    if (is_ordered and level == 0 and ordered_run
+            and ordered_run.get('num_id') is not None
+            and ordered_run.get('style') == style):
+        cont_num_id = ordered_run['num_id']
+        cont_ilvl = ordered_run['ilvl']
+        cont_number = ordered_run.get('next')
     while i < n:
         original_line = lines[i]
         stripped_left = original_line.lstrip()
@@ -243,7 +262,13 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
         paragraph = doc.add_paragraph()
         apply_style(paragraph, style, fallback='Normal')
         if is_ordered:
-            if current_num_id is None or (item_number == 1 and items_emitted > 0):
+            if (items_emitted == 0 and cont_num_id is not None
+                    and item_number != 1 and item_number == cont_number):
+                # Resume the previous run's instance; its startOverride already
+                # applies from that run's first item, so Word counts on from here.
+                # A list opening at "1." always restarts instead (below).
+                current_num_id, resolved_ilvl = cont_num_id, cont_ilvl
+            elif current_num_id is None or (item_number == 1 and items_emitted > 0):
                 if not num_resolved:
                     abstract_num_id, resolved_ilvl, numbering_root = (
                         resolve_ordered_numbering(doc, level=level, style_name=style))
@@ -307,10 +332,16 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
             elements.append(paragraph._p)
             doc._body._body.remove(paragraph._p)
         i = start_idx + 1
-    # Record where this top-level ordered list left off so a later sibling list
-    # (e.g. after a heading) can continue its numbering instead of restarting.
+    # Record where this top-level ordered list left off, and on which numbering
+    # instance, so a later sibling list (e.g. after a heading) can continue the
+    # same Word list instead of starting an unrelated one. A mid-list restart has
+    # already moved current_num_id onto the newest instance, which is the one a
+    # continuation must resume.
     if ordered_run is not None and is_ordered and level == 0 and last_item_number is not None:
         ordered_run['next'] = last_item_number + 1
+        ordered_run['num_id'] = current_num_id
+        ordered_run['ilvl'] = resolved_ilvl
+        ordered_run['style'] = style
     return i, elements
 # ---------------------------------------------------------------------------
 # Page break / horizontal line

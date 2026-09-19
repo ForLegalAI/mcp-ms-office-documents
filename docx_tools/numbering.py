@@ -10,6 +10,12 @@ but overrides its start value, then attach that instance to the paragraph via an
 ``<w:numPr>``. That overrides the style's shared numbering for just that run of items, so
 each logical list counts independently.
 
+The converse case — a list *resumed* after interposed content — needs no new
+instance: :func:`~docx_tools.block_elements.process_list_items` re-attaches the
+running list's ``numId`` so Word keeps counting, which is what makes the parts
+renumber together when the document is edited (#136). Every function here is
+therefore about starting a list, never about continuing one.
+
 See docs/development/tools/word.md ("Ordered lists") for the design rationale;
 the original discussion is issue #67.
 """

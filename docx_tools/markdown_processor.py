@@ -46,9 +46,13 @@ logger = logging.getLogger(__name__)
 def _continues_ordered_run(stripped, ordered_run) -> bool:
     """True if the ordered marker on *stripped* continues the running count.
 
-    *ordered_run* is a ``{'next': int | None}`` cell tracking the number that
-    would continue the most recent top-level ordered list (see
-    :func:`process_markdown_content`). This lets a continuation list resume after
+    *ordered_run* is the running ordered-list cell — ``'next'`` is the number
+    that would continue the most recent top-level ordered list, and the rest
+    identifies the numbering instance it used (see
+    :func:`process_markdown_content`). Only ``'next'`` matters here;
+    :func:`~docx_tools.block_elements.process_list_items` reads the instance to
+    render the continuation on that same Word list. This lets a continuation
+    list resume after
     ANY intervening content — a section heading, an evidence note, a list of
     exhibits, a table — e.g. items ``1.``/``2.`` under one heading and
     ``3.``/``4.`` under the next, even though, in isolation, a lone ``3.``
@@ -93,16 +97,19 @@ def process_markdown_content(doc, content, return_elements=False,
     n = len(lines)
     i = 0
     all_elements = []
-    # Running ordered-list count: the number that would continue the most recent
-    # top-level ordered list. It survives ANY interposed content — headings
+    # Running ordered-list state: the number that would continue the most recent
+    # top-level ordered list, plus the numbering instance ('num_id'/'ilvl') and
+    # style that produced it. It survives ANY interposed content — headings
     # (markdown or a centred "<center>**II.**</center>" section title), blank
     # lines, quotes, evidence notes, bullet lists of exhibits, tables — because
     # numbered paragraphs of a filing routinely have such content between them;
-    # only a new list starting at "1." re-bases it. Lets _continues_ordered_run()
-    # accept e.g. "3." after a section title even when it is blank-separated
-    # (and so not locally genuine). A mutable cell so process_list_items can
-    # update it through process_markdown_block.
-    ordered_run = {'next': None}
+    # only a new list starting at "1." re-bases it. 'next' lets
+    # _continues_ordered_run() accept e.g. "3." after a section title even when
+    # it is blank-separated (and so not locally genuine); the instance lets
+    # process_list_items() render that continuation on the SAME Word list rather
+    # than an unrelated one that never renumbers (#136). A mutable cell so
+    # process_list_items can update it through process_markdown_block.
+    ordered_run = {'next': None, 'num_id': None, 'ilvl': None, 'style': None}
     while i < n:
         line = lines[i]
         # --- Empty line handling (preserve spacing) ---

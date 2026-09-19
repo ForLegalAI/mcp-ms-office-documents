@@ -22,7 +22,7 @@ The Word and Excel tools accept Markdown documents; the PowerPoint tool takes st
 |--------|--------|
 | `# H1` … `###### H6` | Headings 1–6 |
 | `- item` / `* item` / `+ item` | Bullet list (nest by indenting children — 2-4 spaces or a tab → `List Bullet 2/3`) |
-| `1. item` / `2. item` | Numbered list (nest by indenting children). The count **continues across anything written between the items** (a section title, a paragraph, a bullet list, a table) as long as the numbers run consecutively; **numbering restarts** only where a list begins again with `1.` |
+| `1. item` / `2. item` | Numbered list (nest by indenting children). The count **continues across anything written between the items** (a section title, a paragraph, a bullet list, a table) as long as the numbers run consecutively, and the parts stay **one list in Word** — insert an item in an earlier part and everything after it renumbers; **numbering restarts** only where a list begins again with `1.` |
 | `> quote` | Block quote (`Quote` style) |
 | `\| A \| B \|` + `\|---\|---\|` | Table (see table features below) |
 | ` ``` ` … ` ``` ` (or `~~~`) | Fenced code block — content is rendered verbatim in a monospace font and **not** parsed as markdown |
