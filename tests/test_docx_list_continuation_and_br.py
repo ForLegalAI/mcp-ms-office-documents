@@ -14,6 +14,11 @@
    predecessor, or one that does not match the count exactly, still renders as
    prose (date disambiguation, see test_docx_ordered_list_date.py).
 
+   The continuation is rendered on the SAME numbering instance as the list it
+   resumes (#136), so Word treats the parts as one list and renumbers the later
+   parts when an item is added to an earlier one. Only a restart at "1." — or a
+   continuation whose paragraph style differs — starts a fresh instance.
+
 Numbering is asserted on the underlying XML because Word computes the visible
 numbers at display time; they are not stored as paragraph text.
 """
@@ -58,6 +63,21 @@ def _start_override(doc, num_id):
     num = doc.part.numbering_part.element.num_having_numId(int(num_id))
     vals = num.xpath('./w:lvlOverride[@w:ilvl="0"]/w:startOverride/@w:val')
     return vals[0] if vals else None
+
+
+def _one_list(doc, items, start="1"):
+    """Assert *items* are a single Word list and return its numId.
+
+    One shared numId with one startOverride is what makes Word renumber the
+    later parts of a continued list when an earlier item is added or removed
+    (#136); separate instances would only look consecutive.
+    """
+    num_ids = {_num_id_of(p) for p in items}
+    assert len(num_ids) == 1, f"a continued list must stay one instance: {num_ids}"
+    num_id = num_ids.pop()
+    assert num_id is not None, "the items carry no numbering instance"
+    assert _start_override(doc, num_id) == start
+    return num_id
 
 
 # ---------------------------------------------------------------------------
@@ -141,14 +161,9 @@ def test_numbering_continues_after_heading():
     items = [p for p in paras if _is_ordered(p)]
     assert [p.text for p in items] == ["Prvni", "Druhy", "Treti", "Ctvrty"]
 
-    first_run = _num_id_of(items[0])
-    second_run = _num_id_of(items[2])
-    assert _num_id_of(items[1]) == first_run
-    assert _num_id_of(items[3]) == second_run
-    assert first_run != second_run, "the continuation is a fresh numbering instance"
-    # The continuation instance resumes the count at 3 via startOverride.
-    assert _start_override(doc, first_run) == "1"
-    assert _start_override(doc, second_run) == "3"
+    # The continuation is the same Word list, so 3. and 4. are computed by Word
+    # rather than frozen into a second instance's startOverride.
+    _one_list(doc, items)
 
 
 def test_single_continuation_item_after_heading_is_a_list():
@@ -156,7 +171,7 @@ def test_single_continuation_item_after_heading_is_a_list():
     doc, paras = _render(md)
     items = [p for p in paras if _is_ordered(p)]
     assert [p.text for p in items] == ["Prvni", "Druhy", "Treti"]
-    assert _start_override(doc, _num_id_of(items[2])) == "3"
+    _one_list(doc, items)
 
 
 def test_new_list_starting_at_one_restarts_after_heading():
@@ -164,6 +179,9 @@ def test_new_list_starting_at_one_restarts_after_heading():
     doc, paras = _render(md)
     items = [p for p in paras if _is_ordered(p)]
     assert [p.text for p in items] == ["Prvni", "Druhy", "Novy", "Dalsi"]
+    # A restart is the one case that must NOT reuse the previous instance.
+    assert _num_id_of(items[2]) != _num_id_of(items[0])
+    assert _num_id_of(items[3]) == _num_id_of(items[2])
     assert _start_override(doc, _num_id_of(items[2])) == "1"
 
 
@@ -174,7 +192,7 @@ def test_numbering_continues_after_plain_prose():
     doc, paras = _render(md)
     items = [p for p in paras if _is_ordered(p)]
     assert [p.text for p in items] == ["Prvni", "Druhy", "Treti"]
-    assert _start_override(doc, _num_id_of(items[2])) == "3"
+    _one_list(doc, items)
 
 
 def test_numbering_continues_after_blockquote():
@@ -185,7 +203,7 @@ def test_numbering_continues_after_blockquote():
     doc, paras = _render(md)
     items = [p for p in paras if _is_ordered(p)]
     assert [p.text for p in items] == ["Prvni", "Druhy", "Treti"]
-    assert _start_override(doc, _num_id_of(items[2])) == "3"
+    _one_list(doc, items)
 
 
 def test_numbering_continues_after_style_directive_block():
@@ -199,7 +217,7 @@ def test_numbering_continues_after_style_directive_block():
     doc, paras = _render(md)
     items = [p for p in paras if _is_ordered(p)]
     assert [p.text for p in items] == ["Prvni", "Druhy", "Treti"]
-    assert _start_override(doc, _num_id_of(items[2])) == "3"
+    _one_list(doc, items)
     styled = [p for p in paras if p.text.startswith("Dukaz:")]
     assert styled and styled[0].style.name == "Intense Quote"
 
@@ -218,7 +236,7 @@ def test_directive_exemption_covers_any_styled_block():
     doc, paras = _render(md)
     items = [p for p in paras if _is_ordered(p)]
     assert [p.text for p in items] == ["Prvni", "Druhy", "Treti"]
-    assert _start_override(doc, _num_id_of(items[2])) == "3"
+    _one_list(doc, items)
 
 
 def test_unclosed_comment_line_renders_literally_without_ending_the_run():
@@ -248,7 +266,7 @@ def test_numbering_continues_after_centred_section_title():
     doc, paras = _render(md)
     items = [p for p in paras if _is_ordered(p)]
     assert [p.text for p in items] == ["Prvni", "Druhy", "Treti"]
-    assert _start_override(doc, _num_id_of(items[2])) == "3"
+    _one_list(doc, items)
 
 
 def test_numbering_continues_after_evidence_note_and_bullet_list():
@@ -263,8 +281,8 @@ def test_numbering_continues_after_evidence_note_and_bullet_list():
     doc, paras = _render(md)
     items = [p for p in paras if _is_ordered(p)]
     assert [p.text for p in items] == ["Prvni", "Druhy", "Treti", "Ctvrty"]
-    # Each resumption is its own numbering instance, re-based on the count.
-    assert [_start_override(doc, _num_id_of(p)) for p in items] == ["1", "1", "3", "4"]
+    # Every resumption lands on the instance the run started on.
+    _one_list(doc, items)
     bullets = [p for p in paras if p.style.name.startswith("List Bullet")]
     assert len(bullets) == 2, "the exhibit lists still render as bullets"
 
@@ -303,6 +321,74 @@ def test_non_continuing_number_after_heading_stays_prose():
     md = "1. Prvni\n\n2. Druhy\n\n## II\n\n23. brezna 2026\n"
     doc, paras = _render(md)
     assert any(p.text == "23. brezna 2026" and not _is_ordered(p) for p in paras)
+
+
+# ---------------------------------------------------------------------------
+# Fix #3 (#136) — a continuation is the SAME Word list, not a lookalike
+# ---------------------------------------------------------------------------
+
+def test_continuation_reuses_the_instance_so_word_renumbers():
+    # #136: the continuation used to be a fresh <w:num> whose startOverride
+    # froze the numbers at generation time, so adding an item to the first part
+    # in Word left the second part unchanged. One instance, one startOverride.
+    md = "1. Prvni\n\n2. Druhy\n\nProza mezi odstavci.\n\n3. Treti\n\n4. Ctvrty\n"
+    doc, paras = _render(md)
+    items = [p for p in paras if _is_ordered(p)]
+    num_id = _one_list(doc, items)
+    numbering = doc.part.numbering_part.element
+    overrides = numbering.num_having_numId(int(num_id)).xpath(
+        './w:lvlOverride[@w:ilvl="0"]/w:startOverride/@w:val')
+    assert overrides == ["1"], "the continuation must not add a second startOverride"
+
+
+def test_continuation_of_a_list_starting_above_one_keeps_its_start():
+    # A run that opens at 5 keeps startOverride=5 on its single instance; the
+    # continuation adds nothing and Word counts 5, 6, 7.
+    md = "5. Paty\n6. Sesty\n\nProza.\n\n7. Sedmy\n"
+    doc, paras = _render(md)
+    items = [p for p in paras if _is_ordered(p)]
+    assert [p.text for p in items] == ["Paty", "Sesty", "Sedmy"]
+    _one_list(doc, items, start="5")
+
+
+def test_continuation_after_a_mid_list_restart_resumes_the_newest_instance():
+    # "1, 2, 1" restarts onto a fresh instance; a later "2." continues THAT one,
+    # not the instance the paragraph run opened on.
+    md = "1. A\n2. B\n1. C\n\nProza.\n\n2. D\n"
+    doc, paras = _render(md)
+    items = [p for p in paras if _is_ordered(p)]
+    assert [p.text for p in items] == ["A", "B", "C", "D"]
+    assert _num_id_of(items[2]) != _num_id_of(items[0]), "'1.' restarts"
+    assert _num_id_of(items[3]) == _num_id_of(items[2])
+
+
+def test_differently_styled_continuation_gets_its_own_instance():
+    # Reuse is guarded on the style: a directive-styled continuation would
+    # otherwise inherit the earlier list's numeral format and indents.
+    md = ("1. Prvni\n\n2. Druhy\n\nProza.\n\n"
+          "<!-- style: List Number 2 -->\n3. Treti\n")
+    doc, paras = _render(md)
+    items = [p for p in paras if _is_ordered(p)]
+    assert [p.text for p in items] == ["Prvni", "Druhy", "Treti"]
+    assert items[2].style.name == "List Number 2"
+    own = _num_id_of(items[2])
+    assert own != _num_id_of(items[0])
+    # Its own instance restarts at the running count, on the style's own level.
+    num = doc.part.numbering_part.element.num_having_numId(int(own))
+    assert num.xpath('./w:lvlOverride/w:startOverride/@w:val') == ["3"]
+
+
+def test_nested_children_do_not_disturb_the_parent_run():
+    # The children get their own instance; the parent's continuation still
+    # resumes the parent instance.
+    md = "1. A\n   1. a1\n   2. a2\n2. B\n\nProza.\n\n3. C\n"
+    doc, paras = _render(md)
+    top = [p for p in paras if p.style.name == "List Number"]
+    assert [p.text for p in top] == ["A", "B", "C"]
+    _one_list(doc, top)
+    children = [p for p in paras if p.style.name == "List Number 2"]
+    assert {_num_id_of(p) for p in children} == {_num_id_of(children[0])}
+    assert _num_id_of(children[0]) != _num_id_of(top[0])
 
 
 # ---------------------------------------------------------------------------
