@@ -161,10 +161,10 @@ DESCRIPTORS: Dict[str, KindDescriptor] = {d.kind: d for d in (_DOCX, _EMAIL, _PP
 #: Every supported kind, in the order the index page shows them.
 KINDS: Tuple[str, ...] = tuple(DESCRIPTORS)
 
-#: Kinds offered as "New …" in the top bar. PowerPoint is missing here, which
-#: is why its create page is unreachable once one template exists — see #157.
-#: Left as-is deliberately so that fix lands as its own reviewable change.
-NAV_KINDS: Tuple[str, ...] = (KIND_DOCX, KIND_EMAIL)
+#: Kinds offered as "New …" in the top bar — all of them. PowerPoint used to be
+#: missing, which left its create page unreachable once one template existed,
+#: because the only other link was the template table's empty state (#157).
+NAV_KINDS: Tuple[str, ...] = KINDS
 
 
 def descriptor(kind: str) -> KindDescriptor:

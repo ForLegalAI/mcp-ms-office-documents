@@ -115,6 +115,7 @@ textarea{resize:vertical}
 .btn-icon:hover{background:var(--err-bg);border-color:var(--err-line)}
 .actions{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center}
 .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.table-actions{margin-top:.75rem}
 table{width:100%;border-collapse:collapse}
 th,td{text-align:left;padding:.55rem .5rem;border-bottom:1px solid var(--line);vertical-align:middle}
 th{font-size:.78rem;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)}

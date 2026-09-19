@@ -18,12 +18,14 @@ from admin.views.shell import (
 )
 from admin.views.status import fmt_ts, fmt_uptime, status_page
 from admin.views.templates import (
-    analysis_report, arg_row, configure_page, edit_form, edit_page, index_page,
+    analysis_report, arg_row, configure_page, delete_page, edit_form, edit_page,
+    index_page,
     new_page, pptx_analysis_report, style_mapping_block, template_table,
 )
 
 __all__ = [
-    "BRAND", "analysis_report", "arg_row", "configure_page", "edit_form",
+    "BRAND", "analysis_report", "arg_row", "configure_page", "delete_page",
+    "edit_form",
     "edit_page", "fmt_ts", "fmt_uptime", "form_actions", "index_page",
     "login_page", "logout_page", "name_field", "new_page", "not_found_page",
     "page", "pptx_analysis_report", "replace_card", "save_failed_page",

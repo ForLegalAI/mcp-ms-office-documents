@@ -5,9 +5,9 @@ cookie) per the chosen access model. The password is
 ``config.admin_password_effective`` (explicit ``ADMIN_PASSWORD`` or, failing
 that, ``API_KEY``). Comparison is constant-time.
 
-The gate is a FastHTML ``before`` callable: it lets the login route and static
-assets through and redirects everything else to the login page until the
-session is marked authenticated.
+The gate is a FastHTML ``before`` callable: it lets the login route through and
+redirects everything else to the login page until the session is marked
+authenticated. Nothing else is public.
 """
 from __future__ import annotations
 
@@ -57,8 +57,12 @@ def make_before(login_path: str):
 
     def _before(req, sess):
         path = req.url.path
-        # Allow exactly the login endpoint and obvious static asset requests.
-        if path in allowed or path.endswith(".ico") or path.endswith(".css"):
+        # Only the login endpoint is public. There is deliberately no exemption
+        # for static files: the UI serves none — the theme and scripts are
+        # inlined into every page — so a suffix rule like ".css"/".ico" would
+        # buy nothing and silently expose the first route that ever matched it
+        # (#159). If static files are added, exempt their mount prefix here.
+        if path in allowed:
             return None
         if sess.get(SESSION_KEY):
             ensure_csrf(sess)  # make a token available to rendered forms

@@ -46,8 +46,8 @@ from config import Config
 from admin import auth, views
 from admin.analysis import analyze
 from admin.components import head_tags
-from admin.forms import build_spec
-from admin.kinds import descriptor, is_kind
+from admin.forms import build_spec, checked
+from admin.kinds import KINDS, descriptor, is_kind
 from admin.preview import (
     sample_values, render_docx_preview, render_email_preview, render_pptx_preview,
 )
@@ -146,6 +146,28 @@ class AdminContext:
             return False
 
     # -- asset helpers the routes share -------------------------------------
+
+    def other_specs_using_asset(self, kind: str, name: str,
+                                filename: Optional[str]) -> List[str]:
+        """Managed templates other than *(kind, name)* whose asset is *filename*.
+
+        Assets share one flat ``custom_templates/`` directory, so two specs can
+        point at the same file — usually because one was hand-written. Deleting
+        it for one of them would break the other, so the delete page checks
+        first and withholds the option rather than offering a destructive
+        choice it cannot honour safely.
+        """
+        if not filename:
+            return []
+        found: List[str] = []
+        for other in KINDS:
+            for spec in self.store.list_specs(other):
+                if other == kind and spec.get("name") == name:
+                    continue
+                if spec.get(descriptor(other).path_key) == filename:
+                    found.append(f"{descriptor(other).label} template "
+                                 f"'{spec.get('name')}'")
+        return found
 
     def analyze_asset(self, kind: str, spec: Dict[str, Any]):
         """Analyse a spec's installed source file, or ``None`` when it is gone."""
@@ -389,15 +411,32 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         html = render_email_preview(data, spec, values)
         return HTMLResponse(html)
 
-    @rt("/{kind}/{name}/delete", methods=["post"])
+    @rt("/{kind}/{name}/delete", methods=["get", "post"])
     async def delete(req, sess, kind: str, name: str):
+        if not is_kind(kind):
+            return _home()
+        spec = ctx.store.get_spec(kind, name)
+        if spec is None:
+            return views.not_found_page(ctx, name)
+        asset = spec.get(descriptor(kind).path_key)
+        shared_with = ctx.other_specs_using_asset(kind, name, asset)
+
+        if req.method != "POST":
+            return views.delete_page(ctx, kind, name, asset, shared_with,
+                                     csrf=auth.ensure_csrf(sess))
+
         form = await req.form()
         bad = _csrf_guard(sess, form)
         if bad:
             return bad
-        if is_kind(kind):
-            ctx.store.delete_spec(kind, name, delete_asset=False)
-            ctx.unregister(kind, name)
+        # Never honour the checkbox for a file another template still points
+        # at, whatever was submitted — the page hides the option, but the POST
+        # is not where that decision should be trusted from.
+        drop_asset = checked(form, "delete_asset") and not shared_with
+        ctx.store.delete_spec(kind, name, delete_asset=drop_asset)
+        ctx.unregister(kind, name)
+        logger.info("[admin] Deleted %s template %r (asset %s)", kind, name,
+                    "deleted" if drop_asset else "kept")
         return _home()
 
     return app
