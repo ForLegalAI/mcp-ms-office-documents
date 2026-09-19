@@ -116,6 +116,13 @@ textarea{resize:vertical}
 .actions{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center}
 .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
 .table-actions{margin-top:.75rem}
+.group-title{font-weight:700;font-size:.8rem;text-transform:uppercase;
+  letter-spacing:.03em;color:var(--muted);margin:1rem 0 .4rem}
+.yaml-view{background:var(--ctl-bg);border:1px solid var(--line);
+  border-radius:8px;padding:.75rem .9rem;overflow-x:auto;margin:0;
+  font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.82rem;
+  line-height:1.45;color:var(--ink)}
+.yaml-view code{font:inherit;color:inherit;background:none}
 table{width:100%;border-collapse:collapse}
 th,td{text-align:left;padding:.55rem .5rem;border-bottom:1px solid var(--line);vertical-align:middle}
 th{font-size:.78rem;text-transform:uppercase;letter-spacing:.03em;color:var(--muted)}

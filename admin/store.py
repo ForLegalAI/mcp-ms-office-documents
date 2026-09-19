@@ -299,7 +299,7 @@ class FileTemplateStore(TemplateStore):
 
         spec_path = self._spec_path(kind, name)
         spec_path.parent.mkdir(parents=True, exist_ok=True)
-        spec_path.write_text(self._dump_spec(spec), encoding="utf-8")
+        spec_path.write_text(self.dump_spec(spec), encoding="utf-8")
         logger.info("[template-store] Saved %s template %r -> %s", kind, name, spec_path)
         return spec
 
@@ -323,8 +323,13 @@ class FileTemplateStore(TemplateStore):
         return existed
 
     @staticmethod
-    def _dump_spec(spec: Dict[str, Any]) -> str:
-        """Serialise a spec to YAML with a header marking it UI-managed."""
+    def dump_spec(spec: Dict[str, Any]) -> str:
+        """Serialise a spec to YAML with a header marking it UI-managed.
+
+        Public because the admin UI shows it: the YAML is the format the rest
+        of the documentation teaches, so an admin who built a template by
+        clicking can still read it in that vocabulary (#163).
+        """
         header = (
             "# Managed by the template-admin UI. Edits here are merged on top of\n"
             "# the master YAML at startup. Prefer editing via the admin UI.\n"

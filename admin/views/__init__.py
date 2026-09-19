@@ -20,7 +20,8 @@ from admin.views.status import fmt_ts, fmt_uptime, status_page
 from admin.views.templates import (
     analysis_report, arg_row, configure_page, delete_page, edit_form, edit_page,
     index_page,
-    new_page, pptx_analysis_report, style_mapping_block, template_table,
+    builtin_style_names, new_page, pptx_analysis_report, spec_yaml_block,
+    style_mapping_block, template_table,
 )
 
 __all__ = [
@@ -30,5 +31,6 @@ __all__ = [
     "login_page", "logout_page", "name_field", "new_page", "not_found_page",
     "page", "pptx_analysis_report", "replace_card", "save_failed_page",
     "saved_page", "status_page",
-    "style_mapping_block", "template_table",
+    "builtin_style_names", "spec_yaml_block", "style_mapping_block",
+    "template_table",
 ]

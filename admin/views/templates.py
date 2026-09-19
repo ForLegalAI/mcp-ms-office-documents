@@ -12,13 +12,13 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from fasthtml.common import (
-    A, Button, Div, Form, H1, Input, Li, Option, P, Select, Span, Textarea, Th,
-    Tr, Td, Ul,
+    A, Button, Code, Div, Form, H1, Input, Li, Option, P, Pre, Select, Span,
+    Textarea, Th, Tr, Td, Ul,
 )
 
 from admin import components as c
 from admin.analysis import Analysis, PptxAnalysis, reconcile
-from admin.kinds import ARG_TYPES, KINDS, STYLE_KEYS, descriptor
+from admin.kinds import ARG_TYPES, KINDS, STYLE_GROUPS, descriptor
 from admin.store import KIND_DOCX, KIND_PPTX
 from admin.views.shell import form_actions, name_field, page
 
@@ -152,20 +152,91 @@ def _arg_rows(spec: Dict[str, Any], analysis: Optional[Analysis]):
     return rows or [arg_row()]
 
 
-def style_mapping_block(analysis: Optional[Analysis], spec: Dict[str, Any]):
+def builtin_style_names() -> Dict[str, Optional[str]]:
+    """What each style-mapping key resolves to when nothing overrides it.
+
+    Read off the renderer's own defaults rather than restated here, so the
+    editor cannot drift from what a document actually gets.
+    """
+    from docx_tools.style_map import DEFAULT_STYLE_MAP as d
+
+    names: Dict[str, Optional[str]] = {}
+    for i, value in enumerate(d.heading, start=1):
+        names[f"heading_{i}"] = value
+    for i, value in enumerate(d.list_number):
+        names["list_number" if i == 0 else f"list_number_{i + 1}"] = value
+    for i, value in enumerate(d.list_bullet):
+        names["list_bullet" if i == 0 else f"list_bullet_{i + 1}"] = value
+    for key in ("quote", "table", "normal", "code"):
+        names[key] = getattr(d, key, None)
+    return names
+
+
+def _inherited_label(key: str, global_mapping: Dict[str, Any],
+                     builtin: Dict[str, Optional[str]]) -> str:
+    """The "leave this alone" option's label, saying what that actually means.
+
+    It used to read "(use built-in)", which is a lie wherever the global
+    style_mapping overrides that key — there it means "use the global
+    mapping", and nothing on screen said what the global mapping was (#161).
+    """
+    inherited = (global_mapping or {}).get(key)
+    if inherited:
+        return f"(inherit from global: {inherited})"
+    default = builtin.get(key)
+    return f"(use built-in: {default})" if default else "(use built-in: none)"
+
+
+def style_mapping_block(analysis: Optional[Analysis], spec: Dict[str, Any],
+                        global_mapping: Optional[Dict[str, Any]] = None):
+    """The per-template style map: every key style_map recognises, grouped."""
     styles = (analysis.styles_present if analysis else []) or []
     current = (spec or {}).get("style_mapping") or {}
-    selects = []
-    for key in STYLE_KEYS:
-        cur = current.get(key, "")
-        opts = [Option("(use built-in)", value="__default__", selected=not cur)]
-        opts += [Option(s, value=s, selected=(s == cur)) for s in styles]
-        selects.append(c.field(key, Select(*opts, name=f"style_{key}")))
+    builtin = builtin_style_names()
+
+    groups = []
+    for title, keys in STYLE_GROUPS:
+        fields = []
+        for key in keys:
+            cur = current.get(key, "")
+            opts = [Option(_inherited_label(key, global_mapping, builtin),
+                           value="__default__", selected=not cur)]
+            opts += [Option(s, value=s, selected=(s == cur)) for s in styles]
+            fields.append(c.field(key, Select(*opts, name=f"style_{key}")))
+        groups.append(Div(P(title, cls="group-title"),
+                          Div(*fields, cls="role-grid")))
+
+    note = P("Only needed if your Word template renames the built-in styles. "
+             "Each dropdown lists the styles your document actually defines; "
+             "leaving one alone keeps what its label says.", cls="muted")
+    if not styles:
+        note = P("The template's styles could not be read, so there is nothing "
+                 "to choose from here.", cls="muted")
     return c.details_block(
         "Advanced — map markdown styles to your template's own style names",
-        P("Only needed if your Word template renames the built-in styles "
-          "(Heading 1, List Number, …). Otherwise leave these alone.", cls="muted"),
-        *selects,
+        note, *groups,
+    )
+
+
+def spec_yaml_block(spec: Dict[str, Any]):
+    """The YAML this template is stored as, read-only (#163).
+
+    The YAML *is* the documented interface — config/*.yaml is hand-written and
+    docs/templates.md teaches templates in it — so a template built by
+    clicking should be readable in the same vocabulary.
+    """
+    from admin.store import FileTemplateStore
+
+    try:
+        text = FileTemplateStore.dump_spec(spec)
+    except Exception:  # pragma: no cover - a spec that will not serialise
+        return None
+    return c.details_block(
+        "The YAML this is stored as",
+        P("Read-only. This is what the UI wrote into the template directory, "
+          "merged on top of the hand-written master file at load time.",
+          cls="muted"),
+        Pre(Code(text), cls="yaml-view"),
     )
 
 
@@ -298,7 +369,8 @@ def _document_edit_form(ctx, kind: str, spec: Dict[str, Any],
 
     cards = [details, args]
     if kind == KIND_DOCX:
-        cards.append(c.card(style_mapping_block(analysis, spec)))
+        cards.append(c.card(style_mapping_block(analysis, spec,
+                                                ctx.global_style_mapping)))
     return _form_shell(ctx, kind, spec, is_new, csrf, spec.get(d.path_key, ""), *cards)
 
 
@@ -533,5 +605,9 @@ def edit_page(ctx, kind: str, name: str, spec: Dict[str, Any], analysis,
             body.append(c.flash("The template's source file is missing — arguments "
                                 "can still be edited.", "warn"))
     body.append(edit_form(ctx, kind, spec, analysis, is_new=False, csrf=csrf))
-    body.append(replace_card(ctx, kind, name, csrf))
+    body.append(replace_card(ctx, kind, name, csrf,
+                             asset=spec.get(descriptor(kind).path_key)))
+    yaml_block = spec_yaml_block(spec)
+    if yaml_block is not None:
+        body.append(c.card(yaml_block))
     return page(ctx, f"Edit {name}", *body)

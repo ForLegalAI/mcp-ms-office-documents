@@ -31,9 +31,36 @@ from admin.store import KIND_DOCX, KIND_EMAIL, KIND_PPTX, kind_meta
 # Argument types offered in the argument editor.
 ARG_TYPES = ("string", "int", "float", "bool", "list")
 
-# Style-mapping keys surfaced in the UI (a subset of the set
-# docx_tools.style_map recognises — see #160).
-STYLE_KEYS = ("heading_1", "list_number", "list_bullet", "quote", "table")
+# Every style-mapping key docx_tools.style_map recognises, grouped so the
+# editor stays scannable. Keep in step with style_map's _HEADING_KEYS /
+# _LIST_NUMBER_KEYS / _LIST_BULLET_KEYS / _SCALAR_KEYS —
+# tests/test_admin_style_keys.py fails if the two drift apart.
+STYLE_GROUPS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ("Headings", tuple(f"heading_{i}" for i in range(1, 7))),
+    ("Numbered lists", ("list_number", "list_number_2", "list_number_3")),
+    ("Bulleted lists", ("list_bullet", "list_bullet_2", "list_bullet_3")),
+    ("Other blocks", ("quote", "table", "normal", "code")),
+)
+
+#: Flattened, in display order.
+STYLE_KEYS: Tuple[str, ...] = tuple(
+    key for _group, keys in STYLE_GROUPS for key in keys
+)
+
+#: Media type for each asset extension, for serving a template's source file.
+MEDIA_TYPES = {
+    ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".html": "text/html; charset=utf-8",
+    ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    ".potx": "application/vnd.openxmlformats-officedocument.presentationml.template",
+}
+
+
+def media_type(filename: str) -> str:
+    """Media type for *filename*, by extension."""
+    from pathlib import Path as _Path
+    return MEDIA_TYPES.get(_Path(filename).suffix.lower(),
+                           "application/octet-stream")
 
 
 @dataclass(frozen=True)
