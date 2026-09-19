@@ -18,11 +18,8 @@ from docx_tools import style_map
 
 
 def _recognised_keys():
-    """Every key style_map._normalize() acts on, read from its own tables."""
-    return (set(style_map._HEADING_KEYS)
-            | set(style_map._LIST_NUMBER_KEYS)
-            | set(style_map._LIST_BULLET_KEYS)
-            | set(style_map._SCALAR_KEYS))
+    """Every key style_map._normalize() acts on, from its own public list."""
+    return set(style_map.RECOGNISED_KEYS)
 
 
 def test_ui_offers_every_recognised_key():

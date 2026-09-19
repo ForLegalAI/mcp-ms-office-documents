@@ -684,6 +684,74 @@ def test_download_cannot_escape_the_template_directory(admin_client, tmp_path):
     assert r.status_code == 200 and "Not found" in r.text
 
 
+@pytest.mark.parametrize("bad", ['evil".docx', 'a\r\nX-Injected: 1.docx',
+                                 "back\\slash.docx", "bell\x07.docx"])
+def test_asset_filename_rejects_header_breaking_characters(bad):
+    """A spec is hand-writable YAML, so its filename reaches a header.
+
+    Quotes and control characters cannot appear in a real Office filename but
+    can break out of a quoted Content-Disposition value.
+    """
+    with pytest.raises(store_mod.TemplateStoreError):
+        store_mod.validate_asset_filename(bad, "docx")
+
+
+@pytest.mark.parametrize("ok", ["Brand Deck.pptx", "na\u00efve.pptx", "a-b_c.1.pptx"])
+def test_asset_filename_still_accepts_ordinary_names(ok):
+    """The guard must not outlaw spaces or non-ASCII — those are normal."""
+    assert store_mod.validate_asset_filename(ok, "pptx") == ok
+
+
+def test_content_disposition_is_a_legal_header_value():
+    """Non-ASCII names need RFC 6266 encoding, not raw interpolation."""
+    from admin.kinds import content_disposition
+
+    value = content_disposition("na\u00efve deck.pptx")
+    value.encode("ascii")  # a raw name would raise here
+    assert 'filename="na?ve deck.pptx"' in value
+    assert "filename*=UTF-8''na%C3%AFve%20deck.pptx" in value
+    assert "\r" not in value and "\n" not in value
+
+
+def test_download_header_survives_a_non_ascii_filename(admin_client):
+    client, _ = admin_client
+    name, _asset = _delete_fixture(client, "unicode_tpl")
+    store = store_mod.FileTemplateStore.from_config()
+    # Install the same document under a non-ASCII name and point the spec at it.
+    data = store.read_asset("docx", f"{name}.docx")
+    store.write_asset("docx", "sm\u011blouva.docx", data)
+    spec = store.get_spec("docx", name)
+    spec["docx_path"] = "sm\u011blouva.docx"
+    store.save_spec("docx", spec)
+
+    r = client.get(f"/admin/docx/{name}/download")
+    assert r.status_code == 200
+    assert r.content == data
+    r.headers["content-disposition"].encode("ascii")  # must be a legal header
+    assert "sm%C4%9Blouva.docx" in r.headers["content-disposition"]
+
+
+def test_yaml_block_escapes_template_text(admin_client):
+    """The YAML dump is the most literal path from admin text to the page.
+
+    Review on #177 inferred FastHTML escapes plain string children but could
+    not run code to check; this pins it end to end.
+    """
+    client, _ = admin_client
+    _post(client, "/admin/docx/draft", data={"name": "xss_tpl"},
+          files={"file": ("xss_tpl.docx", _docx_with_placeholders("Hi {{who}}"),
+                          "application/octet-stream")})
+    _post(client, "/admin/docx/save", data={
+        "kind": "docx", "asset_filename": "xss_tpl.docx", "name": "xss_tpl",
+        "title": "T", "description": "<script>alert(1)</script> & <b>bold</b>",
+        "arg_name": ["who"], "arg_type": ["string"], "arg_required": ["true"],
+        "arg_default": [""], "arg_desc": [""],
+    })
+    html = client.get("/admin/docx/xss_tpl/edit").text
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+
+
 def test_download_of_a_missing_file_is_not_found(admin_client):
     client, _ = admin_client
     name, asset = _delete_fixture(client, "dl_gone_tpl")

@@ -47,7 +47,9 @@ from admin import auth, views
 from admin.analysis import analyze
 from admin.components import head_tags
 from admin.forms import build_spec, checked
-from admin.kinds import KINDS, descriptor, is_kind, media_type
+from admin.kinds import (
+    KINDS, content_disposition, descriptor, is_kind, media_type,
+)
 from admin.preview import (
     sample_values, render_docx_preview, render_email_preview, render_pptx_preview,
 )
@@ -362,7 +364,7 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         return Response(
             content=data,
             media_type=media_type(asset),
-            headers={"Content-Disposition": f'attachment; filename="{asset}"'},
+            headers={"Content-Disposition": content_disposition(asset)},
         )
 
     @rt("/{kind}/{name}/reupload", methods=["post"])

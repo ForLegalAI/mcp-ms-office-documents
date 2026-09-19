@@ -56,6 +56,25 @@ MEDIA_TYPES = {
 }
 
 
+def content_disposition(filename: str, disposition: str = "attachment") -> str:
+    """An RFC 6266 ``Content-Disposition`` value for *filename*.
+
+    Not an f-string: the filename comes from a spec file, which is plain YAML a
+    person can hand-write, so interpolating it raw would let a quote or a
+    newline break out of the header. Emits an ASCII-safe ``filename=`` for old
+    clients plus ``filename*=UTF-8''…`` so a non-ASCII name survives intact —
+    a raw one would not be a legal header value at all.
+    """
+    from urllib.parse import quote
+
+    ascii_name = (filename.encode("ascii", "replace").decode("ascii")
+                  .replace("\\", "_").replace('"', "_"))
+    ascii_name = "".join(ch if ch.isprintable() else "_" for ch in ascii_name)
+    encoded = quote(filename, safe="")
+    return (f'{disposition}; filename="{ascii_name}"; '
+            f"filename*=UTF-8''{encoded}")
+
+
 def media_type(filename: str) -> str:
     """Media type for *filename*, by extension."""
     from pathlib import Path as _Path

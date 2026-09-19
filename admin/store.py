@@ -117,15 +117,31 @@ def validate_name(name: str) -> str:
     return name
 
 
+# Characters no real Office filename needs, and which break a quoted HTTP
+# header value or a log line if one reaches them. A spec file is plain YAML a
+# person can hand-write, so the filename inside it is not necessarily one this
+# code produced. Spaces and non-ASCII are deliberately still allowed —
+# "Brand Deck.pptx" and "naïve.docx" are ordinary names.
+_UNSAFE_FILENAME_CHARS = frozenset('"\\\r\n\t') | {chr(c) for c in range(0x20)}
+
+
 def validate_asset_filename(filename: str, kind: str) -> str:
     """Validate that *filename* is a bare filename with the kind's extension.
 
     Mirrors the filename-only guard enforced by the dynamic-tool loaders so the
-    asset can never reference a directory or absolute path.
+    asset can never reference a directory or absolute path, and rejects the
+    quoting/control characters that would otherwise travel into a
+    ``Content-Disposition`` header when the file is served.
     """
     meta = _require_kind(kind)
     if not filename:
         raise TemplateStoreError("Asset filename must not be empty.")
+    bad = sorted(_UNSAFE_FILENAME_CHARS.intersection(filename))
+    if bad:
+        raise TemplateStoreError(
+            f"Asset filename must not contain {', '.join(repr(c) for c in bad)}; "
+            f"got {filename!r}."
+        )
     p = Path(filename)
     if p.is_absolute() or len(p.parts) != 1:
         raise TemplateStoreError(

@@ -62,6 +62,13 @@ _LIST_NUMBER_KEYS = {"list_number": 0, "list_number_2": 1, "list_number_3": 2}
 _LIST_BULLET_KEYS = {"list_bullet": 0, "list_bullet_2": 1, "list_bullet_3": 2}
 _SCALAR_KEYS = ("quote", "table", "normal", "code")
 
+#: Every ``style_mapping`` key :func:`_normalize` acts on. Public because the
+#: admin UI's style editor must offer exactly these — offering fewer hides part
+#: of the feature, offering more promises a setting that silently does nothing.
+#: ``tests/test_admin_style_keys.py`` compares the two.
+RECOGNISED_KEYS = frozenset(_HEADING_KEYS) | frozenset(_LIST_NUMBER_KEYS) \
+    | frozenset(_LIST_BULLET_KEYS) | frozenset(_SCALAR_KEYS)
+
 
 def _normalize(mapping: dict) -> dict:
     """Translate a flat config dict into ``StyleMap`` field overrides."""

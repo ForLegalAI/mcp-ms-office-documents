@@ -82,6 +82,14 @@ key to the renderer fails the suite until the UI catches up. The labels come
 from `DEFAULT_STYLE_MAP` for the same reason: a second hand-written copy of the
 defaults would drift.
 
+**A spec's filename is untrusted input.** `save_spec()` validates what the UI
+writes, but a `*.d` spec is plain YAML a person can hand-write, so the filename
+in it is not necessarily one this code produced. It reaches the filesystem
+*and* a `Content-Disposition` header, so `validate_asset_filename()` rejects
+quotes, backslashes and control characters (spaces and non-ASCII stay legal —
+`Brand Deck.pptx` is an ordinary name), and `kinds.content_disposition()`
+builds the header per RFC 6266 rather than interpolating the name.
+
 **3. Colours are tokens.** Custom properties on `:root`, redefined under
 `@media (prefers-color-scheme: dark)`. A rule written with a literal colour
 will be wrong in one of the two themes.
