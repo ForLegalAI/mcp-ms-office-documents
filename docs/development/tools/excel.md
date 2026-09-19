@@ -262,6 +262,11 @@ first row taken as the header. That is usually what the caller meant, but it
 is decided for them and it moves every table-relative reference, since
 `T1.B[0]` counts from the first row after the header.
 
+A separator cell needs one dash, not three, as in CommonMark and in the Word
+tool's own check: demanding three wrote a caller's `|--|--|` into the sheet as
+a row of literal dashes and then reported `table_separator_missing` against a
+table that had one.
+
 `TableData.has_separator` carries the fact out of the parse so the table
 branch can report `table_separator_missing`. It means *the separator was
 directly under the first row* — the only position markdown gives it meaning —

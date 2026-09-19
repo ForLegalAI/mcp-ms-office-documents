@@ -176,11 +176,16 @@ def _is_separator_row(line: str) -> bool:
 
     Only returns True if ALL cells in the row match the separator pattern,
     preventing false positives from data cells that happen to contain '---'.
+
+    One dash is enough, as in CommonMark and in the Word tool's own check.
+    Demanding three wrote a caller's ``|--|--|`` into the sheet as a row of
+    literal dashes and then reported ``table_separator_missing`` against a
+    table that had one (#114).
     """
     cells = [c.strip() for c in line.split('|')[1:-1]]
     if not cells:
         return False
-    return all(re.match(r'^:?-{3,}:?$', c) for c in cells)
+    return all(re.match(r'^:?-+:?$', c) for c in cells)
 
 
 def _parse_column_alignments(separator_line: str) -> list[str | None]:

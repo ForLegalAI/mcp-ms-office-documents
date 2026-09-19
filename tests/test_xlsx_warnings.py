@@ -202,6 +202,21 @@ class TestNamesAndFormatting:
     def test_a_table_with_a_separator_reports_nothing(self):
         assert build("| Item | Qty |\n|------|-----|\n| A | 1 |\n") == []
 
+    @pytest.mark.parametrize("separator", ["|-|-|", "|--|--|", "|---|---|",
+                                           "|:-:|--:|", "|:---|---:|"])
+    def test_one_dash_is_a_separator_as_in_commonmark(self, separator):
+        """Demanding three wrote '|--|--|' into the sheet as literal dashes and
+        then reported a missing separator against a table that had one."""
+        from openpyxl import load_workbook
+
+        buffer, warnings = _markdown_to_excel_buffer(
+            f"| A | B |\n{separator}\n| 1 | 2 |\n")
+        sheet = load_workbook(buffer).active
+        buffer.close()
+
+        assert list(warnings) == []
+        assert sheet["A2"].value == 1          # the data row, not the dashes
+
 
     def test_a_colliding_sheet_name_is_reported(self):
         warnings = build("## Sheet: Report\n| A |\n|---|\n| 1 |\n\n"
