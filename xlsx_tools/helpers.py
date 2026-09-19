@@ -193,6 +193,12 @@ def _percent_format_for_column(table_data: list[list[str]], col_idx: int) -> str
     places than its neighbours is a cosmetic surprise, showing it with fewer
     hides part of the number. Returns None when the column has no literal
     percent to learn from, leaving the caller its own fallback.
+
+    A cell only counts if :func:`_apply_column_type` would accept it too —
+    hence the bare ``float()``, matching its test rather than the more
+    forgiving one in :func:`_percent_decimals`. ``1,234%`` fails both: the
+    coercion leaves it as text, so it is not a percent in the sheet and has no
+    business setting the format of the cells that are.
     """
     decimals = None
     for row in table_data[1:]:                      # data rows only
@@ -203,9 +209,9 @@ def _percent_format_for_column(table_data: list[list[str]], col_idx: int) -> str
             continue
         body = text.rstrip('%').strip()
         try:
-            float(body.replace(',', '.'))
-        except ValueError:
-            continue                                 # not a percent after all
+            float(body)                              # exactly what the column
+        except ValueError:                           # coercion itself accepts
+            continue
         decimals = max(decimals or 0, _percent_decimals(body))
     return None if decimals is None else _percent_format_with(decimals)
 

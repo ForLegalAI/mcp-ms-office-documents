@@ -287,6 +287,28 @@ class TestPercentPrecisionInFormulaCells:
 
         assert ws["B2"].number_format == "0%"
 
+    def test_a_value_the_column_could_not_coerce_teaches_nothing(self):
+        """`1,234%` fails `float()`, so the coercion leaves it as text. It is
+        not a percent in the sheet and has no business setting the format of
+        the cells that are."""
+        ws = _create_workbook_from_markdown(
+            "<!-- types: text, percent -->\n"
+            "| Metric | Rate |\n|--------|------|\n"
+            "| A      | 1,234% |\n| Calc | =B2*2 |\n"
+        ).active
+
+        assert ws["B2"].value == "1,234%"           # stayed text, as before
+        assert ws["B3"].number_format == "0%"       # not 0.000%
+
+    def test_a_rejected_value_does_not_mask_a_real_one(self):
+        ws = _create_workbook_from_markdown(
+            "<!-- types: text, percent -->\n"
+            "| Metric | Rate |\n|--------|------|\n"
+            "| A      | 1,234% |\n| B | 4.3% |\n| Calc | =B3*2 |\n"
+        ).active
+
+        assert ws["B4"].number_format == "0.0%"
+
     def test_a_formula_is_not_mistaken_for_a_literal(self):
         """`=B2*1.5%` ends in '%' but has no precision of its own to offer."""
         ws = _create_workbook_from_markdown(
