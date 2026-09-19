@@ -118,15 +118,22 @@ class TestTheImageCarriesWhatTheTablePromises:
     """A substitute the image lacks is a promise the fallback quietly breaks.
 
     METRIC_COMPATIBLE says "measuring this face measures the real thing". That
-    only holds where the file exists, so the runtime image has to install one
-    package per family — and the two drifted apart once already (#134 review).
+    only holds where the file exists, so the runtime image installs one package
+    per family it can — and the two drifted apart once already (#134 review).
+
+    Two families it cannot: Alpine packages neither Caladea nor Gelasio, so
+    naming them in the Dockerfile failed the image build outright and
+    v4.0-beta.4 published no image at all. They are listed as unpackaged here
+    rather than dropped, because the table is right about the faces and a
+    Debian host does install them.
     """
 
-    # The Alpine package that provides each substitute family.
+    # The Alpine package that provides each substitute family; None where Alpine
+    # has none, which means the container reaches GENERIC_SANS for that family.
     PACKAGES = {
         "Carlito": "font-carlito",
-        "Caladea": "font-caladea",
-        "Gelasio": "font-gelasio",
+        "Caladea": None,
+        "Gelasio": None,
         "LiberationSans": "font-liberation",
         "Liberation Sans": "font-liberation",
         "LiberationSerif": "font-liberation",
@@ -138,12 +145,13 @@ class TestTheImageCarriesWhatTheTablePromises:
         "Cousine": "font-croscore",
     }
 
+    # Typefaces the image cannot measure exactly, for the reason above. Adding
+    # to this set is a deliberate loss of precision, not a passing test.
+    UNPACKAGED = {"cambria", "georgia"}
+
     @pytest.fixture
     def installed(self):
-        dockerfile = (project_root / "Dockerfile").read_text(encoding="utf-8")
-        line = [row for row in dockerfile.splitlines() if "apk add" in row and "font-" in row]
-        assert line, "the runtime image installs no fonts"
-        return set(line[0].split())
+        return set(_dockerfile_font_line().split())
 
     def test_every_substitute_family_is_a_package_we_know(self):
         unknown = {
@@ -156,10 +164,84 @@ class TestTheImageCarriesWhatTheTablePromises:
 
     def test_every_metric_compatible_face_is_installed(self, installed):
         for typeface, faces in text_metrics.METRIC_COMPATIBLE.items():
-            packages = {self.PACKAGES[face] for face in faces}
+            packages = {self.PACKAGES[face] for face in faces} - {None}
+            if not packages:
+                assert typeface in self.UNPACKAGED, (
+                    f"{typeface} claims {sorted(faces)}, none of which Alpine packages"
+                )
+                continue
             assert packages & installed, (
                 f"{typeface} claims {sorted(faces)}, none of which the image installs"
             )
+
+    def test_the_unmeasurable_families_are_the_documented_two(self):
+        # Pins the cost of the missing packages: if Alpine gains font-caladea,
+        # installing it is a real improvement, and this test asks for the edit.
+        unpackaged = {
+            typeface
+            for typeface, faces in text_metrics.METRIC_COMPATIBLE.items()
+            if not {self.PACKAGES[face] for face in faces} - {None}
+        }
+        assert unpackaged == self.UNPACKAGED
+
+    def test_the_image_installs_nothing_the_table_does_not_name(self, installed):
+        # The other direction: a package nobody measures with is dead weight in
+        # the image, and a typo lands here rather than in a failed release build.
+        known = {package for package in self.PACKAGES.values() if package}
+        named = {token for token in installed if token.startswith("font-")}
+        assert named <= known, f"the image installs {sorted(named - known)}, used by nothing"
+
+
+def _dockerfile_font_line():
+    """The Dockerfile's `apk add` line that installs the font packages."""
+    dockerfile = (project_root / "Dockerfile").read_text(encoding="utf-8")
+    line = [row for row in dockerfile.splitlines() if "apk add" in row and "font-" in row]
+    assert line, "the runtime image installs no fonts"
+    return line[0]
+
+
+@pytest.mark.network
+class TestThePackagesExist:
+    """A package name Alpine does not have fails the image BUILD, not a test.
+
+    That is how v4.0-beta.4 shipped no Docker image: `font-caladea` and
+    `font-gelasio` do not exist, the whole `apk add` exited 2, and the release
+    workflow was the first thing to find out. CI cannot run a build, but it can
+    read Alpine's package index — so this test does, against every font package
+    the Dockerfile names.
+    """
+
+    INDEXES = (
+        "https://dl-cdn.alpinelinux.org/alpine/latest-stable/main/x86_64/APKINDEX.tar.gz",
+        "https://dl-cdn.alpinelinux.org/alpine/latest-stable/community/x86_64/APKINDEX.tar.gz",
+    )
+
+    @pytest.fixture
+    def available(self):
+        import io
+        import tarfile
+
+        import requests
+
+        names = set()
+        for url in self.INDEXES:
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            with tarfile.open(fileobj=io.BytesIO(response.content), mode="r:gz") as archive:
+                index = archive.extractfile("APKINDEX").read().decode("utf-8", "replace")
+            names |= {
+                row[2:] for row in index.splitlines() if row.startswith("P:")
+            }
+        return names
+
+    def test_every_font_package_exists_in_alpine(self, available):
+        named = {token for token in _dockerfile_font_line().split()
+                 if token.startswith("font-")}
+        assert named, "the runtime image installs no fonts"
+        assert named <= available, (
+            f"the Dockerfile installs {sorted(named - available)}, which Alpine "
+            "does not package — the image build will fail"
+        )
 
 
 class TestTheDecksOwnFace:
