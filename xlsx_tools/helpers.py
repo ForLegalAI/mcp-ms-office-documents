@@ -159,6 +159,17 @@ def _thousands_format_for(value: float) -> str:
     return THOUSANDS_FORMAT if float(value).is_integer() else THOUSANDS_FORMAT_DECIMALS
 
 
+def _percent_decimals(numeric_text: str) -> int:
+    """How many decimal places the source text of a percent carries."""
+    fraction = numeric_text.strip().replace(',', '.').partition('.')[2].strip()
+    return min(len(fraction), _PERCENT_MAX_DECIMALS)
+
+
+def _percent_format_with(decimals: int) -> str:
+    """The Excel percent format showing *decimals* decimal places."""
+    return f"0.{'0' * decimals}%" if decimals else '0%'
+
+
 def _percent_format_for(numeric_text: str) -> str:
     """Build a percent format that preserves the precision of the source text.
 
@@ -166,9 +177,46 @@ def _percent_format_for(numeric_text: str) -> str:
     was previously a flat ``0%``, which rendered 50.5% as ``51%`` — a visible
     value the source never contained.
     """
-    fraction = numeric_text.strip().replace(',', '.').partition('.')[2].strip()
-    decimals = min(len(fraction), _PERCENT_MAX_DECIMALS)
-    return f"0.{'0' * decimals}%" if decimals else '0%'
+    return _percent_format_with(_percent_decimals(numeric_text))
+
+
+def _percent_format_for_column(table_data: list[list[str]], col_idx: int) -> str | None:
+    """The percent format a column's own literal values imply, or None.
+
+    A formula has no source text to take its precision from, so a computed
+    cell in a ``types: percent`` column used to fall back to a flat ``0%`` and
+    render 4.3% as ``4%`` — while the literal values beside it each kept their
+    own precision through :func:`_percent_format_for`. The loss was silent and
+    only hit formula cells (#126).
+
+    The widest precision in the column wins: showing a value with more decimal
+    places than its neighbours is a cosmetic surprise, showing it with fewer
+    hides part of the number. Returns None when the column has no literal
+    percent to learn from, leaving the caller its own fallback.
+
+    A cell counts exactly when :func:`_apply_column_type` would coerce it, and
+    the two tests are deliberately identical: ``rstrip('%')`` then a bare
+    ``float()``. Either half drifting apart from the coercion has already
+    caused this both ways — ``1,234%`` fails ``float()``, so the coercion
+    leaves it as text and it must not set the format of the cells that are
+    percents; while a bare ``50.5`` in a percent column *is* coerced (the
+    ``%`` is optional there), so it must. Neither the sign nor a comma is a
+    test of its own; what the column does with the value is.
+    """
+    decimals = None
+    for row in table_data[1:]:                      # data rows only
+        if col_idx >= len(row):
+            continue
+        text = _strip_markdown_formatting(row[col_idx])[0].strip()
+        if text.startswith('='):
+            continue                                 # a formula teaches nothing
+        body = text.rstrip('%').strip()
+        try:
+            float(body)                              # exactly what the column
+        except ValueError:                           # coercion itself accepts
+            continue
+        decimals = max(decimals or 0, _percent_decimals(body))
+    return None if decimals is None else _percent_format_with(decimals)
 
 
 def _is_separator_row(line: str) -> bool:
@@ -904,12 +952,16 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
             cell.value = clean
         return True
 
-    # percent — parse as percent
-    if type_lower == 'percent':
+    # percent or percent:<format> — parse as percent. A declared format
+    # applies to every cell in the column, literal and formula alike; that is
+    # what declaring it is for. Without one, each literal keeps the precision
+    # of its own source text.
+    if type_lower.startswith('percent'):
+        explicit = type_spec.split(':', 1)[1].strip() if ':' in type_spec else ''
         numeric_str = clean.rstrip('%').strip()
         try:
             cell.value = float(numeric_str) / 100
-            cell.number_format = _percent_format_for(numeric_str)
+            cell.number_format = explicit or _percent_format_for(numeric_str)
         except ValueError:
             cell.value = clean
         return True
@@ -942,7 +994,12 @@ def _number_format_for_type(type_spec: str | None) -> str | None:
             symbol = '$'
         return _CURRENCY_FORMATS.get(symbol, f'#,##0.00 "{symbol}"')
 
-    if type_lower == 'percent':
+    if type_lower.startswith('percent'):
+        if ':' in type_spec:
+            return type_spec.split(':', 1)[1].strip() or '0%'
+        # The bare form has no precision of its own. add_table_to_sheet()
+        # prefers what the column's literals imply; this is the fallback for
+        # a column that has none.
         return '0%'
 
     if type_lower.startswith(('number', 'date')):
@@ -1075,6 +1132,17 @@ def add_table_to_sheet(
     # Parse column type hints from <!-- types: text, currency:$, date, bool --> directive
     col_types: list[str | None] = _parse_types_directive(directives.get('types', ''))
 
+    # What a formula cell in a bare `percent` column should be formatted as.
+    # It has no source text of its own, so the column's literals answer for it
+    # (#126); a column with no literal percent keeps the flat fallback from
+    # _number_format_for_type().
+    learned_percent_formats: dict[int, str] = {}
+    for idx, spec in enumerate(col_types):
+        if spec and spec.strip().lower() == 'percent':
+            learned = _percent_format_for_column(table_data, idx)
+            if learned:
+                learned_percent_formats[idx] = learned
+
     # Extract column alignments if available (from TableData subclass)
     col_alignments: list[str | None] = []
     if hasattr(table_data, 'col_alignments'):
@@ -1138,7 +1206,8 @@ def add_table_to_sheet(
                     # on non-numeric results: Excel ignores number formats on
                     # strings and errors.
                     if row_idx > 0 and col_type:
-                        type_fmt = _number_format_for_type(col_type)
+                        type_fmt = (learned_percent_formats.get(col_idx)
+                                    or _number_format_for_type(col_type))
                         if type_fmt:
                             cell.number_format = type_fmt
                 else:
@@ -1224,8 +1293,10 @@ def add_table_to_sheet(
                     elif type_lower.startswith('date'):
                         fmt = col_type.split(':', 1)[1].strip() if ':' in col_type else "YYYY-MM-DD"
                         length = len(fmt)
-                    elif type_lower == 'percent':
-                        length = 6  # e.g. "85.0%"
+                    elif type_lower.startswith('percent'):
+                        fmt = (col_type.split(':', 1)[1].strip()
+                               if ':' in col_type else '')
+                        length = max(len(fmt), 6)  # e.g. "85.0%"
                     else:
                         length = len(row[col_idx].strip())
                 else:

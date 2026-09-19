@@ -234,3 +234,135 @@ class TestUnambiguousDigitGrouping:
         ).active
         assert ws["B2"].value == pytest.approx(1234.0)
         assert ws["B2"].number_format == "#,##0"
+
+
+class TestPercentPrecisionInFormulaCells:
+    """A formula in a percent column keeps the column's precision (#126).
+
+    A literal takes its precision from its own source text, but a formula has
+    no source text — so a computed 4.3% in a `types: percent` column used to
+    render as `4%`, losing a digit the caller never asked to drop, and only in
+    the computed cells. The workaround was to abandon `percent` for
+    `number:0.0%`, which nothing documented.
+    """
+
+    def test_formula_takes_the_precision_of_the_columns_literals(self):
+        ws = _create_workbook_from_markdown(
+            "<!-- types: text, percent -->\n"
+            "| Metric | Rate |\n|--------|------|\n"
+            "| A      | 4.3% |\n| B | 5.1% |\n| Mean | =AVERAGE(B2:B3) |\n"
+        ).active
+
+        assert ws["B4"].value == "=AVERAGE(B2:B3)"
+        assert ws["B4"].number_format == "0.0%"
+
+    def test_the_widest_precision_in_the_column_wins(self):
+        """Showing fewer decimals than a neighbour hides part of the number."""
+        ws = _create_workbook_from_markdown(
+            "<!-- types: text, percent -->\n"
+            "| Metric | Rate |\n|--------|------|\n"
+            "| A      | 4.3% |\n| B | 5.15% |\n| Copy | =B2 |\n"
+        ).active
+
+        assert ws["B2"].number_format == "0.0%"     # literals keep their own
+        assert ws["B3"].number_format == "0.00%"
+        assert ws["B4"].number_format == "0.00%"    # the formula takes the widest
+
+    def test_whole_percent_column_is_unchanged(self):
+        ws = _create_workbook_from_markdown(
+            "<!-- types: text, percent -->\n"
+            "| Metric | Rate |\n|--------|------|\n"
+            "| A      | 50%  |\n| Double | =B2*2 |\n"
+        ).active
+
+        assert ws["B3"].number_format == "0%"
+
+    def test_a_column_with_no_literal_percent_falls_back(self):
+        """Nothing to learn from, so the flat format stands."""
+        ws = _create_workbook_from_markdown(
+            "<!-- types: text, percent -->\n"
+            "| Metric | Rate |\n|--------|------|\n"
+            "| Calc   | =0.5 |\n"
+        ).active
+
+        assert ws["B2"].number_format == "0%"
+
+    def test_a_percent_written_without_its_sign_still_teaches(self):
+        """The `%` is optional in a percent column — `50.5` is coerced to
+        0.505 and shown as 50.5%. A literal that became a percent must set the
+        format of the computed cells beside it, sign or no sign."""
+        ws = _create_workbook_from_markdown(
+            "<!-- types: text, percent -->\n"
+            "| Metric | Rate |\n|--------|------|\n"
+            "| A      | 50.5 |\n| Calc | =B2*2 |\n"
+        ).active
+
+        assert ws["B2"].value == pytest.approx(0.505)   # coerced, as before
+        assert ws["B2"].number_format == "0.0%"
+        assert ws["B3"].number_format == "0.0%"         # not 0%
+
+    def test_a_value_the_column_could_not_coerce_teaches_nothing(self):
+        """`1,234%` fails `float()`, so the coercion leaves it as text. It is
+        not a percent in the sheet and has no business setting the format of
+        the cells that are."""
+        ws = _create_workbook_from_markdown(
+            "<!-- types: text, percent -->\n"
+            "| Metric | Rate |\n|--------|------|\n"
+            "| A      | 1,234% |\n| Calc | =B2*2 |\n"
+        ).active
+
+        assert ws["B2"].value == "1,234%"           # stayed text, as before
+        assert ws["B3"].number_format == "0%"       # not 0.000%
+
+    def test_a_rejected_value_does_not_mask_a_real_one(self):
+        ws = _create_workbook_from_markdown(
+            "<!-- types: text, percent -->\n"
+            "| Metric | Rate |\n|--------|------|\n"
+            "| A      | 1,234% |\n| B | 4.3% |\n| Calc | =B3*2 |\n"
+        ).active
+
+        assert ws["B4"].number_format == "0.0%"
+
+    def test_a_formula_is_not_mistaken_for_a_literal(self):
+        """`=B2*1.5%` ends in '%' but has no precision of its own to offer."""
+        ws = _create_workbook_from_markdown(
+            "<!-- types: text, percent -->\n"
+            "| Metric | Rate |\n|--------|------|\n"
+            "| A      | 40%  |\n| Calc | =B2*1.5% |\n"
+        ).active
+
+        assert ws["B3"].number_format == "0%"
+
+
+class TestDeclaredPercentFormat:
+    """`percent:<format>` declares the precision outright (#126)."""
+
+    def test_the_declared_format_applies_to_literals_and_formulas(self):
+        ws = _create_workbook_from_markdown(
+            "<!-- types: text, percent:0.00% -->\n"
+            "| Metric | Rate |\n|--------|------|\n"
+            "| A      | 4.3% |\n| Double | =B2*2 |\n"
+        ).active
+
+        assert ws["B2"].value == pytest.approx(0.043)
+        assert ws["B2"].number_format == "0.00%"
+        assert ws["B3"].number_format == "0.00%"
+
+    def test_the_declared_format_wins_over_the_source_precision(self):
+        """Declaring it is the point: the column reads uniformly."""
+        ws = _create_workbook_from_markdown(
+            "<!-- types: text, percent:0% -->\n"
+            "| Metric | Rate |\n|--------|------|\n"
+            "| A      | 4.25% |\n"
+        ).active
+
+        assert ws["B2"].value == pytest.approx(0.0425)   # value is untouched
+        assert ws["B2"].number_format == "0%"
+
+    def test_the_spec_survives_the_comma_in_a_format(self):
+        """`_parse_types_directive` must not split `percent:#,##0.0%` in two."""
+        from xlsx_tools.helpers import _parse_types_directive
+
+        assert _parse_types_directive("text, percent:#,##0.0%, number") == [
+            "text", "percent:#,##0.0%", "number",
+        ]
