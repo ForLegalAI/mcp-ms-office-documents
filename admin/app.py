@@ -60,8 +60,9 @@ from template_registry import gather_specs
 
 logger = logging.getLogger(__name__)
 
-# Reject uploads larger than this (read fully into memory before validation).
-MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
+#: Fallback ceiling when no config is to hand. The live limit is
+#: ``config.admin.max_upload_bytes`` (``ADMIN_MAX_UPLOAD_MB``).
+DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 
 
 class AdminContext:
@@ -72,6 +73,11 @@ class AdminContext:
         self.config = config
         self.path = config.admin.path.rstrip("/")
         self.store = FileTemplateStore.from_config()
+
+    @property
+    def max_upload_bytes(self) -> int:
+        """Largest template file this server accepts (``ADMIN_MAX_UPLOAD_MB``)."""
+        return self.config.admin.max_upload_bytes
 
     def u(self, path: str = "") -> str:
         """Absolute (mount-prefixed) URL for an admin-relative *path*."""
@@ -235,14 +241,52 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
     def _home():
         return RedirectResponse(ctx.u("/"), status_code=303)
 
+    def _upload_size(upload) -> Optional[int]:
+        """The upload's size without reading it, or ``None`` if unknowable.
+
+        Starlette's multipart parser sets ``size``; the seek fallback covers a
+        file object that arrived another way. Both leave the stream positioned
+        at the start, because the caller still has to read it.
+        """
+        size = getattr(upload, "size", None)
+        if size is not None:
+            return int(size)
+        stream = getattr(upload, "file", None)
+        if stream is None or not hasattr(stream, "seek"):
+            return None
+        try:
+            stream.seek(0, 2)
+            size = stream.tell()
+            stream.seek(0)
+            return int(size)
+        except (OSError, ValueError):
+            return None
+
     async def _read_upload(form):
-        """The uploaded bytes and an error message, if the upload is unusable."""
+        """The uploaded bytes and an error message, if the upload is unusable.
+
+        The size is checked *before* the body is read. Starlette spools an
+        upload to a temp file above 1 MB, so the request itself costs little
+        memory — it is this read that materialises it, and an oversized file
+        used to be read in full only to be refused (#172).
+        """
+        limit = ctx.max_upload_bytes
         upload = form.get("file")
-        data = await upload.read() if upload is not None else b""
+        if upload is None:
+            return upload, b"", "Please choose a file to upload."
+
+        too_big = f"File too large (max {limit // (1024 * 1024)} MB)."
+        size = _upload_size(upload)
+        if size is not None and size > limit:
+            return upload, b"", too_big
+
+        data = await upload.read()
         if not data:
             return upload, data, "Please choose a file to upload."
-        if len(data) > MAX_UPLOAD_BYTES:
-            return upload, data, f"File too large (max {MAX_UPLOAD_BYTES // (1024*1024)} MB)."
+        # Belt and braces: an upload whose size could not be read beforehand
+        # is still bounded here, just at the cost of having read it.
+        if len(data) > limit:
+            return upload, b"", too_big
         return upload, data, None
 
     @rt("/login", methods=["get", "post"])

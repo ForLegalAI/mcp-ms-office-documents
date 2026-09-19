@@ -113,6 +113,13 @@ warning opening "Could not …". The routes used to match `"Could not open"`
 inline, which missed `analyze_xlsx`'s "Could not read named styles" and
 installed a workbook whose whole purpose had failed.
 
+**An oversized upload is refused before it is read.** Starlette spools a
+multipart upload to a temp file above 1 MB, so the request costs little memory
+— it is `await upload.read()` that materialises it. `_read_upload()` therefore
+checks `UploadFile.size` (falling back to a seek) *first*, and only reads a
+file that is within `ADMIN_MAX_UPLOAD_MB`. The post-read check stays as a
+backstop for an upload whose size could not be known in advance.
+
 **3. Colours are tokens.** Custom properties on `:root`, redefined under
 `@media (prefers-color-scheme: dark)`. A rule written with a literal colour
 will be wrong in one of the two themes.
@@ -150,8 +157,10 @@ argument, so "live" means the registry re-read it.
 - A kept source file is still invisible: deleting now offers to remove it, but
   nothing lists the files in `custom_templates/` that no template points at
   ([#166](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/166)).
-- Uploads are read fully into memory and capped at 10 MB, which is low for a
-  brand deck ([#172](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/172)).
+- An **accepted** upload is still read fully into memory. Streaming it
+  straight to its destination would need the analysers and
+  `store.write_asset()` to take a file object rather than bytes — worth doing
+  if `ADMIN_MAX_UPLOAD_MB` is ever raised far, not before.
 
 ## Tests
 
