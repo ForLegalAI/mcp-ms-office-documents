@@ -62,8 +62,9 @@ call, so tests can flip it without reloading the module.
 
 ## Request lifecycle
 
-Every static document tool follows the same path. The PowerPoint tool adds a
-warnings channel on the way out; the template-listing tool skips the upload.
+Every static document tool follows the same path. The Word, Excel and
+PowerPoint tools carry a warnings channel back out alongside the file; the
+template-listing tool skips the upload.
 
 ```
 MCP client
@@ -77,9 +78,9 @@ Tool handler                                  main.py
   │  (slides arrive as a loose list; see below)
   ▼
 await run_blocking(_<tool>_buffer, ...)       async_runner.py
-  │  runs on a bounded worker thread; returns io.BytesIO
-  │  (PowerPoint: coerce_slides() validates here, pptx_tools/schema.py,
-  │   and the build returns (BytesIO, warnings))
+  │  runs on a bounded worker thread; returns io.BytesIO,
+  │  or (BytesIO, warnings) for Word, Excel and PowerPoint
+  │  (PowerPoint: coerce_slides() validates here, pptx_tools/schema.py)
   ▼
 extract_user_context_from_request()           librechat_integration.py
   │  reads X-User-Id / X-User-Email / X-Conversation-Id
@@ -93,8 +94,10 @@ upload_and_format_response(buffer, suffix, file_name, ctx, message, add_unique_p
                      └► upload_to_<backend>()  upload_tools/backends/*.py → message with URL or path
   ▼
 return str | dict                             main.py
-  (PowerPoint: wraps in {"file", "slide_count", "warnings"} when there are warnings;
-   each warning is a {code, severity, slide, message} record, not a sentence)
+  (_with_warnings(): wraps in {"file", …, "warnings"} when there are warnings —
+   PowerPoint also carries "slide_count". Each warning is a
+   {code, severity, message} record with its location (slide, line, or sheet
+   and cell), not a sentence. Nothing to report → the shape is unchanged)
 ```
 
 Stage by stage:
@@ -103,7 +106,8 @@ Stage by stage:
 |-------|--------|----------|-------|
 | Authenticate | `middleware.py` | `ApiKeyAuthMiddleware.on_request` | Bearer, plain token, or `x-api-key`; constant-time compare; throttled warning log |
 | Validate input | `main.py` | Pydantic `Annotated[..., Field(...)]` | Field descriptions are what the calling model reads. Slides are deliberately typed loosely here (`SlidesInput` publishes a flat schema and accepts any list) so that clients which mangle `oneOf` schemas still reach the server |
-| Build document | `<type>_tools/base_<type>_tool.py` | `_markdown_to_word_buffer`, `_markdown_to_excel_buffer`, `_create_presentation_buffer`, `_create_eml_buffer`, `_create_xml_buffer` | Input to bytes. No upload, no request context. May fetch images over the network |
+| Build document | `<type>_tools/base_<type>_tool.py` | `_markdown_to_word_buffer`, `_markdown_to_excel_buffer`, `_create_presentation_buffer`, `_create_eml_buffer`, `_create_xml_buffer` | Input to bytes. No upload, no request context. May fetch images over the network. Word, Excel and PowerPoint return `(BytesIO, warnings)`; see [`shared-modules.md`](shared-modules.md#warning_channelpy) |
+| Report workarounds | `main.py` | `_with_warnings` | Widens a bare URL string into `{"file", …, "warnings"}`, or adds `warnings` to the LibreChat artifact dict. A clean build returns exactly what it always did |
 | Validate slides | `pptx_tools/schema.py`, called from `pptx_tools/slide_builder.py` | `coerce_slides` | Runs inside the build step, on the worker thread. Raises `ValueError` with messages like `slide 2 -> rows.0: …`, which the handler passes through as a `ToolError` |
 | Offload | `async_runner.py` | `run_blocking` | See [Threading model](#threading-model) |
 | User context | `librechat_integration.py` | `extract_user_context_from_request` | Headers are trusted verbatim; see [Security boundaries](#security-boundaries) |
@@ -116,10 +120,12 @@ Each document package exposes two functions:
 
 - A **private buffer function** (`_markdown_to_word_buffer` and friends) that
   builds the document and returns `io.BytesIO`. This is what `main.py` calls.
+  A tool with a warnings channel returns `(io.BytesIO, warnings)` instead —
+  Word, Excel and PowerPoint do.
 - A **public wrapper** (`markdown_to_word` and friends) that builds *and*
   uploads synchronously through `upload_file()` and returns the backend's
   string. It exists for direct library use and for tests. It cannot return a
-  LibreChat artifact.
+  LibreChat artifact, and it drops the warnings (it has nowhere to put them).
 
 `main.py` uses the buffer functions only, so the upload step is dispatched the
 same way for every tool and the LibreChat branch lives in one place. A new tool
@@ -304,6 +310,7 @@ several replicas, put the files on shared storage and restart the pods.
 | `template_registry.py` | YAML spec merging and live tool removal, shared by both dynamic-tool modules |
 | `inline_markdown.py` | the inline-markdown grammar shared by the Word and PowerPoint renderers |
 | `image_utils.py` | image download, data-URI decoding, validation, SSRF guard |
+| `warning_channel.py` | the severity vocabulary, the `DocumentWarning` record and the per-build `WarningChannel` the builders write to |
 | `metrics.py` | in-process counters and recent-log buffer for the admin Status page |
 | `upload_tools/` | strategy dispatch and one module per backend |
 | `docx_tools/`, `xlsx_tools/`, `pptx_tools/`, `email_tools/`, `xml_tools/` | one package per document type; see [`tools/`](tools/) |

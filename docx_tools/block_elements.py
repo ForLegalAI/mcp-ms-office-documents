@@ -23,6 +23,7 @@ from .numbering import (
     apply_style_indent,
 )
 from .style_map import apply_style
+from . import warnings as W
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +108,8 @@ def _remove_table_borders(table):
     tblPr.append(borders)
 
 def add_table_to_doc(table_data, doc, col_alignments=None, borderless=False,
-                     col_widths=None, table_style='Table Grid'):
+                     col_widths=None, table_style='Table Grid',
+                     warnings=None, line=None):
     """Add table data to Word document.
     Args:
         table_data: List of rows, each a list of cell text strings.
@@ -118,6 +120,11 @@ def add_table_to_doc(table_data, doc, col_alignments=None, borderless=False,
             Values are normalized to sum to 100% of available page width.
         table_style: Word table style name to apply (falls back to the document
             default if the named style is missing).
+        warnings: The build's :class:`~warning_channel.WarningChannel`. A table
+            that cannot be created, and each cell that cannot be populated, is
+            content the caller sent and will not find in the document, so it is
+            reported rather than only logged.
+        line: 1-based source line the table starts on, for those reports.
     Returns the created ``Table`` object, or ``None`` when the table could
     not be created (empty data or exception).
     """
@@ -129,8 +136,15 @@ def add_table_to_doc(table_data, doc, col_alignments=None, borderless=False,
         word_table = doc.add_table(rows=rows, cols=cols)
     except Exception as e2:
         logger.error("Failed to create table: %s", e2, exc_info=True)
+        if warnings is not None:
+            warnings.add(
+                W.TABLE_FAILED,
+                f"the table could not be created ({e2}); it is missing from "
+                f"the document.",
+                line=line,
+            )
         return None
-    apply_style(word_table, table_style, fallback=None)
+    apply_style(word_table, table_style, fallback=None, warnings=warnings)
     if borderless:
         _remove_table_borders(word_table)
     # Apply column widths if specified
@@ -163,13 +177,21 @@ def add_table_to_doc(table_data, doc, col_alignments=None, borderless=False,
                             para.alignment = col_alignments[j]
                 except Exception as e:
                     logger.warning("Failed to populate table cell [%d, %d]: %s", i, j, e)
+                    if warnings is not None:
+                        warnings.add(
+                            W.TABLE_CELL_FAILED,
+                            f"table cell in row {i + 1}, column {j + 1} could "
+                            f"not be written ({e}); it is empty in the "
+                            f"document.",
+                            line=line,
+                        )
     return word_table
 # ---------------------------------------------------------------------------
 # Lists
 # ---------------------------------------------------------------------------
 def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
                        return_elements=False, number_styles=None, bullet_styles=None,
-                       base_indent=None, ordered_run=None):
+                       base_indent=None, ordered_run=None, warnings=None):
     """Process markdown list items with proper Word numbering.
     When *return_elements* is True the created paragraph XML elements are
     removed from the document body and returned so the caller can re-insert
@@ -260,7 +282,7 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
             item_number = None
             item_text = list_match.group(1)
         paragraph = doc.add_paragraph()
-        apply_style(paragraph, style, fallback='Normal')
+        apply_style(paragraph, style, fallback='Normal', warnings=warnings)
         if is_ordered:
             if (items_emitted == 0 and cont_num_id is not None
                     and item_number != 1 and item_number == cont_number):
@@ -309,7 +331,7 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
                     i, nested = process_list_items(
                         lines, i, doc, is_nested_ordered, level + 1, return_elements,
                         number_styles=number_styles, bullet_styles=bullet_styles,
-                        base_indent=next_indent,
+                        base_indent=next_indent, warnings=warnings,
                     )
                     if return_elements and nested:
                         elements.extend(nested)
@@ -362,10 +384,13 @@ def add_horizontal_line(doc):
 # ---------------------------------------------------------------------------
 # Images
 # ---------------------------------------------------------------------------
-def add_image_to_doc(doc, url, alt_text, max_width_inches=None):
+def add_image_to_doc(doc, url, alt_text, max_width_inches=None,
+                     warnings=None, line=None):
     """Add an image from a URL to the document.
     Downloads the image and inserts it.  On failure inserts an error
-    placeholder paragraph instead.
+    placeholder paragraph instead — and reports the failure on *warnings*,
+    since a placeholder in a finished file is exactly the kind of loss the
+    caller cannot see from a success response.
     """
     try:
         from image_utils import download_image
@@ -384,6 +409,13 @@ def add_image_to_doc(doc, url, alt_text, max_width_inches=None):
     except Exception as e:
         logger.warning("Failed to add image from '%s': %s", url, e)
         doc.add_paragraph().add_run(f"[Image could not be loaded: {url}]")
+        if warnings is not None:
+            warnings.add(
+                W.IMAGE_FAILED,
+                f"the image at {url} could not be loaded ({e}); a placeholder "
+                f"line stands in its place.",
+                line=line,
+            )
 # ---------------------------------------------------------------------------
 # Text alignment
 # ---------------------------------------------------------------------------

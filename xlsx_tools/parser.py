@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from . import warnings as W
 from .helpers import TABLE_BOTTOM_SPACING, parse_table
 
 
@@ -66,12 +67,22 @@ class TableEvent:
 LineEvent = SheetEvent | HeaderEvent | TableEvent
 
 
-def walk_markdown_lines(lines: list[str]) -> list[LineEvent]:
+#: How much of a dropped line to quote back at the caller.
+_DROPPED_LINE_EXCERPT = 60
+
+
+def walk_markdown_lines(lines: list[str], warnings=None) -> list[LineEvent]:
     """Parse markdown lines and return a list of structured events.
 
     This is the single source of truth for how markdown maps to Excel row
     positions. Both the position-scanning pass and the workbook-building pass
     consume these events, ensuring they never diverge.
+
+    A line that is none of the four things a spreadsheet can hold — a heading,
+    a ``## Sheet:`` marker, a directive or a table row — has nowhere to go and
+    is dropped. That is the right call for a workbook, but it is content the
+    caller wrote, so each dropped line is reported on *warnings* (the build's
+    :class:`~warning_channel.WarningChannel`) with its 1-based source line.
     """
     events: list[LineEvent] = []
 
@@ -148,6 +159,18 @@ def walk_markdown_lines(lines: list[str]) -> list[LineEvent]:
         # Skip other content — directives must be directly above a table
         else:
             pending_directives = {}
+            if warnings is not None:
+                excerpt = line[:_DROPPED_LINE_EXCERPT]
+                if len(line) > _DROPPED_LINE_EXCERPT:
+                    excerpt += "…"
+                warnings.add(
+                    W.LINE_DROPPED,
+                    f"'{excerpt}' is not a heading, a '## Sheet:' marker, a "
+                    f"directive or a table row, so it is not in the workbook. "
+                    f"Put prose in a heading or a table cell.",
+                    sheet=current_sheet,
+                    line=i + 1,
+                )
             i += 1
 
     return events

@@ -21,11 +21,17 @@ backend:
 
 | Package | Pattern |
 |---------|---------|
-| Word | call `_markdown_to_doc()` and inspect the `Document`, or `_markdown_to_word_buffer()` and reopen the bytes |
-| Excel | `tests/test_xlsx_creation.py::_create_workbook_from_markdown()` patches `xlsx_tools.base_xlsx_tool.upload_file`, captures the buffer and returns `load_workbook()` of it |
+| Word | call `_markdown_to_doc()` and inspect the `Document`, or `_markdown_to_word_buffer()`, which returns `(buffer, warnings)`, and reopen the bytes |
+| Excel | `tests/test_xlsx_creation.py::_create_workbook_from_markdown()` patches `xlsx_tools.base_xlsx_tool.upload_file`, captures the buffer and returns `load_workbook()` of it; `_markdown_to_excel_buffer()` returns `(buffer, warnings)` |
 | PowerPoint | instantiate `PowerpointPresentation(slides, ...)`, call `.save()`, reopen with `Presentation()`; read `.warnings` for the warning records (`code`, `slide`, `severity`, `message`) or `.warning_messages` to assert on their text |
 | Email, XML | call the buffer function directly |
 | Dynamic templates | register against a fresh `FastMCP()` instance and call the tool function; patch `upload_file` in the tool module |
+
+**Warnings without a build.** To assert on what a builder worked around, take
+the warnings half of the buffer function's return value, or pass a channel of
+your own (`docx_tools.warnings.channel()`, `xlsx_tools.warnings.channel()`)
+into the function under test — every site takes one as a keyword argument.
+Assert on the `code` and the location, not on the English.
 
 Patch `upload_file` where it is *looked up*, i.e. in the tool module
 (`docx_tools.base_docx_tool.upload_file`), not in `upload_tools`.

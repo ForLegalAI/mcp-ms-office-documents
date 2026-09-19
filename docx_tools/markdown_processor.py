@@ -40,6 +40,7 @@ from .style_map import (
     add_mapped_heading,
     apply_style_to_block_element,
 )
+from . import warnings as W
 logger = logging.getLogger(__name__)
 
 
@@ -73,7 +74,7 @@ def _continues_ordered_run(stripped, ordered_run) -> bool:
 
 
 def process_markdown_content(doc, content, return_elements=False,
-                             style_map=DEFAULT_STYLE_MAP):
+                             style_map=DEFAULT_STYLE_MAP, warnings=None):
     """Process full markdown content with all features: spacing, soft breaks, blocks.
     This is the single source of truth for converting a markdown string into
     document elements. Both the base tool and dynamic template placeholder
@@ -83,6 +84,12 @@ def process_markdown_content(doc, content, return_elements=False,
         content: Raw markdown text (may contain newlines).
         return_elements: If True, created elements are detached from the doc body
             and returned (for reinsertion at a specific position).
+        warnings: The build's :class:`~warning_channel.WarningChannel`, or None
+            to discard what this render had to work around. The channel is an
+            argument rather than module state because renders run concurrently
+            on worker threads (see ``async_runner``); callers that report
+            warnings to the model — the ``create_word_from_markdown`` tool —
+            pass one in and read it afterwards.
     Returns:
         List of XML elements if return_elements is True, otherwise an empty list.
     """
@@ -139,20 +146,21 @@ def process_markdown_content(doc, content, return_elements=False,
         i, block_elems = process_markdown_block(doc, lines, i,
                                                 return_element=return_elements,
                                                 style_map=style_map,
-                                                ordered_run=ordered_run)
+                                                ordered_run=ordered_run,
+                                                warnings=warnings)
         if return_elements:
             all_elements.extend(block_elems)
     return all_elements
 _CODE_FONT = 'Courier New'
 
 
-def _add_heading(doc, level, content, style_map):
+def _add_heading(doc, level, content, style_map, warnings=None):
     """Create a heading paragraph (mapped style) and parse *content* into it.
 
     Shared by the block dispatcher and the soft-break path so heading rendering
     lives in one place.
     """
-    heading = add_mapped_heading(doc, min(level, 6), style_map)
+    heading = add_mapped_heading(doc, min(level, 6), style_map, warnings=warnings)
     parse_inline_formatting(content, heading)
     return heading
 
@@ -237,15 +245,16 @@ def _has_explicit_style(element):
     return ppr is not None and ppr.find(qn('w:pStyle')) is not None
 
 
-def _add_quote(doc, content, style_map):
+def _add_quote(doc, content, style_map, warnings=None):
     """Create a block-quote paragraph (mapped style) and parse *content* into it."""
     para = doc.add_paragraph()
-    apply_style(para, style_map.quote)
+    apply_style(para, style_map.quote, warnings=warnings)
     parse_inline_formatting(content, para)
     return para
 
 
-def _render_code_block(doc, lines, start_idx, fence_match, style_map, collect):
+def _render_code_block(doc, lines, start_idx, fence_match, style_map, collect,
+                       warnings=None):
     """Render a fenced code block verbatim as monospace paragraphs.
 
     *fence_match* is the opener match. Consumes lines up to and including the
@@ -270,7 +279,7 @@ def _render_code_block(doc, lines, start_idx, fence_match, style_map, collect):
         if style_map.code:
             # Use the mapped paragraph style's font; a run-level override would
             # otherwise always win over the style's monospace font.
-            apply_style(para, style_map.code, fallback=None)
+            apply_style(para, style_map.code, fallback=None, warnings=warnings)
             if para.style.name != style_map.code:
                 # Mapped style is missing from the template — keep it monospace.
                 run.font.name = _CODE_FONT
@@ -283,7 +292,7 @@ def _render_code_block(doc, lines, start_idx, fence_match, style_map, collect):
 
 def process_markdown_block(doc, lines, start_idx, return_element=True,
                            style_map=DEFAULT_STYLE_MAP, directives=None,
-                           ordered_run=None):
+                           ordered_run=None, warnings=None):
     """Process a single markdown block element and return created XML elements.
 
     *directives* carries comment-directive options (`borderless`, `widths`, …)
@@ -294,11 +303,19 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
     :func:`process_markdown_content`; when present it lets a numbered line that
     continues the previous list (e.g. after a heading) start a list even if it is
     not locally genuine, and lets the rendered list update the count.
+
+    *warnings* is the build's :class:`~warning_channel.WarningChannel`. This
+    function swallows every exception so one bad block cannot cost the caller
+    the whole document — which is also why it reports the loss: the block is
+    simply absent otherwise, from a response that says the document was
+    created. Warnings carry the 1-based source line, so the caller can point at
+    the markdown it has to fix.
     Returns:
         Tuple of (next_index, list_of_elements).
     """
     line = lines[start_idx]
     stripped = line.strip()
+    source_line = start_idx + 1
     elements = []
     def _collect(element):
         """If return_element, detach *element* from body and collect it."""
@@ -310,7 +327,8 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
         heading_match = HEADING_PATTERN.match(stripped)
         if heading_match:
             level = len(heading_match.group(1))
-            heading = _add_heading(doc, level, heading_match.group(2), style_map)
+            heading = _add_heading(doc, level, heading_match.group(2), style_map,
+                                   warnings=warnings)
             _collect(heading._p)
             return start_idx + 1, elements
         # Fenced code block (``` or ~~~) — content is taken verbatim, NOT parsed
@@ -318,7 +336,7 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
         fence_match = CODE_FENCE_PATTERN.match(stripped)
         if fence_match:
             next_idx = _render_code_block(doc, lines, start_idx, fence_match,
-                                          style_map, _collect)
+                                          style_map, _collect, warnings=warnings)
             return next_idx, elements
         # Table (lines starting with |)
         if TABLE_LINE_PATTERN.match(stripped):
@@ -334,11 +352,21 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
                         col_widths = [float(v) for v in d['widths'].split()]
                     except ValueError:
                         col_widths = None
+                        if warnings is not None:
+                            warnings.add(
+                                W.WIDTHS_INVALID,
+                                f"the widths directive '{d['widths']}' is not "
+                                f"a list of numbers; the table uses equal "
+                                f"column widths.",
+                                line=source_line,
+                            )
                 word_table = add_table_to_doc(table_data, doc,
                                              col_alignments=col_alignments,
                                              borderless=borderless,
                                              col_widths=col_widths,
-                                             table_style=style_map.table)
+                                             table_style=style_map.table,
+                                             warnings=warnings,
+                                             line=source_line)
                 if word_table is not None:
                     _collect(word_table._tbl)
                 return next_idx, elements
@@ -356,7 +384,8 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
         if img_match:
             body = doc._body._body
             existing_children = list(body) if return_element else None
-            add_image_to_doc(doc, img_match.group(2), img_match.group(1))
+            add_image_to_doc(doc, img_match.group(2), img_match.group(1),
+                             warnings=warnings, line=source_line)
             if return_element:
                 for element in list(body)[len(existing_children):]:
                     elements.append(element)
@@ -376,7 +405,8 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
                 heading_match = HEADING_PATTERN.match(inner)
                 if heading_match:
                     para = _add_heading(doc, len(heading_match.group(1)),
-                                        heading_match.group(2), style_map)
+                                        heading_match.group(2), style_map,
+                                        warnings=warnings)
                 else:
                     para = doc.add_paragraph()
                     parse_inline_formatting(inner, para)
@@ -388,7 +418,7 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
             # stamp the alignment on every produced paragraph.
             idx, block_elems = _process_alignment_block(
                 doc, lines, start_idx + 1, alignment, style_map,
-                return_element, ordered_run,
+                return_element, ordered_run, warnings=warnings,
             )
             if return_element and block_elems:
                 elements.extend(block_elems)
@@ -403,19 +433,20 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
             return process_list_items(
                 lines, start_idx, doc, is_ordered=True, level=0, return_elements=return_element,
                 number_styles=style_map.list_number, bullet_styles=style_map.list_bullet,
-                ordered_run=ordered_run,
+                ordered_run=ordered_run, warnings=warnings,
             )
         # Unordered list
         if UNORDERED_LIST_PATTERN.match(stripped):
             return process_list_items(
                 lines, start_idx, doc, is_ordered=False, level=0, return_elements=return_element,
                 number_styles=style_map.list_number, bullet_styles=style_map.list_bullet,
+                warnings=warnings,
             )
         # Blockquote (> text), continuing across soft breaks
         if BLOCKQUOTE_PATTERN.match(stripped):
             text, next_idx = _soft_break_run(lines, start_idx, ordered_run,
                                              strip_quote=True)
-            quote_para = _add_quote(doc, text, style_map)
+            quote_para = _add_quote(doc, text, style_map, warnings=warnings)
             _collect(quote_para._p)
             return next_idx, elements
         # Comment directives: <!-- borderless -->, <!-- widths: … -->, <!-- style: … -->.
@@ -465,7 +496,7 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
             new_idx, block_elems = process_markdown_block(
                 doc, lines, idx, return_element=return_element,
                 style_map=block_style_map, directives=collected,
-                ordered_run=ordered_run,
+                ordered_run=ordered_run, warnings=warnings,
             )
             # The 'style' directive applies the named style to whatever was produced.
             if style_name:
@@ -478,7 +509,9 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
                     # (e.g. a standalone date) has none and still gets the style.
                     if styles_via_map and _has_explicit_style(el):
                         continue
-                    apply_style_to_block_element(doc, el, style_name)
+                    apply_style_to_block_element(doc, el, style_name,
+                                                 warnings=warnings,
+                                                 line=source_line)
             if return_element:
                 elements.extend(block_elems)
             return new_idx, elements
@@ -493,11 +526,18 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
         return next_idx, elements
     except Exception as e:
         logger.error("Failed to process markdown block at line %d: %s", start_idx, e, exc_info=True)
+        if warnings is not None:
+            warnings.add(
+                W.BLOCK_FAILED,
+                f"this block could not be rendered ({e}); it is missing from "
+                f"the document.",
+                line=source_line,
+            )
         return start_idx + 1, elements
 
 
 def _process_alignment_block(doc, lines, start_idx, alignment, style_map,
-                             return_element, ordered_run):
+                             return_element, ordered_run, warnings=None):
     """Render the lines inside a multi-line ``<center>``/``<div align>`` block.
 
     Each inner line goes through the normal block pipeline (so headings, lists,
@@ -523,7 +563,7 @@ def _process_alignment_block(doc, lines, start_idx, alignment, style_map,
             continue
         i, produced = process_markdown_block(
             doc, lines, i, return_element=return_element,
-            style_map=style_map, ordered_run=ordered_run,
+            style_map=style_map, ordered_run=ordered_run, warnings=warnings,
         )
         if return_element:
             collected.extend(produced)

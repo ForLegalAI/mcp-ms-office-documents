@@ -35,9 +35,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-SEVERITY_ERROR = "error"
-SEVERITY_WARNING = "warning"
-SEVERITY_INFO = "info"
+# The severity vocabulary is shared with the Word and Excel channels (#114),
+# so "error" means the same thing in every tool's warnings. The record itself
+# stays here: a slide index is not a line number or a cell, and the published
+# shape of a deck warning predates the shared module.
+from warning_channel import SEVERITY_ERROR, SEVERITY_INFO, SEVERITY_WARNING
+
+__all__ = ["SEVERITY_ERROR", "SEVERITY_INFO", "SEVERITY_WARNING",
+           "SlideWarning", "make_warning", "WARNING_SEVERITY"]
 
 # -- codes ------------------------------------------------------------------
 # Deck-level: no single slide is responsible.

@@ -16,7 +16,7 @@
 - Tools: [Word](development/tools/word.md) · [Excel](development/tools/excel.md) · [PowerPoint](development/tools/powerpoint.md) · [Email](development/tools/email.md) · [XML](development/tools/xml.md)
 - [Dynamic template tools](development/dynamic-templates.md)
 - [Upload backends](development/upload-backends.md)
-- [Shared root modules](development/shared-modules.md)
+- [Shared root modules](development/shared-modules.md) — config, threading, uploads, images, the warnings channel
 - How to: [add a tool](development/adding-a-tool.md) · [add a backend](development/adding-a-backend.md) · [test](development/testing.md)
 
 See also [CONTRIBUTING.md](../CONTRIBUTING.md), [SECURITY.md](../SECURITY.md) and, for coding agents, [AGENTS.md](../AGENTS.md).

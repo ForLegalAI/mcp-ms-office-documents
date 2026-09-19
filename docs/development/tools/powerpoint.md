@@ -17,16 +17,22 @@ build step, see [`../architecture.md`](../architecture.md).
 | `PowerpointPresentation` | `pptx_tools/slide_builder.py` | the buffer function; tests; the admin UI preview (with `template_spec=`) |
 | `create_presentation()` | `pptx_tools/base_pptx_tool.py` | direct library use; builds and uploads synchronously, drops the warnings |
 
-This is the one tool with a **warnings channel**. Everything the builder had
+This tool had the first **warnings channel**. Everything the builder had
 to work around, such as an image that would not load, text shrunk to fit, a
 layout the template does not provide or a footer dropped, is collected on
 `PowerpointPresentation.warnings` and returned alongside the file so the
-calling model can correct its next call. `main.py` wraps the result in
-`{"file", "slide_count", "warnings"}` when there is anything to report.
+calling model can correct its next call. `main._with_warnings()` wraps the
+result in `{"file", "slide_count", "warnings"}` when there is anything to
+report — the same helper the Word and Excel tools use since
+[#114](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/114) gave
+them channels of their own.
 
 Each entry is a `SlideWarning` from `warnings.py`, not a sentence: `code`,
 `slide` (the index in the caller's list, None for the deck), `severity` and
-`message`. `_warn(index, code, message)` and `_warn_deck(code, message)`
+`message`. The severity vocabulary comes from the shared
+[`warning_channel.py`](../shared-modules.md#warning_channelpy), so `error`
+means the same thing in every tool; the record itself stays here, because a
+slide index is not a line or a cell and this shape is already published. `_warn(index, code, message)` and `_warn_deck(code, message)`
 record them, `make_warning()` reads the severity out of `WARNING_SEVERITY` so
 one code always means one severity, and `str(warning)` renders the line the
 channel used to hold — which is what the log, the admin preview header and
@@ -87,7 +93,7 @@ problems go to the warnings list instead.
 | `chart_utils.py` | Category charts from `CategoryChartData`, scatter from `XyChartData`, legend, title, data labels, axis titles |
 | `inline_formatting.py` | Renders the shared inline grammar into python-pptx runs |
 | `constants.py` | Aspect ratios, positional layout fallbacks, typography, autofit ratios, table colours |
-| `warnings.py` | The warnings channel as data: `SlideWarning`, the codes, and the one severity per code |
+| `warnings.py` | The warnings channel as data: `SlideWarning`, the codes, and the one severity per code (severities from the shared `warning_channel.py`) |
 | `text_metrics.py` | Font resolution (metric-compatible substitutes, generic fallback) and wrapped line counting through Pillow |
 
 Two root modules are part of this pipeline: `inline_markdown.py` holds the

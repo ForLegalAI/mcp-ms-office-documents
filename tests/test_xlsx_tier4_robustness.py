@@ -309,7 +309,7 @@ class TestSharedBuildPath:
 """
 
     def test_buffer_and_upload_paths_agree(self):
-        buffered = load_workbook(_markdown_to_excel_buffer(self.MARKDOWN))
+        buffered = load_workbook(_markdown_to_excel_buffer(self.MARKDOWN)[0])
         uploaded = load_workbook(io.BytesIO(_workbook_bytes(self.MARKDOWN)))
         assert buffered.sheetnames == uploaded.sheetnames
         for coord in ("A1", "B1", "B2", "B3"):
@@ -341,4 +341,4 @@ class TestSharedBuildPath:
             _markdown_to_excel_buffer(bad_input)
 
     def test_buffer_is_positioned_at_start(self):
-        assert _markdown_to_excel_buffer(self.MARKDOWN).tell() == 0
+        assert _markdown_to_excel_buffer(self.MARKDOWN)[0].tell() == 0

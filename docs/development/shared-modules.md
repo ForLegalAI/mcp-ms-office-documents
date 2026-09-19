@@ -107,6 +107,42 @@ and nowhere else; `tests/test_inline_markdown.py` covers it.
 
 `tests/test_image_ssrf.py` covers the guard.
 
+## `warning_channel.py`
+
+The channel a builder grows when it has to work around something: the
+severity vocabulary (`error`, `warning`, `info`), the `DocumentWarning`
+record and the `WarningChannel` collector. Introduced by
+[#114](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/114),
+which gave Word and Excel what PowerPoint had had since
+[#122](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/122).
+
+A warning is not an error: the file was produced, and something in it is not
+what the caller asked for. Left in the log that fact never reaches the model
+that could fix it, so it rides back in the response instead.
+
+- `DocumentWarning(code, message, severity, location)` — `code` is what a
+  caller branches on, `severity` follows from the code, and `location` is
+  whatever that tool counts positions by. `as_dict()` spreads the location in,
+  so a caller reads `warning["line"]` or `warning["cell"]`, and `str()`
+  renders the log line (`line 42: …`).
+- `WarningChannel(severities, limit=DEFAULT_LIMIT)` — one per build, passed
+  down the call chain as an argument. Builds run concurrently on
+  `async_runner` worker threads, so a module-level list would mix two
+  callers' documents together. It de-duplicates identical
+  `(code, message, location)` entries (a template missing one style warns
+  once, not once per paragraph) and caps the number it carries, appending a
+  single `warnings_truncated` record instead.
+
+Each tool owns its codes and their severities: `docx_tools/warnings.py`,
+`xlsx_tools/warnings.py`. `pptx_tools/warnings.py` shares the severity
+vocabulary but keeps its own `SlideWarning` record — a slide index is not a
+line or a cell, and its published shape predates this module.
+`main._with_warnings()` is the one place a result is widened from a bare URL
+string into `{"file", …, "warnings"}`.
+
+`tests/test_warning_channel.py` covers the record and the collector; each
+tool's own codes are covered by `tests/test_<tool>_warnings.py`.
+
 ## `metrics.py`
 
 In-process counters per dynamic template (`record_call`, `record_error`,

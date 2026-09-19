@@ -91,7 +91,30 @@ A soft break never swallows what follows it: a list, table, heading, quote or pa
 This paragraph uses the "Callout" style from your template.
 ```
 
-The `<!-- style: Name -->` directive applies a style to the next block only — one paragraph, one heading, the whole table, or the top-level items of a list (nested items keep the `List Bullet 2/3` / `List Number 2/3` styles). On a numbered list the style's **own numbering** is used: the list restarts at `1.` with the style's numeral format and indents. The directive must be alone on its line, and the name must match the Word style name exactly. Unknown styles fall back to the default with a warning. To remap styles globally or per template, see [Templates](templates.md).
+The `<!-- style: Name -->` directive applies a style to the next block only — one paragraph, one heading, the whole table, or the top-level items of a list (nested items keep the `List Bullet 2/3` / `List Number 2/3` styles). On a numbered list the style's **own numbering** is used: the list restarts at `1.` with the style's numeral format and indents. The directive must be alone on its line, and the name must match the Word style name exactly. Unknown styles fall back to the default and are reported in `warnings` (below). To remap styles globally or per template, see [Templates](templates.md).
+
+**Warnings.** The renderer would rather hand you a document with one block missing than no document at all — so a block it cannot render is skipped, an image that will not load becomes a `[Image could not be loaded: …]` line, and a style your template does not define falls back to `Normal`. When any of that happens the result carries a `warnings` list alongside the file, instead of leaving it in the server log:
+
+```json
+{"file": "https://…/document.docx",
+ "warnings": [
+   {"code": "image_failed", "severity": "error", "line": 12,
+    "message": "the image at https://… could not be loaded (404 Not Found); a placeholder line stands in its place."},
+   {"code": "style_missing", "severity": "warning",
+    "message": "style 'Callout' is not defined in the Word template; Normal was used instead."}
+ ]}
+```
+
+Each warning is an object rather than a sentence, so you can act on it without reading English:
+
+| Field | Meaning |
+|-------|---------|
+| `code` | a stable identifier for the kind of problem — the thing to branch on |
+| `severity` | `error` (something you wrote is not in the document), `warning` (it is there, but not as asked), `info` (a substitution you probably do not mind) |
+| `line` | the line of `markdown_content` to look at, counting from 1; absent when the problem has no single line (a style name that came from configuration) |
+| `message` | the sentence, naming what to change |
+
+The codes are `block_failed`, `table_failed`, `table_cell_failed`, `image_failed`, `style_missing`, `style_fallback_missing` and `widths_invalid`. So `any(w["severity"] == "error" for w in warnings)` answers "did the document lose anything". A document with nothing to report comes back exactly as before — the bare link, no `warnings` key.
 
 ## Excel
 
@@ -196,3 +219,28 @@ rather than repeating hex codes in every document:
 ```
 
 Column alignment via the `:---:` separator syntax is honored, and inline `**bold**` / `*italic*` in cells is applied as cell formatting.
+
+**Warnings.** Lines that are not a heading, a `## Sheet:` marker, a directive or a table row have nowhere to go in a spreadsheet and are dropped; a formula naming a table or a sheet that does not exist still resolves, to the wrong cell or to `#REF!`; a formula over Excel's 8,192-character limit is stored as text so the file still opens. When any of that happens the result carries a `warnings` list alongside the file, instead of leaving it in the server log:
+
+```json
+{"file": "https://…/workbook.xlsx",
+ "warnings": [
+   {"code": "line_dropped", "severity": "error", "sheet": "Data Report", "line": 3,
+    "message": "'This sentence is not a table.' is not a heading, a '## Sheet:' marker, a directive or a table row, so it is not in the workbook. Put prose in a heading or a table cell."},
+   {"code": "table_reference_missing", "severity": "error", "sheet": "Summary", "cell": "C7",
+    "message": "the formula references T9, but the target sheet has no such table (it has: T1, T2); the reference fell back to the current row and almost certainly points at the wrong cell."}
+ ]}
+```
+
+Each warning is an object rather than a sentence, so you can act on it without reading English:
+
+| Field | Meaning |
+|-------|---------|
+| `code` | a stable identifier for the kind of problem — the thing to branch on |
+| `severity` | `error` (something you wrote is not in the workbook, or will not compute), `warning` (it is there, but not as asked), `info` (a substitution you probably do not mind) |
+| `sheet` | the worksheet it happened on |
+| `cell` | the cell coordinate, where the problem has one |
+| `line` | the line of `markdown_content` to look at, counting from 1, where it is still markdown |
+| `message` | the sentence, naming what to change |
+
+The codes are `line_dropped`, `cell_failed`, `table_reference_missing`, `sheet_reference_missing`, `formula_unresolved`, `formula_too_long`, `circular_reference`, `sheet_name_collision`, `sheet_name_invalid`, `header_renamed`, `style_entry_invalid`, `style_range_too_large` and `style_failed`. A workbook with nothing to report comes back exactly as before — the bare link, no `warnings` key. A very long run of warnings is cut off after fifty, with a final `warnings_truncated` note saying how many were left out.
