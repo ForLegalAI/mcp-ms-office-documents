@@ -176,7 +176,13 @@ hr{border:none;border-top:1px solid var(--line);margin:1.25rem 0}
 .lvl-WARNING{color:var(--warn)}
 .lvl-INFO{color:var(--info)}
 .lvl-DEBUG{color:var(--muted)}
-.toggle-row{display:flex;gap:.5rem;align-items:center;margin-bottom:.6rem}
+.toggle-row{display:flex;gap:.5rem;align-items:center;margin-bottom:.6rem;
+  flex-wrap:wrap}
+.filters{display:flex;gap:.75rem;align-items:flex-end;flex-wrap:wrap;
+  margin-bottom:.75rem}
+.filters .field{margin-bottom:0}
+.filters .field.grow{flex:1;min-width:180px}
+.filters select,.filters input{min-width:140px}
 .num-err{color:var(--err)}
 .sev{display:inline-block;margin-right:.5rem;font-size:.82rem;font-weight:600}
 """
@@ -192,6 +198,20 @@ function adminRemoveRow(btn){
   var tr=btn.closest('tr'); if(tr) tr.remove();
 }
 """
+
+
+def auto_refresh(seconds: int):
+    """Reload the page every *seconds*, or nothing when it is off.
+
+    Inline rather than a `<meta http-equiv="refresh">` so it can carry the
+    current query string, and inline rather than anything external because
+    the UI loads no third-party scripts (see the module docstring).
+    """
+    if not seconds or seconds <= 0:
+        return None
+    return Script(NotStr(
+        f"setTimeout(function(){{location.reload();}}, {int(seconds) * 1000});"
+    ))
 
 
 def head_tags(blank_row_html: str):
@@ -420,7 +440,7 @@ def post_form(action: str, *content, csrf: str = "", cls: str = "",
 
 
 __all__ = [
-    "ADMIN_CSS", "ARG_ROWS_JS", "head_tags", "topbar", "page", "flash", "card",
+    "ADMIN_CSS", "ARG_ROWS_JS", "auto_refresh", "head_tags", "topbar", "page", "flash", "card",
     "action_bar", "field", "static_row", "checkbox_field", "hidden", "csrf_input",
     "data_table", "badge", "status_badge", "chip", "chips", "swatch",
     "stat", "stats_row", "details_block", "empty_state", "post_form",

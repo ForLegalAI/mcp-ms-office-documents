@@ -44,7 +44,11 @@ http://localhost:8958/admin
 - **Delete** — asks first, on its own page, listing what goes: the
   configuration and the live tool. The uploaded source file is kept unless you
   tick the box, and it is never removed while another template still uses it.
-- **Status** page — see live tool counts, per-template usage (calls/errors/last
+- **Status** page — filter the activity log by level, by which part of the
+  server logged it, or by a search over the message and logger name, and
+  optionally have the page refresh itself. Every filter is in the URL, so a
+  filtered view can be bookmarked or pasted to someone else. Also see live
+  tool counts, per-template usage (calls/errors/last
   used this session), and a recent activity & error log (filterable to
   warnings/errors).
 

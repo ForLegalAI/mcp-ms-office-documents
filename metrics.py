@@ -174,7 +174,14 @@ class RecentLogHandler(logging.Handler):
 _LOG_HANDLER: Optional[RecentLogHandler] = None
 
 
-def install_log_capture(level: int = logging.INFO, capacity: int = 300) -> RecentLogHandler:
+#: Records the ring buffer keeps. Raised from 300 because at DEBUG that held
+#: well under a minute of traffic, and the buffer is in-process and bounded —
+#: a few hundred KB of small dicts — so a longer window costs little (#174).
+LOG_BUFFER_CAPACITY = 1000
+
+
+def install_log_capture(level: int = logging.INFO,
+                        capacity: int = LOG_BUFFER_CAPACITY) -> RecentLogHandler:
     """Attach the ring-buffer handler to the root logger once. Idempotent."""
     global _LOG_HANDLER
     if _LOG_HANDLER is None:
@@ -184,11 +191,66 @@ def install_log_capture(level: int = logging.INFO, capacity: int = 300) -> Recen
     return _LOG_HANDLER
 
 
-def recent_logs(min_level: int = logging.INFO, limit: int = 200) -> List[dict]:
-    """Return recent log records at or above *min_level*, newest first."""
+def capture_level() -> Optional[int]:
+    """The level the buffer is capturing at, or ``None`` when not installed.
+
+    Set from the server's configured level, so a record below it never reaches
+    the buffer at all. The Status page reads this to avoid offering a filter
+    that could only ever come back empty.
+    """
+    return None if _LOG_HANDLER is None else _LOG_HANDLER.level
+
+
+def log_sources() -> List[str]:
+    """The top-level logger names present in the buffer, sorted.
+
+    Grouped by package rather than listed in full: the buffer holds names like
+    ``admin.store`` and ``docx_tools.dynamic_docx_tools``, and a dropdown of
+    every distinct one is long and mostly noise. "Which subsystem" is the
+    question a filter answers; a specific module is what the search box is
+    for, since it matches the logger name too.
+    """
     if _LOG_HANDLER is None:
         return []
-    items = [r for r in _LOG_HANDLER.records if r["levelno"] >= min_level]
+    return sorted({str(r["logger"]).split(".", 1)[0]
+                   for r in _LOG_HANDLER.records if r.get("logger")})
+
+
+def _matches_source(record_logger: str, source: str) -> bool:
+    """True when *record_logger* belongs to the *source* package."""
+    return record_logger == source or record_logger.startswith(source + ".")
+
+
+def recent_logs(min_level: int = logging.INFO, limit: int = 200,
+                search: Optional[str] = None,
+                source: Optional[str] = None) -> List[dict]:
+    """Recent records at or above *min_level*, newest first.
+
+    *source* keeps only one top-level logger package. *search* is a
+    case-insensitive substring matched against the message **and** the logger
+    name, so "store" finds both a message mentioning it and everything
+    ``admin.store`` logged.
+
+    Filtering happens here rather than in the view so the limit applies to
+    what survives it: filtering a page of 200 would show far fewer than 200
+    matches and look like there were none.
+    """
+    if _LOG_HANDLER is None:
+        return []
+    needle = (search or "").strip().lower()
+    source = (source or "").strip()
+
+    items = []
+    for record in _LOG_HANDLER.records:
+        if record["levelno"] < min_level:
+            continue
+        if source and not _matches_source(str(record.get("logger") or ""), source):
+            continue
+        if needle:
+            haystack = f"{record.get('logger') or ''} {record.get('message') or ''}"
+            if needle not in haystack.lower():
+                continue
+        items.append(record)
     return list(reversed(items))[:limit]
 
 
