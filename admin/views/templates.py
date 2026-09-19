@@ -12,7 +12,8 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from fasthtml.common import (
-    A, Button, Div, Form, H1, Input, Option, P, Select, Span, Textarea, Th, Tr, Td,
+    A, Button, Div, Form, H1, Input, Li, Option, P, Select, Span, Textarea, Th,
+    Tr, Td, Ul,
 )
 
 from admin import components as c
@@ -42,13 +43,7 @@ def template_table(ctx, kind: str, csrf: str = ""):
             Td(c.status_badge(name in live)),
             Td(c.action_bar(
                 A("Edit", href=ctx.u(f"/{kind}/{name}/edit"), cls="btn btn-secondary btn-sm"),
-                c.post_form(
-                    ctx.u(f"/{kind}/{name}/delete"),
-                    Button("Delete", type="submit", cls="btn btn-danger btn-sm",
-                           onclick="return confirm('Delete this template? This removes the "
-                                   "live tool. The source file is kept in custom_templates/.')"),
-                    csrf=csrf, cls="inline-form",
-                ),
+                A("Delete", href=ctx.u(f"/{kind}/{name}/delete"), cls="btn btn-danger btn-sm"),
             )),
         ))
     # Read-only templates from the master YAML (live but not UI-managed).
@@ -59,13 +54,21 @@ def template_table(ctx, kind: str, csrf: str = ""):
             Td(c.badge("from master YAML — read-only", "ro")),
         ))
 
+    # Every kind keeps a create link in both states. When the empty state was
+    # the only one that had one, adding a template removed the only route to
+    # the page that made it — invisible for Word and Email, which the top bar
+    # also covers, but a dead end for PowerPoint, which it did not (#157).
     if not rows:
         return c.empty_state(
             f"No {d.label} templates yet.",
             A(f"{d.icon} Create your first {d.label} template",
               href=ctx.u(f"/new/{kind}"), cls="btn btn-primary"),
         )
-    return c.data_table(["Name", d.detail_header, "Status", "Actions"], rows)
+    return Div(
+        c.data_table(["Name", d.detail_header, "Status", "Actions"], rows),
+        Div(A(f"+ New {d.label} template", href=ctx.u(f"/new/{kind}"),
+              cls="btn btn-secondary btn-sm"), cls="table-actions"),
+    )
 
 
 def index_page(ctx, csrf: str = ""):
@@ -456,6 +459,53 @@ def configure_page(ctx, kind: str, name: str, filename: str,
         c.flash(d.draft_hint.format(filename=filename), "ok"),
         analysis_report(analysis, spec),
         edit_form(ctx, kind, spec, analysis, is_new=False, csrf=csrf),
+    )
+
+
+def delete_page(ctx, kind: str, name: str, asset: Optional[str],
+                shared_with: List[str], csrf: str = ""):
+    """Confirm deleting a template, and offer to remove its source file.
+
+    Replaces a JavaScript ``confirm()`` that could only ever ask yes/no, and
+    always kept the asset — so `custom_templates/` collected files nothing
+    referenced and nothing listed (#158). Keeping it is still the default;
+    this only makes the choice, and what is about to happen, visible.
+    """
+    d = descriptor(kind)
+    removed = ["Its configuration (arguments, description, options)."]
+    removed.append("The live MCP tool — the AI can no longer call it."
+                   if d.has_args else
+                   "Its entry in the presentation tool's template list.")
+
+    if not asset:
+        asset_choice = P("This template has no source file recorded.", cls="muted")
+    elif shared_with:
+        asset_choice = c.flash(
+            f"The source file {asset} is also used by {', '.join(shared_with)}, "
+            "so it will be kept.", "info")
+    else:
+        asset_choice = c.checkbox_field(
+            "delete_asset", f"Also delete the source file ({asset})",
+            hint="Off by default. Kept files stay in custom_templates/, where "
+                 "nothing in this UI lists them.")
+
+    return page(
+        ctx, f"Delete {name}",
+        H1(f"Delete {name}?"),
+        c.card(
+            P("This removes:", cls="muted"),
+            Ul(*[Li(item) for item in removed]),
+            c.post_form(
+                ctx.u(f"/{kind}/{name}/delete"),
+                asset_choice,
+                c.action_bar(
+                    Button(f"Delete {name}", type="submit", cls="btn btn-danger"),
+                    A("Cancel", href=ctx.u("/"), cls="btn"),
+                ),
+                csrf=csrf,
+            ),
+            title=f"{d.icon} {d.label} template",
+        ),
     )
 
 

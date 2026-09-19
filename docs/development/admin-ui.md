@@ -56,6 +56,23 @@ without the second — the file on disk is still the old one, so it is the right
 thing to prefill from and the wrong thing to describe under a heading that
 means "the file you just uploaded" everywhere else it appears.
 
+**Every kind's create page stays reachable.** `kinds.NAV_KINDS` puts a "New …"
+entry in the top bar for each kind, and `template_table()` renders a create
+link in *both* its states. That redundancy is deliberate: when only the empty
+state linked to the page, adding a template removed the last route to it, which
+was invisible for Word and Email (the top bar covered them) and a dead end for
+PowerPoint (it did not) — #157.
+
+**Deleting never removes a file something else uses.** Assets share one flat
+`custom_templates/` directory, so several templates can name the same file.
+`AdminContext.other_specs_using_asset()` checks both sources — the managed
+`*.d` specs *and* the hand-written master YAML — and the delete page withholds
+the "also delete the source file" option when anything else points at it; the
+POST re-derives the answer server-side rather than trusting the form. A master
+entry sharing the name being deleted counts too: the managed spec was
+overriding it, so deleting the override revives the master definition, still
+pointing at that file.
+
 **3. Colours are tokens.** Custom properties on `:root`, redefined under
 `@media (prefers-color-scheme: dark)`. A rule written with a literal colour
 will be wrong in one of the two themes.
@@ -82,16 +99,12 @@ argument, so "live" means the registry re-read it.
 
 ## Known limitations
 
-- PowerPoint has no "New template" link once one template exists — the top bar
-  omits it and the table only offers one in its empty state
-  ([#157](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/157)).
-  `kinds.NAV_KINDS` is where that is decided.
 - The style-mapping editor exposes 5 of the 16 keys `docx_tools/style_map.py`
   recognises ([#160](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/160));
   `kinds.STYLE_KEYS` is the list.
-- Deleting a template always keeps its asset, and nothing lists orphans
-  ([#158](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/158),
-  [#166](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/166)).
+- A kept source file is still invisible: deleting now offers to remove it, but
+  nothing lists the files in `custom_templates/` that no template points at
+  ([#166](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/166)).
 - Uploads are read fully into memory and capped at 10 MB, which is low for a
   brand deck ([#172](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/172)).
 

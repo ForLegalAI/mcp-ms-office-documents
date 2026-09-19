@@ -33,6 +33,9 @@ http://localhost:8958/admin
 - **Save** — the template becomes a live MCP tool **immediately**, no restart.
 - **Edit** later — adjust arguments, or **Replace document** to upload a new
   version and re-scan it for placeholders (existing arguments are kept).
+- **Delete** — asks first, on its own page, listing what goes: the
+  configuration and the live tool. The uploaded source file is kept unless you
+  tick the box, and it is never removed while another template still uses it.
 - **Status** page — see live tool counts, per-template usage (calls/errors/last
   used this session), and a recent activity & error log (filterable to
   warnings/errors).

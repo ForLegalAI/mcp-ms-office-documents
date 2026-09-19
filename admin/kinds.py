@@ -77,6 +77,13 @@ class KindDescriptor:
         return tuple(self._meta["asset_exts"])
 
     @property
+    def master_file(self) -> str:
+        """The hand-written master YAML's filename, beside the ``*.d`` dir."""
+        subdir = self.subdir
+        stem = subdir[:-2] if subdir.endswith(".d") else subdir
+        return f"{stem}.yaml"
+
+    @property
     def path_key(self) -> str:
         """The spec key naming the asset file (``docx_path``, ``pptx_path``…)."""
         return self._meta["path_key"]
@@ -161,10 +168,10 @@ DESCRIPTORS: Dict[str, KindDescriptor] = {d.kind: d for d in (_DOCX, _EMAIL, _PP
 #: Every supported kind, in the order the index page shows them.
 KINDS: Tuple[str, ...] = tuple(DESCRIPTORS)
 
-#: Kinds offered as "New …" in the top bar. PowerPoint is missing here, which
-#: is why its create page is unreachable once one template exists — see #157.
-#: Left as-is deliberately so that fix lands as its own reviewable change.
-NAV_KINDS: Tuple[str, ...] = (KIND_DOCX, KIND_EMAIL)
+#: Kinds offered as "New …" in the top bar — all of them. PowerPoint used to be
+#: missing, which left its create page unreachable once one template existed,
+#: because the only other link was the template table's empty state (#157).
+NAV_KINDS: Tuple[str, ...] = KINDS
 
 
 def descriptor(kind: str) -> KindDescriptor:

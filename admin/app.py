@@ -46,8 +46,8 @@ from config import Config
 from admin import auth, views
 from admin.analysis import analyze
 from admin.components import head_tags
-from admin.forms import build_spec
-from admin.kinds import descriptor, is_kind
+from admin.forms import build_spec, checked
+from admin.kinds import KINDS, descriptor, is_kind
 from admin.preview import (
     sample_values, render_docx_preview, render_email_preview, render_pptx_preview,
 )
@@ -146,6 +146,51 @@ class AdminContext:
             return False
 
     # -- asset helpers the routes share -------------------------------------
+
+    def other_specs_using_asset(self, kind: str, name: str,
+                                filename: Optional[str]) -> List[str]:
+        """Managed templates other than *(kind, name)* whose asset is *filename*.
+
+        Assets share one flat ``custom_templates/`` directory, so two specs can
+        point at the same file — usually because one was hand-written. Deleting
+        it for one of them would break the other, so the delete page checks
+        first and withholds the option rather than offering a destructive
+        choice it cannot honour safely.
+        """
+        if not filename:
+            return []
+        found: List[str] = []
+        for other in KINDS:
+            d = descriptor(other)
+            for spec in self.store.list_specs(other):
+                if other == kind and spec.get("name") == name:
+                    continue
+                if spec.get(d.path_key) == filename:
+                    found.append(f"{d.label} template '{spec.get('name')}'")
+            # Hand-written master-YAML templates count too, and a master entry
+            # sharing the name being deleted counts most of all: the managed
+            # spec was overriding it, so deleting the override brings the master
+            # entry back to life — still pointing at this file.
+            for spec in self._master_specs(other):
+                if spec.get(d.path_key) == filename:
+                    found.append(f"{d.label} template '{spec.get('name')}' "
+                                 "(from the master YAML)")
+        # Preserve order, drop repeats.
+        return list(dict.fromkeys(found))
+
+    def _master_specs(self, kind: str) -> List[Dict[str, Any]]:
+        """Templates declared in *kind*'s hand-written master YAML.
+
+        Read with no spec directory, so these are the master entries as
+        written — not the merged view the registry serves.
+        """
+        master = self.store.config_dir / descriptor(kind).master_file
+        try:
+            templates, _cfg = gather_specs(master, None)
+        except Exception:
+            logger.exception("[admin] Could not read the %s master YAML", kind)
+            return []
+        return [t for t in templates if isinstance(t, dict)]
 
     def analyze_asset(self, kind: str, spec: Dict[str, Any]):
         """Analyse a spec's installed source file, or ``None`` when it is gone."""
@@ -389,15 +434,32 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         html = render_email_preview(data, spec, values)
         return HTMLResponse(html)
 
-    @rt("/{kind}/{name}/delete", methods=["post"])
+    @rt("/{kind}/{name}/delete", methods=["get", "post"])
     async def delete(req, sess, kind: str, name: str):
+        if not is_kind(kind):
+            return _home()
+        spec = ctx.store.get_spec(kind, name)
+        if spec is None:
+            return views.not_found_page(ctx, name)
+        asset = spec.get(descriptor(kind).path_key)
+        shared_with = ctx.other_specs_using_asset(kind, name, asset)
+
+        if req.method != "POST":
+            return views.delete_page(ctx, kind, name, asset, shared_with,
+                                     csrf=auth.ensure_csrf(sess))
+
         form = await req.form()
         bad = _csrf_guard(sess, form)
         if bad:
             return bad
-        if is_kind(kind):
-            ctx.store.delete_spec(kind, name, delete_asset=False)
-            ctx.unregister(kind, name)
+        # Never honour the checkbox for a file another template still points
+        # at, whatever was submitted — the page hides the option, but the POST
+        # is not where that decision should be trusted from.
+        drop_asset = checked(form, "delete_asset") and not shared_with
+        ctx.store.delete_spec(kind, name, delete_asset=drop_asset)
+        ctx.unregister(kind, name)
+        logger.info("[admin] Deleted %s template %r (asset %s)", kind, name,
+                    "deleted" if drop_asset else "kept")
         return _home()
 
     return app

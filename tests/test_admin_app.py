@@ -368,6 +368,219 @@ def test_login_form_carries_no_csrf_field(admin_client):
     assert 'name="csrf"' not in html
 
 
+def test_every_kind_has_a_reachable_create_link(admin_client):
+    """#157: a kind's create page must not disappear once it has a template.
+
+    The empty state used to be the only place that linked to it. Word and
+    Email were covered by the top bar; PowerPoint was not, so making one
+    PowerPoint template removed the only route to the page that made it.
+    """
+    from admin.kinds import KINDS
+
+    client, _ = admin_client
+    empty = client.get("/admin/").text
+    for kind in KINDS:
+        assert f"/admin/new/{kind}" in empty, f"{kind}: no create link when empty"
+
+    # Give every kind a template, so no section is in its empty state.
+    _post(client, "/admin/docx/draft", data={"name": "reach_docx"},
+          files={"file": ("reach_docx.docx", _docx_with_placeholders("{{a}}"),
+                          "application/octet-stream")})
+    _post(client, "/admin/email/draft", data={"name": "reach_email"},
+          files={"file": ("reach_email.html", b"<p>{{a}}</p>", "text/html")})
+    pptx = (project_root / "default_templates" / "default_pptx_template_16_9.pptx")
+    _post(client, "/admin/pptx/draft", data={"name": "reach_deck"},
+          files={"file": ("reach_deck.pptx", pptx.read_bytes(),
+                          "application/octet-stream")})
+
+    populated = client.get("/admin/").text
+    for kind in KINDS:
+        assert f"/admin/new/{kind}" in populated, (
+            f"{kind}: create page unreachable once a template exists")
+
+    # Belt and braces: the top bar lists every kind too, so the table is not
+    # the only way in. Checked separately because either one alone would
+    # satisfy the reachability assertion above.
+    nav = re.search(r"<nav>(.*?)</nav>", populated, re.S)
+    assert nav, "no nav rendered"
+    for kind in KINDS:
+        assert f"/admin/new/{kind}" in nav.group(1), f"{kind}: missing from the top bar"
+
+
+class _FakeRequest:
+    """Just enough request for the `before` gate: it only reads url.path."""
+
+    def __init__(self, path):
+        self.url = type("U", (), {"path": path})()
+
+
+def test_auth_gate_has_no_static_file_exemption():
+    """#159: the gate used to let any path ending .css or .ico through.
+
+    Tested against the gate itself rather than through the app: the admin UI
+    serves no static files, so no route matches such a path and an HTTP
+    request 404s before `before` is ever consulted. That is why the exemption
+    leaked nothing — and also why only a direct test can show it is gone.
+    """
+    from admin import auth
+
+    before = auth.make_before("/admin/login")
+    signed_out = {}
+
+    # The login endpoint is the one public path.
+    assert before(_FakeRequest("/admin/login"), signed_out) is None
+    assert before(_FakeRequest("/admin/login/"), signed_out) is None
+
+    # Everything else redirects — including what used to be exempt.
+    for path in ("/admin/", "/admin/status", "/admin/theme.css",
+                 "/admin/favicon.ico", "/admin/nested/thing.css"):
+        result = before(_FakeRequest(path), signed_out)
+        assert getattr(result, "status_code", None) == 303, f"{path} was not gated"
+
+    # An authenticated session still passes, and gets a CSRF token.
+    signed_in = {auth.SESSION_KEY: True}
+    assert before(_FakeRequest("/admin/theme.css"), signed_in) is None
+    assert signed_in.get(auth.CSRF_KEY)
+
+
+def _delete_fixture(client, name="del_tpl"):
+    """A saved docx template; returns (name, asset filename)."""
+    _post(client, "/admin/docx/draft", data={"name": name},
+          files={"file": (f"{name}.docx", _docx_with_placeholders("Hi {{who}}"),
+                          "application/octet-stream")})
+    _post(client, "/admin/docx/save", data={
+        "kind": "docx", "asset_filename": f"{name}.docx", "name": name,
+        "title": "T", "description": "d", "arg_name": ["who"], "arg_type": ["string"],
+        "arg_required": ["true"], "arg_default": [""], "arg_desc": [""],
+    })
+    return name, f"{name}.docx"
+
+
+def test_delete_confirmation_offers_the_asset_choice(admin_client):
+    """#158: deleting used to always keep the file, and never said so clearly."""
+    client, _ = admin_client
+    name, asset = _delete_fixture(client, "del_confirm")
+    r = client.get(f"/admin/docx/{name}/delete")
+    assert r.status_code == 200
+    assert asset in r.text
+    assert 'name="delete_asset"' in r.text
+    # Nothing is destroyed by looking at the page.
+    assert store_mod.FileTemplateStore.from_config().get_spec("docx", name) is not None
+
+
+def test_delete_keeps_the_asset_by_default(admin_client):
+    client, _ = admin_client
+    name, asset = _delete_fixture(client, "del_keep")
+    store = store_mod.FileTemplateStore.from_config()
+    _post(client, f"/admin/docx/{name}/delete")
+    assert store.get_spec("docx", name) is None
+    assert store.asset_exists("docx", asset), "asset should be kept when not asked for"
+
+
+def test_delete_can_remove_the_asset_too(admin_client):
+    client, _ = admin_client
+    name, asset = _delete_fixture(client, "del_asset")
+    store = store_mod.FileTemplateStore.from_config()
+    _post(client, f"/admin/docx/{name}/delete", data={"delete_asset": "1"})
+    assert store.get_spec("docx", name) is None
+    assert not store.asset_exists("docx", asset), "asset should be gone when asked for"
+
+
+def test_delete_never_removes_an_asset_another_template_uses(admin_client):
+    """The option is withheld on screen, and ignored if posted anyway."""
+    client, _ = admin_client
+    name, asset = _delete_fixture(client, "del_shared")
+    store = store_mod.FileTemplateStore.from_config()
+    # A second managed template pointing at the same file.
+    store.save_spec("docx", {"name": "del_sharer", "description": "d",
+                             "docx_path": asset, "args": []})
+
+    page = client.get(f"/admin/docx/{name}/delete").text
+    assert "also used by" in page.lower()
+    assert 'name="delete_asset"' not in page
+
+    _post(client, f"/admin/docx/{name}/delete", data={"delete_asset": "1"})
+    assert store.get_spec("docx", name) is None
+    assert store.asset_exists("docx", asset), "shared asset must survive"
+    assert store.get_spec("docx", "del_sharer") is not None
+
+
+def _write_master_yaml(kind, body):
+    """Write a hand-written master YAML beside the managed *.d directory."""
+    store = store_mod.FileTemplateStore.from_config()
+    store.config_dir.mkdir(parents=True, exist_ok=True)
+    from admin.kinds import descriptor
+    path = store.config_dir / descriptor(kind).master_file
+    path.write_text(body, encoding="utf-8")
+    return path
+
+
+def test_delete_never_removes_an_asset_a_master_template_uses(admin_client):
+    """A hand-written template counts as a user of the file too.
+
+    other_specs_using_asset() reads the managed *.d specs; the master YAML is
+    a separate source the UI lists as read-only, and its templates point at
+    the same flat custom_templates/ directory.
+    """
+    client, _ = admin_client
+    name, asset = _delete_fixture(client, "del_master")
+    _write_master_yaml("docx", f"""templates:
+  - name: handwritten_letter
+    description: hand-written
+    docx_path: {asset}
+    args: []
+""")
+    store = store_mod.FileTemplateStore.from_config()
+
+    page = client.get(f"/admin/docx/{name}/delete").text
+    assert "handwritten_letter" in page
+    assert "master YAML" in page
+    assert 'name="delete_asset"' not in page
+
+    _post(client, f"/admin/docx/{name}/delete", data={"delete_asset": "1"})
+    assert store.get_spec("docx", name) is None
+    assert store.asset_exists("docx", asset), "master-YAML template's asset must survive"
+
+
+def test_delete_respects_a_master_entry_of_the_same_name(admin_client):
+    """Deleting an override revives the master entry, which still needs the file.
+
+    The managed spec was shadowing a master template of the same name, so
+    removing it does not retire that name — it restores the hand-written
+    definition, still pointing at this asset.
+    """
+    client, _ = admin_client
+    name, asset = _delete_fixture(client, "del_shadow")
+    _write_master_yaml("docx", f"""templates:
+  - name: {name}
+    description: hand-written original
+    docx_path: {asset}
+    args: []
+""")
+    store = store_mod.FileTemplateStore.from_config()
+
+    page = client.get(f"/admin/docx/{name}/delete").text
+    assert 'name="delete_asset"' not in page, (
+        "the shadowed master entry still uses this file")
+
+    _post(client, f"/admin/docx/{name}/delete", data={"delete_asset": "1"})
+    assert store.asset_exists("docx", asset)
+
+
+def test_delete_without_csrf_is_rejected(admin_client):
+    """The destructive route is pinned directly, not only via /save."""
+    client, _ = admin_client
+    name, _asset = _delete_fixture(client, "del_csrf")
+    r = client.post(f"/admin/docx/{name}/delete", data={})
+    assert r.status_code == 403
+    assert store_mod.FileTemplateStore.from_config().get_spec("docx", name) is not None
+
+
+def test_delete_unknown_template_is_not_found(admin_client):
+    client, _ = admin_client
+    assert "Not found" in client.get("/admin/docx/no_such_tpl/delete").text
+
+
 def test_post_without_csrf_is_rejected(admin_client):
     client, _ = admin_client
     # A save POST with no CSRF token is refused.
