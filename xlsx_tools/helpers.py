@@ -234,19 +234,28 @@ def parse_table(lines: list[str], start_idx: int) -> tuple[list[list[str]] | Non
     if len(table_lines) < 2:  # Need at least header and separator
         return None, i if i > start_idx else start_idx + 1
 
-    # Parse table data, extracting alignment from separator row
+    # A run of nothing but separator rows is not a table at all: there is no
+    # header for them to sit under. Empty table_data is what the caller of this
+    # function reads as "no table here", and it reports table_incomplete.
+    if all(_is_separator_row(line) for line in table_lines):
+        return TableData([], [], has_separator=False), i
+
+    # Parse table data, extracting alignment from the separator row.
+    #
+    # Markdown has exactly one separator, directly under the header, and a row
+    # of dashes anywhere else is data — `| - | - |` is how a caller writes "not
+    # applicable in either column". Matching by shape alone dropped such a row
+    # from the sheet with nothing said, and widening the match from three
+    # dashes to one (#114) made a lone `-` hit it, which is the likelier
+    # spelling by far. So position decides: row 1 may be the separator, every
+    # other row is content.
     table_data: list[list[str]] = []
     col_alignments: list[str | None] = []
-    # Markdown puts the separator directly under the header, and nowhere else
-    # means anything. A separator found elsewhere in the run is still skipped
-    # (it is not data), but it does not make this a well-formed table: which
-    # row the caller meant as the header is exactly as unclear as if they had
-    # written none at all, so it does not count as one.
     separator_in_place = False
     for idx, line in enumerate(table_lines):
-        if _is_separator_row(line):
+        if idx == 1 and _is_separator_row(line):
             col_alignments = _parse_column_alignments(line)
-            separator_in_place = separator_in_place or idx == 1
+            separator_in_place = True
             continue
         cells = [cell.strip() for cell in line.split('|')[1:-1]]
         table_data.append(cells)

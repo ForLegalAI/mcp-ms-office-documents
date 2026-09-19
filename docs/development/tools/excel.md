@@ -267,6 +267,13 @@ tool's own check: demanding three wrote a caller's `|--|--|` into the sheet as
 a row of literal dashes and then reported `table_separator_missing` against a
 table that had one.
 
+**Position decides, not shape.** Only row 1 of the run can be the separator.
+A row of dashes anywhere else is data — `| - | - |` is how a caller writes
+"not applicable in either column" — and matching by shape alone dropped it
+from the sheet with nothing said. A run of nothing but separator rows has no
+header for them to sit under, so it returns an empty `TableData` and is
+reported as `table_incomplete`. Word applies the same two rules.
+
 `TableData.has_separator` carries the fact out of the parse so the table
 branch can report `table_separator_missing`. It means *the separator was
 directly under the first row* — the only position markdown gives it meaning —

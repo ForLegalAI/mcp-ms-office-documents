@@ -180,6 +180,18 @@ class TestInstructionsNotFollowed:
         assert len(doc.tables[0].rows) == 3          # the blank row survives
         assert codes(warnings) == [W.TABLE_SEPARATOR_MISSING]
 
+    def test_a_dash_row_below_the_separator_is_data(self):
+        """The same rule as Excel: one separator, directly under the header."""
+        doc = Document()
+        warnings = W.channel()
+        process_markdown_content(
+            doc, "| Item | Qty |\n|---|---|\n| A | 1 |\n| - | - |\n",
+            warnings=warnings)
+
+        rows = [[c.text for c in r.cells] for r in doc.tables[0].rows]
+        assert rows == [["Item", "Qty"], ["A", "1"], ["-", "-"]]
+        assert list(warnings) == []
+
     def test_a_real_separator_row_still_is_one(self):
         doc = Document()
         warnings = W.channel()

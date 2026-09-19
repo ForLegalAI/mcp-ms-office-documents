@@ -285,8 +285,10 @@ put it. Where the outcome *is* the same in both tools the code is the same
 too: a table whose first row was made the header because no separator row sat
 under it reports `table_separator_missing` in either, at `warning` severity.
 `parse_table()` returns that as its fourth value, and it means the separator
-was in the one position markdown gives it meaning — not merely that one
-appeared somewhere in the run. A separator row must also carry dashes in
+was in the one position markdown gives it meaning. Only row 1 of the run is
+tested: a row of dashes anywhere else is data — `| - | - |` is how a caller
+writes "not applicable in either column" — and matching by shape alone dropped
+it from the table with nothing said. A separator row must also carry dashes in
 *every* cell: the empty-cell exemption this once had made `all()` vacuously
 true for a row of blank cells, so `|  |  |` passed as a separator and the
 caller's blank row was swallowed with the table counted as well formed. Excel's

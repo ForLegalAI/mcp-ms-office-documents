@@ -82,17 +82,18 @@ def parse_table(lines, start_idx):
     col_alignments = None
     separator_in_place = False
     for idx, line in enumerate(table_lines):
-        # Detect separator row and extract alignment
-        if _SEPARATOR_RE.match(line.replace('|', ' | ')):
+        # Markdown has exactly one separator, directly under the header. A row
+        # of dashes anywhere else is data — `| - | - |` is how a caller writes
+        # "not applicable in either column" — so position decides, not shape
+        # alone. Every cell must also carry dashes: skipping the empty ones
+        # made `all()` vacuously true for a row of blank cells, so `|  |  |`
+        # passed as a separator and the caller's blank row was swallowed.
+        # Excel's parse_table() applies both rules the same way.
+        if idx == 1 and _SEPARATOR_RE.match(line.replace('|', ' | ')):
             cells = [c.strip() for c in line.split('|')[1:-1]]
-            # Every cell must carry dashes. Skipping the empty ones — as this
-            # did — made `all()` vacuously true for a row of blank cells, so
-            # `|  |  |` passed as a separator: the caller's blank row was
-            # swallowed and the table counted as properly formed. Excel's
-            # _is_separator_row() checks every cell, and now so does this.
             if cells and all(re.match(r'^:?-+:?$', c) for c in cells):
                 col_alignments = _parse_alignment_row(line)
-                separator_in_place = separator_in_place or idx == 1
+                separator_in_place = True
                 continue
         cells = [cell.strip() for cell in line.split('|')[1:-1]]
         table_data.append(cells)

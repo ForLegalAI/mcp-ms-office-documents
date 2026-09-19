@@ -202,6 +202,21 @@ class TestNamesAndFormatting:
     def test_a_table_with_a_separator_reports_nothing(self):
         assert build("| Item | Qty |\n|------|-----|\n| A | 1 |\n") == []
 
+    def test_a_dash_row_below_the_separator_is_data(self):
+        """`| - | - |` is how a caller writes "not applicable in either
+        column". Matching separators by shape alone dropped it from the sheet
+        with nothing said — and accepting one dash made `-` hit that."""
+        from openpyxl import load_workbook
+
+        buffer, warnings = _markdown_to_excel_buffer(
+            "| Item | Qty |\n|---|---|\n| A | 1 |\n| - | - |\n| B | 2 |\n")
+        sheet = load_workbook(buffer).active
+        buffer.close()
+
+        assert [c.value for c in sheet[3]][:2] == ["-", "-"]
+        assert [c.value for c in sheet[4]][:2] == ["B", 2]
+        assert list(warnings) == []
+
     @pytest.mark.parametrize("separator", ["|-|-|", "|--|--|", "|---|---|",
                                            "|:-:|--:|", "|:---|---:|"])
     def test_one_dash_is_a_separator_as_in_commonmark(self, separator):
