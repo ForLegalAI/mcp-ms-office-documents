@@ -32,6 +32,7 @@ upload_tools/       upload_file() / upload_file_async() dispatch; backends/<stra
 template_utils.py   template file resolution (custom → default, container → local)
 template_registry.py  YAML spec merging (master + *.d/) and live tool removal
 inline_markdown.py  the inline-emphasis grammar shared by Word and PowerPoint
+warning_channel.py  DocumentWarning + WarningChannel: what a build worked around
 image_utils.py      image download/decode with the SSRF guard
 metrics.py          in-process counters for the admin Status page
 docx_tools/ xlsx_tools/ pptx_tools/ email_tools/ xml_tools/   one package per type
@@ -48,8 +49,10 @@ backend → URL string or LibreChat artifact dict. Details:
 
 **Structure**
 - Every tool package exposes a private `_…_buffer()` that returns `BytesIO`
-  and a public wrapper that also uploads. `main.py` calls the buffer function
-  only. New tool: follow [adding-a-tool.md](docs/development/adding-a-tool.md).
+  — or `(BytesIO, warnings)` where the tool has a warnings channel (Word,
+  Excel, PowerPoint) — and a public wrapper that also uploads. `main.py` calls
+  the buffer function only. New tool: follow
+  [adding-a-tool.md](docs/development/adding-a-tool.md).
 - Blocking work goes through `await run_blocking(...)`, always. Never call
   a buffer function or `upload_file()` directly from an `async def` handler.
 - Read request headers on the event loop, before dispatch; never inside a
@@ -69,9 +72,22 @@ backend → URL string or LibreChat artifact dict. Details:
   `ValueError` for input the caller can fix.
 - A backend returns a string on success, `None` or raises on failure. Never
   return an error message as a string.
-- PowerPoint reports anything it worked around on
-  `PowerpointPresentation.warnings`; anything else that grows a warnings
-  channel returns `(BytesIO, warnings)` the same way.
+
+**Warnings**
+- A branch that skips, substitutes or degrades something the caller asked for
+  reports it: `warnings.add(code, message, **location)` beside the `logger`
+  call, never the log alone. The caller gets a success response and never
+  reads the server log.
+- The channel is a `WarningChannel` from `warning_channel.py`, created in the
+  `_…_buffer()` function and threaded down as an **argument**. Never module
+  state: builds run concurrently on worker threads.
+- Every code lives in the package's `warnings.py` with a severity in its
+  `WARNING_SEVERITY` (`error` = not in the file, `warning` = there but not as
+  asked, `info` = a substitution the caller will not mind). Each package's
+  `test_every_code_has_a_severity` enforces it.
+- A tool with a channel returns `(BytesIO, warnings)` from its buffer
+  function; `main.py` attaches them with `_with_warnings()`. PowerPoint keeps
+  its own `SlideWarning` record and shares the severities.
 
 **Word**
 - One line-break model: every newline reaching the inline layer is a soft

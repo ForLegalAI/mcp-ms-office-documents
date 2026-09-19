@@ -23,6 +23,8 @@ from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
+from . import warnings as W
+
 logger = logging.getLogger(__name__)
 
 # ── Layout Constants ──────────────────────────────────────────────────────────
@@ -174,11 +176,16 @@ def _is_separator_row(line: str) -> bool:
 
     Only returns True if ALL cells in the row match the separator pattern,
     preventing false positives from data cells that happen to contain '---'.
+
+    One dash is enough, as in CommonMark and in the Word tool's own check.
+    Demanding three wrote a caller's ``|--|--|`` into the sheet as a row of
+    literal dashes and then reported ``table_separator_missing`` against a
+    table that had one (#114).
     """
     cells = [c.strip() for c in line.split('|')[1:-1]]
     if not cells:
         return False
-    return all(re.match(r'^:?-{3,}:?$', c) for c in cells)
+    return all(re.match(r'^:?-+:?$', c) for c in cells)
 
 
 def _parse_column_alignments(separator_line: str) -> list[str | None]:
@@ -227,27 +234,56 @@ def parse_table(lines: list[str], start_idx: int) -> tuple[list[list[str]] | Non
     if len(table_lines) < 2:  # Need at least header and separator
         return None, i if i > start_idx else start_idx + 1
 
-    # Parse table data, extracting alignment from separator row
+    # A run of nothing but separator rows is not a table at all: there is no
+    # header for them to sit under. Empty table_data is what the caller of this
+    # function reads as "no table here", and it reports table_incomplete.
+    if all(_is_separator_row(line) for line in table_lines):
+        return TableData([], [], has_separator=False), i
+
+    # Parse table data, extracting alignment from the separator row.
+    #
+    # Markdown has exactly one separator, directly under the header, and a row
+    # of dashes anywhere else is data — `| - | - |` is how a caller writes "not
+    # applicable in either column". Matching by shape alone dropped such a row
+    # from the sheet with nothing said, and widening the match from three
+    # dashes to one (#114) made a lone `-` hit it, which is the likelier
+    # spelling by far. So position decides: row 1 may be the separator, every
+    # other row is content.
     table_data: list[list[str]] = []
     col_alignments: list[str | None] = []
-    for line in table_lines:
-        if _is_separator_row(line):
+    separator_in_place = False
+    for idx, line in enumerate(table_lines):
+        if idx == 1 and _is_separator_row(line):
             col_alignments = _parse_column_alignments(line)
+            separator_in_place = True
             continue
         cells = [cell.strip() for cell in line.split('|')[1:-1]]
         table_data.append(cells)
 
     # Attach alignment info to the table_data list
-    table_data_with_align = TableData(table_data, col_alignments)
+    table_data_with_align = TableData(table_data, col_alignments,
+                                      has_separator=separator_in_place)
     return table_data_with_align, i
 
 
 class TableData(list):
-    """A list subclass that carries column alignment metadata."""
+    """A list subclass that carries column alignment metadata.
 
-    def __init__(self, data: list[list[str]], col_alignments: list[str | None] | None = None):
+    *has_separator* records whether the markdown had a ``|---|---|`` row
+    **directly under its first row**, which is the only place markdown gives it
+    meaning. :func:`parse_table` does not require one — it only skips the rows
+    that look like one, wherever they are — so a table written without it, or
+    with it somewhere else, still parses, with its first row taken as the
+    header. That is usually what the caller meant, but it is a decision made on
+    their behalf, so the parser reports it (#114). It defaults to True: only
+    markdown that was really parsed can say otherwise.
+    """
+
+    def __init__(self, data: list[list[str]], col_alignments: list[str | None] | None = None,
+                 has_separator: bool = True):
         super().__init__(data)
         self.col_alignments: list[str | None] = col_alignments or []
+        self.has_separator: bool = has_separator
 
 
 # ── Cell Resolution ───────────────────────────────────────────────────────────
@@ -399,7 +435,8 @@ def _quote_sheet_name(name: str) -> str:
     return name
 
 
-def _resolve_row(positions: dict[str, int], table_num: int, offset: int, fallback_row: int) -> int:
+def _resolve_row(positions: dict[str, int], table_num: int, offset: int, fallback_row: int,
+                 warnings=None, location: dict | None = None) -> int:
     """Resolve a table-relative row reference to an absolute Excel row number.
 
     Args:
@@ -407,30 +444,43 @@ def _resolve_row(positions: dict[str, int], table_num: int, offset: int, fallbac
         table_num: Table number (1-based).
         offset: Row offset within the table (0 = first data row).
         fallback_row: Row to use if the table isn't found in positions.
+        warnings: The build's :class:`~warning_channel.WarningChannel`.
+        location: Where to report it — ``{"sheet": …, "cell": …}``.
 
     Returns:
         The absolute Excel row number.
 
     A missing table key (e.g. ``T9`` when only 3 tables exist) is logged at
-    WARNING level. The formula still resolves — using ``fallback_row`` — so the
-    file ships, but the reference almost certainly points at the wrong cell,
-    which is otherwise a silent failure the caller has no way to notice.
+    WARNING level and reported on *warnings*. The formula still resolves —
+    using ``fallback_row`` — so the file ships, but the reference almost
+    certainly points at the wrong cell, which is otherwise a silent failure the
+    caller has no way to notice.
     """
     key = f"T{table_num}"
     base = positions.get(key)
     if base is not None:
         return base + 1 + offset  # +1 to skip header row
+    known = ", ".join(sorted(positions.keys())) or "none"
     logger.warning(
         "Formula references %s but no such table exists in the target sheet "
         "(known tables: %s); falling back to the current row. This likely "
         "produces a wrong cell reference — check the table numbering.",
-        key, ", ".join(sorted(positions.keys())) or "none",
+        key, known,
     )
+    if warnings is not None:
+        warnings.add(
+            W.TABLE_REFERENCE_MISSING,
+            f"the formula references {key}, but the target sheet has no such "
+            f"table (it has: {known}); the reference fell back to the current "
+            f"row and almost certainly points at the wrong cell.",
+            **(location or {}),
+        )
     return fallback_row + offset
 
 
-def _warn_unknown_sheet(sheet: str, all_sheet_table_positions: dict[str, dict[str, int]]) -> None:
-    """Log a warning when a cross-sheet reference names a sheet that doesn't exist.
+def _warn_unknown_sheet(sheet: str, all_sheet_table_positions: dict[str, dict[str, int]],
+                        warnings=None, location: dict | None = None) -> None:
+    """Report a cross-sheet reference that names a sheet which doesn't exist.
 
     The formula still resolves (the regex emits a syntactically valid
     cross-sheet reference), but Excel will show ``#REF!`` on open. Surfacing
@@ -446,6 +496,14 @@ def _warn_unknown_sheet(sheet: str, all_sheet_table_positions: dict[str, dict[st
             "#REF! in Excel.",
             sheet, known,
         )
+        if warnings is not None:
+            warnings.add(
+                W.SHEET_REFERENCE_MISSING,
+                f"the formula references a sheet named '{sheet}', which the "
+                f"workbook does not have (it has: {known}); Excel will show "
+                f"#REF! there.",
+                **(location or {}),
+            )
 
 
 # A sheet name inside a cross-sheet reference: either the quoted Excel form or
@@ -480,10 +538,17 @@ def adjust_formula_references(
     current_excel_row: int,
     table_positions: dict[str, int] | None = None,
     all_sheet_table_positions: dict[str, dict[str, int]] | None = None,
+    warnings=None,
+    location: dict | None = None,
 ) -> str:
     """Convert row-relative references [offset] and table references T1.B[1] to actual Excel row numbers.
 
     Also resolves cross-sheet references like ``SheetName!T1.B[0]`` → ``'SheetName'!B2``.
+
+    *warnings* is the build's :class:`~warning_channel.WarningChannel` and
+    *location* the ``{"sheet": …, "cell": …}`` of the formula's own cell: a
+    reference that resolves to the wrong place is written into a workbook that
+    opens fine, so it is only ever caught if it is reported.
     """
     if not formula.startswith('='):
         return formula
@@ -494,6 +559,15 @@ def adjust_formula_references(
         all_sheet_table_positions = {}
 
     logger.debug("Resolving formula: %s (current_row=%d)", formula, current_excel_row)
+
+    def _row(positions: dict[str, int], table_num: int, offset: int) -> int:
+        """:func:`_resolve_row` with this formula's fallback row and location."""
+        return _resolve_row(positions, table_num, offset, current_excel_row,
+                            warnings=warnings, location=location)
+
+    def _check_sheet(sheet: str) -> None:
+        _warn_unknown_sheet(sheet, all_sheet_table_positions,
+                            warnings=warnings, location=location)
 
     try:
         # ── Cross-sheet references (must be resolved BEFORE local patterns) ──
@@ -509,10 +583,10 @@ def adjust_formula_references(
             start_offset = int(match.group(5))
             end_col = match.group(6)
             end_offset = int(match.group(7))
-            _warn_unknown_sheet(sheet, all_sheet_table_positions)
+            _check_sheet(sheet)
             pos = all_sheet_table_positions.get(sheet, {})
-            sr = _resolve_row(pos, table_num, start_offset, current_excel_row)
-            er = _resolve_row(pos, table_num, end_offset, current_excel_row)
+            sr = _row(pos, table_num, start_offset)
+            er = _row(pos, table_num, end_offset)
             qs = _quote_sheet_name(sheet)
             # The sheet prefix belongs on the FIRST endpoint only:
             # =SUM(Data!B2:B4). This is the canonical form Excel itself
@@ -537,10 +611,10 @@ def adjust_formula_references(
             et_num = int(match.group(5))
             end_col = match.group(6)
             end_offset = int(match.group(7))
-            _warn_unknown_sheet(sheet, all_sheet_table_positions)
+            _check_sheet(sheet)
             pos = all_sheet_table_positions.get(sheet, {})
-            sr = _resolve_row(pos, st_num, start_offset, current_excel_row)
-            er = _resolve_row(pos, et_num, end_offset, current_excel_row)
+            sr = _row(pos, st_num, start_offset)
+            er = _row(pos, et_num, end_offset)
             qs = _quote_sheet_name(sheet)
             result = f"{qs}!{start_col}{sr}:{end_col}{er}"
             logger.debug("  Cross-sheet range: %s → %s", match.group(0), result)
@@ -556,9 +630,9 @@ def adjust_formula_references(
             table_num = int(match.group(2))
             column = match.group(3)
             offset = int(match.group(4))
-            _warn_unknown_sheet(sheet, all_sheet_table_positions)
+            _check_sheet(sheet)
             pos = all_sheet_table_positions.get(sheet, {})
-            actual_row = _resolve_row(pos, table_num, offset, current_excel_row)
+            actual_row = _row(pos, table_num, offset)
             result = _make_cell_ref(column, actual_row, sheet)
             logger.debug("  Cross-sheet cell: %s → %s", match.group(0), result)
             return result
@@ -579,8 +653,8 @@ def adjust_formula_references(
             end_table_num = int(match.group(4))
             end_col = match.group(5)
             end_offset = int(match.group(6))
-            start_row = _resolve_row(table_positions, start_table_num, start_offset, current_excel_row)
-            end_row = _resolve_row(table_positions, end_table_num, end_offset, current_excel_row)
+            start_row = _row(table_positions, start_table_num, start_offset)
+            end_row = _row(table_positions, end_table_num, end_offset)
             return f"{start_col}{start_row}:{end_col}{end_row}"
 
         adjusted = re.sub(table_range_pattern, replace_table_range, formula)
@@ -595,8 +669,8 @@ def adjust_formula_references(
             start_offset = int(match.group(4))
             end_col = match.group(5)
             end_offset = int(match.group(6))
-            start_row = _resolve_row(table_positions, table_num, start_offset, current_excel_row)
-            end_row = _resolve_row(table_positions, table_num, end_offset, current_excel_row)
+            start_row = _row(table_positions, table_num, start_offset)
+            end_row = _row(table_positions, table_num, end_offset)
             return f"{func_name}({start_col}{start_row}:{end_col}{end_row})"
 
         adjusted = re.sub(table_func_pattern, replace_table_function, adjusted)
@@ -608,7 +682,7 @@ def adjust_formula_references(
             table_num = int(match.group(1))
             column = match.group(2)
             offset = int(match.group(3))
-            actual_row = _resolve_row(table_positions, table_num, offset, current_excel_row)
+            actual_row = _row(table_positions, table_num, offset)
             result = f"{column}{actual_row}"
             logger.debug("  Local table ref: %s → %s", match.group(0), result)
             return result
@@ -661,6 +735,14 @@ def adjust_formula_references(
 
     except Exception as e:
         logger.warning("Failed to adjust formula references for '%s': %s", formula, e)
+        if warnings is not None:
+            warnings.add(
+                W.FORMULA_UNRESOLVED,
+                f"the references in '{formula}' could not be resolved ({e}); "
+                f"the formula was written unchanged and Excel will not "
+                f"understand it.",
+                **(location or {}),
+            )
         return formula
 
 
@@ -879,12 +961,14 @@ def _number_format_for_type(type_spec: str | None) -> str | None:
 MAX_FORMULA_LENGTH = 8192
 
 
-def _write_formula(cell, formula: str, coordinate: str) -> None:
+def _write_formula(cell, formula: str, coordinate: str,
+                   warnings=None, location: dict | None = None) -> None:
     """Write a resolved formula, degrading to text if Excel would reject it.
 
     A single over-length formula makes Excel refuse the entire workbook, so
     the cell is stored as an inline string instead: one visibly wrong cell in
-    a file that opens beats a file that doesn't.
+    a file that opens beats a file that doesn't — and the caller is told, since
+    the cell shows the formula's text rather than its result.
     """
     cell.value = formula
     if len(formula) > MAX_FORMULA_LENGTH:
@@ -894,9 +978,18 @@ def _write_formula(cell, formula: str, coordinate: str) -> None:
             "text so the workbook still opens. Split it across helper columns.",
             coordinate, len(formula), MAX_FORMULA_LENGTH,
         )
+        if warnings is not None:
+            warnings.add(
+                W.FORMULA_TOO_LONG,
+                f"the formula is {len(formula)} characters, over Excel's "
+                f"{MAX_FORMULA_LENGTH} limit; it was stored as text so the "
+                f"workbook still opens. Split it across helper columns.",
+                **(location or {}),
+            )
 
 
-def _ensure_unique_table_headers(worksheet, header_row: int, num_cols: int) -> None:
+def _ensure_unique_table_headers(worksheet, header_row: int, num_cols: int,
+                                 warnings=None) -> None:
     """Make a header row usable as an Excel Table header.
 
     Excel requires every column name in a Table to be non-empty and unique
@@ -935,6 +1028,17 @@ def _ensure_unique_table_headers(worksheet, header_row: int, num_cols: int) -> N
                 f"'{original}'" if original else "empty",
                 name,
             )
+            if warnings is not None:
+                problem = ("is empty" if not original
+                           else f"repeats the column name '{original}'")
+                warnings.add(
+                    W.HEADER_RENAMED,
+                    f"the header {problem}, which an auto-filtered table "
+                    f"cannot use — Excel Table column names must be non-empty "
+                    f"and unique — so it was renamed to '{name}'.",
+                    sheet=worksheet.title,
+                    cell=cell.coordinate,
+                )
             cell.value = name
 
 
@@ -950,6 +1054,7 @@ def add_table_to_sheet(
     table_index: int = 0,
     directives: dict[str, str] | None = None,
     available_styles: set[str] | None = None,
+    warnings=None,
 ) -> int:
     """Add table data to Excel worksheet with proper formatting and formula support.
 
@@ -957,6 +1062,10 @@ def add_table_to_sheet(
         available_styles: Named styles defined in the workbook, used to
             validate a ``styles: ... style:Name`` reference. None disables the
             check (the reference is attempted regardless).
+        warnings: The build's :class:`~warning_channel.WarningChannel`. Cells
+            that could not be written, formulas that would not resolve and
+            styling that was skipped are reported there, located by sheet and
+            cell coordinate (#114).
     """
     if not table_data:
         return start_row
@@ -1014,10 +1123,14 @@ def add_table_to_sheet(
                 resolved = resolve_cell(cell_text)
 
                 if resolved.is_formula:
+                    where = {"sheet": worksheet.title, "cell": cell.coordinate}
                     adjusted_formula = adjust_formula_references(
-                        resolved.value, current_excel_row, table_positions, all_sheet_table_positions
+                        resolved.value, current_excel_row, table_positions,
+                        all_sheet_table_positions,
+                        warnings=warnings, location=where,
                     )
-                    _write_formula(cell, adjusted_formula, cell.coordinate)
+                    _write_formula(cell, adjusted_formula, cell.coordinate,
+                                   warnings=warnings, location=where)
                     cell.fill = formula_fill
                     # A formula in a typed column takes the column's intended
                     # number format for its (numeric) result — e.g. a =SUM(...)
@@ -1076,6 +1189,14 @@ def add_table_to_sheet(
                     cell.number_format = resolved.date_format
             except Exception as e:
                 logger.warning("Error processing cell [row=%d, col=%d]: %s", current_excel_row, col_idx + 1, e)
+                if warnings is not None:
+                    warnings.add(
+                        W.CELL_FAILED,
+                        f"the cell could not be written ({e}); it is empty in "
+                        f"the workbook.",
+                        sheet=worksheet.title,
+                        cell=f"{get_column_letter(col_idx + 1)}{current_excel_row}",
+                    )
 
     # Column widths — based on clean text length (not raw markdown with formatting markers)
     # When type directives are active, estimate display width from the type spec.
@@ -1128,11 +1249,21 @@ def add_table_to_sheet(
     if styles_directive:
         from .styles import apply_style_spec, parse_styles_directive
 
-        for coordinate, spec in parse_styles_directive(styles_directive, start_row).items():
+        parsed = parse_styles_directive(styles_directive, start_row,
+                                        warnings=warnings, sheet=worksheet.title)
+        for coordinate, spec in parsed.items():
             try:
                 apply_style_spec(worksheet[coordinate], spec, available_styles)
             except Exception as e:
                 logger.warning("Could not style %s: %s", coordinate, e)
+                if warnings is not None:
+                    warnings.add(
+                        W.STYLE_FAILED,
+                        f"the styles directive could not be applied ({e}); the "
+                        f"cell keeps its default formatting.",
+                        sheet=worksheet.title,
+                        cell=coordinate,
+                    )
 
     # Auto-filter: create a proper Excel Table object (supports multiple per sheet)
     if auto_filter:
@@ -1141,7 +1272,8 @@ def add_table_to_sheet(
             # Must run before the Table is built: openpyxl reads the column
             # names off these cells, and a blank or duplicate one yields a
             # workbook Excel refuses to open.
-            _ensure_unique_table_headers(worksheet, start_row, num_cols)
+            _ensure_unique_table_headers(worksheet, start_row, num_cols,
+                                         warnings=warnings)
             last_col_letter = get_column_letter(num_cols)
             last_data_row = start_row + len(table_data) - 1
             table_ref = f"A{start_row}:{last_col_letter}{last_data_row}"

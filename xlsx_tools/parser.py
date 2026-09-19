@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from . import warnings as W
 from .helpers import TABLE_BOTTOM_SPACING, parse_table
 
 
@@ -66,12 +67,34 @@ class TableEvent:
 LineEvent = SheetEvent | HeaderEvent | TableEvent
 
 
-def walk_markdown_lines(lines: list[str]) -> list[LineEvent]:
+#: How much of a dropped line to quote back at the caller.
+_DROPPED_LINE_EXCERPT = 60
+
+
+def _excerpt(line: str) -> str:
+    """The line, quoted and cut short enough to find it by without echoing it."""
+    if len(line) > _DROPPED_LINE_EXCERPT:
+        return f"'{line[:_DROPPED_LINE_EXCERPT]}…'"
+    return f"'{line}'"
+
+
+def walk_markdown_lines(lines: list[str], warnings=None) -> list[LineEvent]:
     """Parse markdown lines and return a list of structured events.
 
     This is the single source of truth for how markdown maps to Excel row
     positions. Both the position-scanning pass and the workbook-building pass
     consume these events, ensuring they never diverge.
+
+    A line that is none of the four things a spreadsheet can hold — a heading,
+    a ``## Sheet:`` marker, a directive or a table row — has nowhere to go and
+    is dropped. That is the right call for a workbook, but it is content the
+    caller wrote, so each dropped line is reported on *warnings* (the build's
+    :class:`~warning_channel.WarningChannel`) with its 1-based source line.
+
+    Lines that begin with ``|`` but do not form a table get their own report:
+    they are consumed by :func:`~xlsx_tools.helpers.parse_table` before the
+    dropped-line branch can see them, and the fix for them is a specific one —
+    add the separator row — rather than "put this somewhere else".
     """
     events: list[LineEvent] = []
 
@@ -131,8 +154,27 @@ def walk_markdown_lines(lines: list[str]) -> list[LineEvent]:
 
         # Tables
         elif line.startswith('|'):
+            table_start = i
             table_data, i = parse_table(lines, i)
             if table_data:
+                if warnings is not None and not getattr(
+                        table_data, "has_separator", True):
+                    # parse_table() does not require the separator row, it only
+                    # skips rows that look like one — so a table written
+                    # without it still parses, and its first row becomes the
+                    # header. Usually what the caller meant, but decided for
+                    # them, and it moves every table-relative reference: those
+                    # count from the first row AFTER the header.
+                    warnings.add(
+                        W.TABLE_SEPARATOR_MISSING,
+                        "the table starting here has no separator row "
+                        "(|---|---|), so its first row was used as the header "
+                        "and the rest as data. Add the separator to say which "
+                        "row is the header — references like T1.B[0] count "
+                        "from the first row after it.",
+                        sheet=current_sheet,
+                        line=table_start + 1,
+                    )
                 table_key = f"T{table_counter}"
                 events.append(TableEvent(
                     table_data=table_data,
@@ -143,11 +185,35 @@ def walk_markdown_lines(lines: list[str]) -> list[LineEvent]:
                 ))
                 current_row += len(table_data) + TABLE_BOTTOM_SPACING
                 table_counter += 1
+            elif warnings is not None:
+                # parse_table consumed the run of pipe lines and found no table
+                # in it — a row with no separator, or separators with no header.
+                # The lines are gone from the workbook, and this is the only
+                # branch that can say so: having been consumed here, they never
+                # reach the dropped-line report below.
+                warnings.add(
+                    W.TABLE_INCOMPLETE,
+                    f"{_excerpt(line)} starts something that looks like a "
+                    f"table but is not one, so it is not in the workbook. A "
+                    f"table needs a header row, a separator row (|---|---|) "
+                    f"and at least one data row.",
+                    sheet=current_sheet,
+                    line=table_start + 1,
+                )
             pending_directives = {}
 
         # Skip other content — directives must be directly above a table
         else:
             pending_directives = {}
+            if warnings is not None:
+                warnings.add(
+                    W.LINE_DROPPED,
+                    f"{_excerpt(line)} is not a heading, a '## Sheet:' marker, a "
+                    f"directive or a table row, so it is not in the workbook. "
+                    f"Put prose in a heading or a table cell.",
+                    sheet=current_sheet,
+                    line=i + 1,
+                )
             i += 1
 
     return events

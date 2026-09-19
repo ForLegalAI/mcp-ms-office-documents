@@ -29,6 +29,8 @@ from copy import copy
 
 from openpyxl.styles import Alignment, Border, Font, PatternFill
 
+from . import warnings as W
+
 logger = logging.getLogger(__name__)
 
 # Colour words accepted in place of a hex value. Kept small and unsurprising —
@@ -193,13 +195,18 @@ def _resolve_target(token: str, table_start_row: int | None) -> tuple[str, int] 
     return (column, row) if row >= 1 else None
 
 
-def _expand_target(target: str, table_start_row: int | None) -> list[str]:
+def _expand_target(target: str, table_start_row: int | None,
+                   warnings=None, sheet: str | None = None) -> list[str] | None:
     """Expand a target ("B2", "B[0]", "B2:D5") into absolute coordinates.
 
     Ranges expand to the full rectangle, not just the corners — a caller who
     writes ``B2:D5`` means the block. Oversized ranges are dropped with a
     warning rather than silently truncated to something that looks like it
     worked.
+
+    Returns the coordinates, ``[]`` when the target could not be parsed, or
+    ``None`` when it was rejected for a reason this function has already
+    reported — so the caller says nothing further about it.
     """
     start_token, sep, end_token = target.partition(':')
 
@@ -227,7 +234,15 @@ def _expand_target(target: str, table_start_row: int | None) -> list[str]:
             "Style a smaller block.",
             target, total, MAX_STYLED_CELLS,
         )
-        return []
+        if warnings is not None:
+            warnings.add(
+                W.STYLE_RANGE_TOO_LARGE,
+                f"the style range '{target}' covers {total} cells, over the "
+                f"{MAX_STYLED_CELLS} limit, so none of it was applied. Style a "
+                f"smaller block.",
+                sheet=sheet,
+            )
+        return None
 
     return [
         f"{get_column_letter(col)}{row}"
@@ -239,6 +254,8 @@ def _expand_target(target: str, table_start_row: int | None) -> list[str]:
 def parse_styles_directive(
     value: str,
     table_start_row: int | None = None,
+    warnings=None,
+    sheet: str | None = None,
 ) -> dict[str, StyleSpec]:
     """Parse a ``styles:`` directive into ``{coordinate: StyleSpec}``.
 
@@ -254,10 +271,14 @@ def parse_styles_directive(
         table_start_row: Header row of the table this directive is attached
             to, used to resolve the ``B[0]`` form. When None, only absolute
             coordinates resolve.
+        warnings: The build's :class:`~warning_channel.WarningChannel`.
+        sheet: Sheet the directive is on, for those reports.
 
     Returns:
         Absolute worksheet coordinates mapped to their style. Malformed
-        entries are logged and skipped.
+        entries are logged, reported on *warnings* and skipped — the workbook
+        is produced either way, so a dropped entry is invisible to the caller
+        otherwise.
     """
     if not value:
         return {}
@@ -274,20 +295,46 @@ def parse_styles_directive(
                 "Malformed styles entry '%s' — expected <cell>=<style>, "
                 "e.g. B2=bg:yellow.", entry,
             )
+            if warnings is not None:
+                warnings.add(
+                    W.STYLE_ENTRY_INVALID,
+                    f"the styles entry '{entry}' is malformed — it should read "
+                    f"<cell>=<style>, e.g. B2=bg:yellow — and was skipped.",
+                    sheet=sheet,
+                )
             continue
 
-        coordinates = _expand_target(target.strip(), table_start_row)
+        coordinates = _expand_target(target.strip(), table_start_row,
+                                     warnings=warnings, sheet=sheet)
+        if coordinates is None:
+            continue  # rejected with its own, more specific report
         if not coordinates:
             logger.warning(
                 "Could not resolve style target '%s' — expected a cell (B2), "
                 "a table-relative cell (B[0]) or a range (B2:D5).",
                 target.strip(),
             )
+            if warnings is not None:
+                warnings.add(
+                    W.STYLE_ENTRY_INVALID,
+                    f"the style target '{target.strip()}' could not be "
+                    f"resolved — it should be a cell (B2), a table-relative "
+                    f"cell (B[0]) or a range (B2:D5) — so '{entry}' was "
+                    f"skipped.",
+                    sheet=sheet,
+                )
             continue
 
         spec = parse_style_spec(spec_text)
         if spec.is_empty():
             logger.warning("Style entry '%s' set nothing usable.", entry)
+            if warnings is not None:
+                warnings.add(
+                    W.STYLE_ENTRY_INVALID,
+                    f"the styles entry '{entry}' sets nothing this tool "
+                    f"understands and was skipped.",
+                    sheet=sheet,
+                )
             continue
 
         for coordinate in coordinates:

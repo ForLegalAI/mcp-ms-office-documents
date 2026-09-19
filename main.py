@@ -150,9 +150,36 @@ except Exception as e:
     logger.exception("[pptx-templates] Template validation failed: %s", e)
 
 
+# ---------------------------------------------------------------------------
+# Warnings in the response
+# ---------------------------------------------------------------------------
+def _with_warnings(result, warnings, **extra):
+    """Attach a build's warnings to the tool result.
+
+    Warnings describe a file that was produced but not exactly as asked (a
+    block that would not render, an image that would not load, a formula
+    pointing at a table that does not exist). They ride alongside the result so
+    the model can correct its next call instead of the problem living only in
+    the server log. Each one is an object with a stable ``code`` and
+    ``severity``, so a caller can branch on it rather than parse the sentence.
+
+    A build with nothing to report returns exactly what it always returned — a
+    bare URL string, or the LibreChat artifact dict — so existing clients see
+    no change. *extra* keys (PowerPoint's ``slide_count``) are added only when
+    the string form is widened into a dict; the artifact dict carries its own
+    metadata already.
+    """
+    reported = [warning.as_dict() for warning in warnings]
+    if not reported:
+        return result
+    if isinstance(result, dict):
+        return {**result, "warnings": reported}
+    return {"file": result, **extra, "warnings": reported}
+
+
 @mcp.tool(
     name="create_excel_from_markdown",
-    description="Converts markdown content with tables and formulas to Excel (.xlsx) format. Use '## Sheet: Name' headings to create multiple sheets.",
+    description="Converts markdown content with tables and formulas to Excel (.xlsx) format. Use '## Sheet: Name' headings to create multiple sheets. Anything the builder could not take as written — a line that is not a table row and so is not in the workbook, a formula pointing at a table or sheet that does not exist, a styles entry that was skipped — comes back in the result's 'warnings': fix those in the markdown and call again if the workbook matters.",
     tags={"excel", "spreadsheet", "data"},
     annotations={"title": "Markdown to Excel Converter"}
 )
@@ -166,15 +193,18 @@ async def create_excel_document(
     Converts markdown to Excel with advanced formula support.
 
     Returns:
-        For traditional upload strategies: URL string
-        For LIBRECHAT strategy: MCP file artifact dict
+        For traditional upload strategies: a dict with the file location and
+        any warnings — each a {code, severity, sheet, cell|line, message}
+        object — or a bare URL string when there is nothing to report, which
+        preserves the previous response shape.
+        For LIBRECHAT strategy: MCP file artifact dict.
     """
 
     logger.info("Converting markdown to Excel document")
 
     try:
         # Generate document buffer
-        file_buffer = await run_blocking(
+        file_buffer, warnings = await run_blocking(
             _markdown_to_excel_buffer,
             markdown_content,
             auto_filter=auto_filter,
@@ -193,14 +223,14 @@ async def create_excel_document(
         file_buffer.close()
         
         logger.info("Excel document created successfully")
-        return result
+        return _with_warnings(result, warnings)
     except Exception as e:
         logger.error(f"Error creating Excel document: {e}", exc_info=True)
         raise ToolError(f"Error creating Excel document: {e}")
 
 @mcp.tool(
     name="create_word_from_markdown",
-    description="Converts markdown content to a professionally formatted Word (.docx) document. Supports headings, lists, tables, images, block quotes, page breaks, horizontal lines, text alignment, custom per-block styles, and rich inline formatting.",
+    description="Converts markdown content to a professionally formatted Word (.docx) document. Supports headings, lists, tables, images, block quotes, page breaks, horizontal lines, text alignment, custom per-block styles, and rich inline formatting. Anything the renderer could not take as written — a block it had to skip, an image that would not load, a style the template does not define — comes back in the result's 'warnings', each naming the source line to fix.",
     tags={"word", "document", "text", "legal", "contract"},
     annotations={"title": "Markdown to Word Converter"}
 )
@@ -259,15 +289,18 @@ async def create_word_document(
     Converts markdown to professionally formatted Word document.
 
     Returns:
-        For traditional upload strategies: URL string
-        For LIBRECHAT strategy: MCP file artifact dict
+        For traditional upload strategies: a dict with the file location and
+        any warnings — each a {code, severity, line, message} object — or a
+        bare URL string when there is nothing to report, which preserves the
+        previous response shape.
+        For LIBRECHAT strategy: MCP file artifact dict.
     """
 
     logger.info("Converting markdown to Word document")
 
     try:
         # Generate document buffer
-        file_buffer = await run_blocking(
+        file_buffer, warnings = await run_blocking(
             _markdown_to_word_buffer,
             markdown_content,
             title=title,
@@ -291,7 +324,7 @@ async def create_word_document(
         file_buffer.close()
         
         logger.info("Word document created successfully")
-        return result
+        return _with_warnings(result, warnings)
     except Exception as e:
         logger.error(f"Error creating Word document: {e}", exc_info=True)
         raise ToolError(f"Error creating Word document: {e}")
@@ -414,22 +447,7 @@ async def create_powerpoint_presentation(
 
         logger.info("PowerPoint presentation created successfully")
 
-        # Warnings describe a deck that was produced but not exactly as asked
-        # (an image that would not load, text shrunk to fit, a dropped footer).
-        # They ride alongside the result so the model can correct its next call
-        # instead of the problem living only in the server log. Each one is an
-        # object with a stable 'code' and 'severity', so a caller can branch on
-        # it rather than parse the sentence.
-        reported = [warning.as_dict() for warning in warnings]
-        if reported and isinstance(result, str):
-            return {
-                "file": result,
-                "slide_count": len(slides),
-                "warnings": reported,
-            }
-        if reported and isinstance(result, dict):
-            result = {**result, "warnings": reported}
-        return result
+        return _with_warnings(result, warnings, slide_count=len(slides))
     except ValueError as e:
         # Schema/validation problems: the message names the slide and field.
         logger.error(f"Invalid presentation input: {e}")

@@ -11,12 +11,15 @@ request path around the build step, see [`../architecture.md`](../architecture.m
 | Name | Where | Used by |
 |------|-------|---------|
 | `create_excel_from_markdown` | MCP tool declared in `main.py` | MCP clients |
-| `_markdown_to_excel_buffer()` | `xlsx_tools/base_xlsx_tool.py` | `main.py`, via `run_blocking` |
+| `_markdown_to_excel_buffer()` | `xlsx_tools/base_xlsx_tool.py` | `main.py`, via `run_blocking`. Returns `(BytesIO, warnings)` |
 | `_build_workbook()` | `xlsx_tools/base_xlsx_tool.py` | the buffer function; tests that want the `Workbook` object |
 | `markdown_to_excel()` | `xlsx_tools/base_xlsx_tool.py` | direct library use; builds and uploads synchronously |
 
 The tool takes `markdown_content` and `auto_filter`. `file_name` and
-`add_unique_prefix` go to the upload step, not the builder. There are no
+`add_unique_prefix` go to the upload step, not the builder. The buffer
+function hands `main.py` a buffer **and** a list of warnings, wrapped into the
+response by `main._with_warnings()` — see
+"[The warnings channel](#the-warnings-channel)". There are no
 dynamic Excel template tools; the only template is an optional
 `custom_xlsx_template.xlsx` that contributes named cell styles.
 
@@ -33,13 +36,14 @@ markdown_content
   ▼  base_xlsx_tool._build_workbook()
   ├─ reject empty input
   ▼
-  parser.walk_markdown_lines(lines)                 ONE pass → list of events
+  parser.walk_markdown_lines(lines, warnings=…)      ONE pass → list of events
   ├─ <!-- key: value -->   → pending directive (attaches to the next table)
   ├─ ## Sheet: Name        → SheetEvent (rename of the default sheet, or a new one)
   ├─ # … ######            → HeaderEvent at the current row, then +2 rows
   ├─ | … |                 → helpers.parse_table() → TableEvent at the current row,
   │                           then +len(rows)+2; directives attached; T-number assigned
-  └─ anything else         → dropped (and clears pending directives)
+  │                           no table in them → `table_incomplete`
+  └─ anything else         → dropped, reported as `line_dropped` (clears pending directives)
   ▼
   parser.collect_table_positions(events)            {sheet: {"T1": header_row, …}}
   ▼
@@ -63,7 +67,8 @@ markdown_content
   ▼
   reject a workbook with zero tables
   ▼
-_markdown_to_excel_buffer(): wb.save(BytesIO); circular_refs.detect_circular_references() (log only)
+_markdown_to_excel_buffer(): wb.save(BytesIO); circular_refs.detect_circular_references()
+                             → (BytesIO, warnings)
 ```
 
 The parser runs once and produces events that carry their Excel row numbers.
@@ -81,6 +86,7 @@ an earlier version computed positions twice and the copies drifted.
 | `helpers.py` | Everything cell-level: `parse_table()`, `resolve_cell()`, date and number detection, `adjust_formula_references()`, the `types` directive, formula-length guard, header uniqueness, `add_table_to_sheet()` |
 | `styles.py` | The `styles` directive: colour parsing, target and range expansion, named styles loaded from `custom_xlsx_template.xlsx`, and the non-destructive named-style application |
 | `circular_refs.py` | Static dependency graph over formula strings and DFS cycle detection; diagnostic only |
+| `warnings.py` | The Excel warning codes and their severities; `channel()` builds the per-build collector |
 
 ## How the interesting parts work
 
@@ -199,8 +205,92 @@ After saving, `detect_circular_references()` re-reads the bytes, builds a
 dependency graph from formula strings (string literals stripped, ranges
 expanded, external and structured references ignored) and runs an iterative
 DFS. Excel opens a cyclic workbook with a warning and shows 0 in the cells,
-which is invisible from the server side, so this exists to put the fact in
-the log. It never raises.
+which is invisible from the server side, so every cell it finds goes into the
+log and onto the warnings channel as `circular_reference`. It never raises: a
+detector failure must not block delivery of an otherwise valid workbook.
+
+### The warnings channel
+
+Almost everything this tool cannot take literally, it works around: a line
+that is not a table row is dropped, a formula naming a table that does not
+exist resolves against the current row instead, an over-length formula is
+stored as text, a duplicate Table header is renamed. Each keeps a workbook the
+caller can open — and each was, until
+[#114](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/114),
+invisible to them, since the response was a URL and the reason was in the log.
+
+A `WarningChannel` (`warning_channel.py`, codes in `xlsx_tools/warnings.py`)
+is created in `_markdown_to_excel_buffer()` and threaded through
+`_build_workbook()` → `walk_markdown_lines()`, `add_table_to_sheet()` →
+`adjust_formula_references()`, `_write_formula()`,
+`_ensure_unique_table_headers()`, `parse_styles_directive()`. It is an
+**argument, never module state**: builds run concurrently on `run_blocking`
+worker threads.
+
+Warnings are located the way a spreadsheet is: `sheet` plus `cell` where the
+problem has a coordinate, `sheet` plus the 1-based source `line` where it is
+still markdown.
+
+| Code | Severity | Raised when |
+|------|----------|-------------|
+| `line_dropped` | error | A line is not a heading, sheet marker, directive or table row, so it is not in the workbook |
+| `table_incomplete` | error | Lines starting with `\|` that `parse_table()` could not make a table of (no separator row, or no header); they are consumed there and never reach `line_dropped` |
+| `cell_failed` | error | The per-cell loop caught an exception; the cell is empty |
+| `table_reference_missing` | error | `T<n>` names a table the target sheet does not have; the reference fell back to the current row |
+| `sheet_reference_missing` | error | A cross-sheet reference names a sheet that does not exist; Excel will show `#REF!` |
+| `formula_unresolved` | error | `adjust_formula_references()` raised; the formula was written unchanged |
+| `formula_too_long` | error | Over Excel's 8,192-character limit; stored as text so the file still opens |
+| `circular_reference` | error | The post-save detector found this cell on a cycle |
+| `table_separator_missing` | warning | A table parsed with no `\|---\|---\|` row directly under its first row; that row was taken as the header |
+| `sheet_name_collision` | warning | A second sheet with the same name; Excel renames it and cross-sheet references break |
+| `sheet_name_invalid` | warning | openpyxl rejected the name; the sheet has a different one |
+| `header_renamed` | warning | A blank or duplicate header, renamed so the Excel Table is valid |
+| `style_entry_invalid` | warning | A `styles:` entry is malformed, unresolvable or sets nothing |
+| `style_range_too_large` | warning | A `styles:` range is over `MAX_STYLED_CELLS`; none of it was applied |
+| `style_failed` | warning | `apply_style_spec()` raised for one cell |
+
+The channel **de-duplicates** identical `(code, message, location)` entries
+and **caps** the number it carries (`warning_channel.DEFAULT_LIMIT`), which
+matters most here: a page of prose fed to this tool drops one line per line,
+and the cap turns that into fifty warnings plus a `warnings_truncated` note
+rather than hundreds.
+
+`parse_table()` never *requires* the separator row — it only skips rows that
+look like one, wherever in the run they are — so a table written without one,
+or with one somewhere other than under the header, still parses, with its
+first row taken as the header. That is usually what the caller meant, but it
+is decided for them and it moves every table-relative reference, since
+`T1.B[0]` counts from the first row after the header.
+
+A separator cell needs one dash, not three, as in CommonMark and in the Word
+tool's own check: demanding three wrote a caller's `|--|--|` into the sheet as
+a row of literal dashes and then reported `table_separator_missing` against a
+table that had one.
+
+**Position decides, not shape.** Only row 1 of the run can be the separator.
+A row of dashes anywhere else is data — `| - | - |` is how a caller writes
+"not applicable in either column" — and matching by shape alone dropped it
+from the sheet with nothing said. A run of nothing but separator rows has no
+header for them to sit under, so it returns an empty `TableData` and is
+reported as `table_incomplete`. Word applies the same two rules.
+
+`TableData.has_separator` carries the fact out of the parse so the table
+branch can report `table_separator_missing`. It means *the separator was
+directly under the first row* — the only position markdown gives it meaning —
+not merely that one was seen: a trailing or leading separator leaves which row
+is the header exactly as unclear as writing none at all. It defaults to True,
+because only markdown that was really parsed can say otherwise. Word's
+`parse_table()` returns the same flag as its fourth value and reports the same
+code.
+
+Two rules for the sites. A warning explains itself once: `_expand_target()`
+returns `None` rather than `[]` when it has already reported why a target was
+rejected, so `parse_styles_directive()` does not add a vaguer second entry
+about the same range. And a branch that consumes lines owns reporting them:
+`parse_table()` eats a run of `|` lines whether or not it finds a table in
+them, so the table branch of `walk_markdown_lines()` raises
+`table_incomplete` itself — those lines can never reach the `line_dropped`
+report in the `else` branch below it.
 
 ## Extension points
 
@@ -211,19 +301,22 @@ the log. It never raises.
 | A new directive | `parser.DIRECTIVE_PATTERN` already accepts any key; read it in `add_table_to_sheet()` or `_build_workbook()` | Directives are lower-cased keys with optional values |
 | A new style attribute | `styles.parse_style_spec()`, `StyleSpec`, `apply_style_spec()` | Flags without a value go in `_FLAG_ATTRS` |
 | A new date format | `helpers.DATE_FORMATS` | Pair the `strptime` pattern with the Excel display format; order is most specific first |
+| A new warning | `xlsx_tools/warnings.py` (code + severity), then `warnings.add(...)` at the site | `tests/test_xlsx_warnings.py::test_every_code_has_a_severity` fails if the table is missed; locate it with `sheet=` plus `cell=` or `line=` |
 
 ## Invariants and gotchas
 
 - **Non-table content is dropped.** Paragraphs, lists and anything else that
   is not a heading, a sheet marker, a directive or a table row never reach
-  the workbook. There is no warning. The tool description tells the model
-  this; the code relies on it.
+  the workbook. The tool description tells the model this; the code relies on
+  it — and reports each dropped line as `line_dropped`.
 - **A failing cell is logged and skipped.** The per-cell loop in
   `add_table_to_sheet()` catches every exception at WARNING and moves on,
   leaving that cell empty. The workbook is still produced.
-- **Warnings go to the log only.** Missing tables, unknown sheets, oversized
-  style ranges and circular references are all logged and never returned to
-  the caller. The Excel tool has no warnings channel like PowerPoint's.
+- **Anything dropped or worked around goes on the warnings channel**
+  ([#114](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/114)).
+  A log line alone is not enough: the caller gets a success response and never
+  reads the server log. A new forgiving branch needs a `warnings.add()` beside
+  its `logger` call — see "The warnings channel".
 - **Header cells are never converted.** A header that looks like `2024` stays
   the string `2024`; Excel Tables require string headers and a float would
   render as `2024.0`.
@@ -242,6 +335,8 @@ the log. It never raises.
 | `tests/test_xlsx_tier2_semantics.py` | Row-relative versus table-relative reference semantics, percent precision, thousands format, unambiguous digit grouping |
 | `tests/test_xlsx_tier4_robustness.py` | Sheet-name quoting, `nan`/`inf`/underscore refusal, font family preserved by inline formatting, Excel Table header uniqueness, formula-length guard, buffer and upload paths agreeing |
 | `tests/test_xlsx_styling.py` | The `styles` directive and template-defined named styles |
+| `tests/test_xlsx_warnings.py` | The warnings channel: every code, sheet/cell/line locations, the cap, the tool-boundary response shape |
+| `tests/test_warning_channel.py` | The shared record and collector the channel is built on |
 
 The usual pattern is to build the workbook, save it to a buffer, and reload
 it with `openpyxl.load_workbook` so assertions see what Excel would see. See
@@ -254,6 +349,5 @@ it with `openpyxl.load_workbook` so assertions see what Excel would see. See
   cross-sheet range.
 - **Inline formatting is whole-cell.** `**Total**` bolds a cell; `**Total**
   revenue` is written literally with the asterisks.
-- **No warnings channel.** See the invariants above; tracked in [#114](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/114).
 - **Column widths are estimated from text length**, clamped to 12–25
   characters, and do not account for proportional fonts.

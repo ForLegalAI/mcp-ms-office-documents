@@ -29,10 +29,12 @@ Rules:
 - Raise `ValueError` for input the caller can fix (the handler passes the
   message through) and `RuntimeError` for anything else.
 - If the builder ever has to work around something rather than fail, return
-  `(BytesIO, warnings)` and follow the PowerPoint tool's pattern so the
-  handler can attach the warnings to the result — records with a stable
-  `code` and `severity` (`pptx_tools/warnings.py`), not sentences. Do not log
-  and move on.
+  `(BytesIO, warnings)` so the handler can attach the warnings to the result
+  with `main._with_warnings()` — records with a stable `code` and `severity`,
+  not sentences. Do not log and move on. Build the channel on
+  `warning_channel.WarningChannel` and put the codes and their severities in
+  your package's `warnings.py`, as `docx_tools` and `xlsx_tools` do; see
+  [`shared-modules.md`](shared-modules.md#warning_channelpy).
 - Templates come from `template_utils.find_file_in_template_dirs()`, never
   a hard-coded path.
 - Images come from `image_utils.load_image()`, never `requests` directly.

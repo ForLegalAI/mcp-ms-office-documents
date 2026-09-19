@@ -256,19 +256,20 @@ class TestBufferFunctions:
     """Test document buffer creation functions."""
 
     def test_markdown_to_word_buffer(self):
-        """Test _markdown_to_word_buffer returns BytesIO."""
+        """_markdown_to_word_buffer returns (BytesIO, warnings), like PowerPoint."""
         from docx_tools import _markdown_to_word_buffer
 
-        result = _markdown_to_word_buffer("# Hello World\n\nThis is a test.")
+        result, warnings = _markdown_to_word_buffer("# Hello World\n\nThis is a test.")
 
         assert isinstance(result, io.BytesIO)
         assert result.tell() == 0
+        assert warnings == []      # nothing to work around in clean markdown
         content = result.read()
         assert len(content) > 0
         result.close()
 
     def test_markdown_to_excel_buffer(self):
-        """Test _markdown_to_excel_buffer returns BytesIO."""
+        """_markdown_to_excel_buffer returns (BytesIO, warnings), like PowerPoint."""
         from xlsx_tools import _markdown_to_excel_buffer
 
         markdown = """| Name | Value |
@@ -276,10 +277,11 @@ class TestBufferFunctions:
 | A    | 1     |
 | B    | 2     |
 """
-        result = _markdown_to_excel_buffer(markdown)
+        result, warnings = _markdown_to_excel_buffer(markdown)
 
         assert isinstance(result, io.BytesIO)
         assert result.tell() == 0
+        assert warnings == []      # nothing to work around in a clean table
         content = result.read()
         assert len(content) > 0
         result.close()

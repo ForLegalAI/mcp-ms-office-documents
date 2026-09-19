@@ -10,7 +10,7 @@ path around the build step, see [`../architecture.md`](../architecture.md).
 | Name | Where | Used by |
 |------|-------|---------|
 | `create_word_from_markdown` | MCP tool declared in `main.py` | MCP clients |
-| `_markdown_to_word_buffer()` | `docx_tools/base_docx_tool.py` | `main.py`, via `run_blocking` |
+| `_markdown_to_word_buffer()` | `docx_tools/base_docx_tool.py` | `main.py`, via `run_blocking`. Returns `(BytesIO, warnings)` |
 | `_markdown_to_doc()` | `docx_tools/base_docx_tool.py` | the buffer function; tests that want the `Document` object |
 | `markdown_to_word()` | `docx_tools/base_docx_tool.py` | direct library use; builds and uploads synchronously |
 | `process_markdown_content()` | `docx_tools/markdown_processor.py` | the base tool **and** the dynamic template tools |
@@ -18,7 +18,9 @@ path around the build step, see [`../architecture.md`](../architecture.md).
 The tool wrapper in `main.py` passes `markdown_content`, the three metadata
 fields (`title`, `author`, `subject`), `header_text`, `footer_text` and
 `include_toc` to the buffer function. `file_name` and `add_unique_prefix` go
-to the upload step, not the builder.
+to the upload step, not the builder. It gets back a buffer **and** a list of
+warnings, and wraps them with `main._with_warnings()` — see
+"[The warnings channel](#the-warnings-channel)".
 
 The dynamic Word template tools (`docx_tools/dynamic_docx_tools.py`) reuse the
 same Markdown pipeline to render placeholder values. They are documented in
@@ -38,7 +40,7 @@ markdown_content
   ├─ document_features.set_header_footer()    {page}/{pages} become PAGE/NUMPAGES fields
   ├─ style_map.load_global_style_map()        style names from config/docx_templates.yaml
   ▼
-  markdown_processor.process_markdown_content(doc, content, style_map=…)
+  markdown_processor.process_markdown_content(doc, content, style_map=…, warnings=…)
   ├─ patterns.normalize_newlines()            literal "\n", CR and CRLF → real newline
   ├─ patterns.expand_br_to_block_breaks()     <br> before a list/heading/quote → real newline
   ├─ split into lines, then loop:
@@ -68,7 +70,7 @@ markdown_content
   ├─ backslash escapes → private-use placeholders, restored after tokenising
   └─ inline_markdown.build_inline_pattern().split() → runs, hyperlinks
   ▼
-_markdown_to_word_buffer(): doc.save(BytesIO)
+_markdown_to_word_buffer(): doc.save(BytesIO) → (BytesIO, warnings)
 ```
 
 Every stage after the template is loaded works on one `docx.Document` in
@@ -86,17 +88,21 @@ line by line and paragraphs are appended as they are recognised.
 | `block_elements.py` | Tables, lists, images, horizontal lines, alignment detection |
 | `numbering.py` | Ordered-list restart through fresh `<w:num>` instances; style-aware numbering resolution; indent re-assertion |
 | `style_map.py` | `StyleMap` dataclass, config merging, `apply_style()` with fallback, the global map loaded from `config/docx_templates.yaml` |
+| `warnings.py` | The Word warning codes and their severities; `channel()` builds the per-build collector |
 | `document_features.py` | Template resolution, header/footer with PAGE/NUMPAGES fields, TOC field |
 | `conditionals.py` | `{{#if}}`/`{{^if}}`/`{{/if}}` marker paragraphs for dynamic templates |
 | `dynamic_docx_tools.py` | YAML-driven template tools, placeholder replacement across split runs, live registration. See [`../dynamic-templates.md`](../dynamic-templates.md) |
 
-Two root modules are part of this pipeline:
+Three root modules are part of this pipeline:
 
 - `inline_markdown.py` holds the emphasis grammar. Word asks for the full set
   of spans (`highlight=True, superscript=True, subscript=True`), so
   `patterns._INLINE_FORMAT_RE` is built from it. Change the grammar there, not
   in `patterns.py`; the PowerPoint renderer uses the same source.
 - `image_utils.py` downloads and validates images, including the SSRF guard.
+- `warning_channel.py` holds the severity vocabulary, the `DocumentWarning`
+  record and the `WarningChannel` collector. `docx_tools/warnings.py` supplies
+  the codes; see "[The warnings channel](#the-warnings-channel)".
 
 ## How the interesting parts work
 
@@ -229,6 +235,77 @@ for the blank line and splits the cell into paragraphs
 (`_BR_PARAGRAPH_RE` in `add_table_to_doc()`); a single `<br>` is a soft
 break like everywhere else.
 
+### The warnings channel
+
+The renderer is deliberately forgiving: a block that raises is skipped, an
+image that will not load becomes a bracketed placeholder, a style the template
+does not define falls back to `Normal`. Each of those keeps a document that
+would otherwise be lost — and each was, until
+[#114](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/114),
+invisible to the caller, who got a URL and a success message while the log
+kept the reason.
+
+A `WarningChannel` (`warning_channel.py`, codes in `docx_tools/warnings.py`)
+is created in `_markdown_to_word_buffer()` and threaded down through
+`process_markdown_content()` → `process_markdown_block()` → `add_table_to_doc()`,
+`add_image_to_doc()`, `process_list_items()`, `apply_style()`. It is an
+**argument, never module state**: builds run concurrently on `run_blocking`
+worker threads, and a shared list would mix two callers' documents together.
+
+Every site that drops or substitutes something calls
+`warnings.add(code, message, line=…)` next to its existing log call. The line
+is the 1-based source line of the caller's markdown, so the message points at
+what to fix. `style_map.apply_style()` carries a line only where the caller
+named the style — a `<!-- style: … -->` directive; a mapped style comes from
+configuration and has no line to give.
+
+| Code | Severity | Raised when |
+|------|----------|-------------|
+| `block_failed` | error | `process_markdown_block()` caught an exception; the block is missing |
+| `table_failed` | error | `doc.add_table()` raised; the whole table is missing |
+| `table_cell_failed` | error | One cell could not be written; it is empty |
+| `image_failed` | error | The image would not load; the placeholder line stands in for it |
+| `table_not_recognised` | warning | A line of pipe markup that is not a table at all; it fell through to the paragraph branch and was written as text |
+| `table_separator_missing` | warning | A table parsed with no `\|---\|---\|` row directly under its first row; that row was taken as the header |
+| `style_missing` | warning | The template has no such style; the fallback was used |
+| `style_fallback_missing` | warning | The fallback style is missing too |
+| `widths_invalid` | warning | A `<!-- widths -->` directive is not a list of numbers; it was ignored |
+
+Two properties of the channel matter here. It **de-duplicates** identical
+`(code, message, location)` entries, so a template without `List Number` warns
+once rather than once per list item; and it **caps** the number of distinct
+warnings it carries (`warning_channel.DEFAULT_LIMIT`), appending one
+`warnings_truncated` entry rather than returning thousands.
+
+Severity is about the document, which is why the same input can rate
+differently here and in Excel: a lone line of pipe markup is a `warning` in
+Word, where it falls through to the paragraph branch and is still in the file,
+and an `error` (`table_incomplete`) in Excel, where a worksheet has nowhere to
+put it. Where the outcome *is* the same in both tools the code is the same
+too: a table whose first row was made the header because no separator row sat
+under it reports `table_separator_missing` in either, at `warning` severity.
+`parse_table()` returns that as its fourth value, and it means the separator
+was in the one position markdown gives it meaning. Only row 1 of the run is
+tested: a row of dashes anywhere else is data — `| - | - |` is how a caller
+writes "not applicable in either column" — and matching by shape alone dropped
+it from the table with nothing said. A run of nothing but separator rows has
+no header for one of them to sit under, so it is not a table at all: it takes
+the `table_not_recognised` path and the lines are written as prose. Excel
+applies both rules too, reporting `table_incomplete` for the second because a
+worksheet has nowhere to put the lines.
+
+`_is_separator_line()` is the shape test both the guard and the loop use, so
+they cannot disagree about what a separator row looks like; position is
+decided by the caller of it. A separator row must also carry dashes in
+*every* cell: the empty-cell exemption this once had made `all()` vacuously
+true for a row of blank cells, so `|  |  |` passed as a separator and the
+caller's blank row was swallowed with the table counted as well formed. Excel's
+`_is_separator_row()` checks every cell; so does this.
+
+`process_markdown_content()` takes `warnings=None`, which discards them. The
+dynamic Word template tools render through that path and report nothing, as
+before; only the static tool has a response shape to put them in.
+
 ### Headers, footers, TOC
 
 `set_header_footer()` rewrites the first paragraph of every section's default
@@ -248,16 +325,22 @@ it on open.
 | A new comment directive | `markdown_processor.process_markdown_block()` directive branch, and the branch that consumes it | Directives are `key` or `key: value`; keys are lower-cased |
 | A new style-map key | `style_map.py` (`StyleMap` field, `_normalize()`), then the call site that applies it | Keep the field name in sync with the YAML key the admin UI writes |
 | A new document-level feature | `document_features.py`, wired in `base_docx_tool._markdown_to_doc()` | Also add a tool parameter in `main.py` and pass it through the buffer function |
+| A new warning | `docx_tools/warnings.py` (code + severity), then `warnings.add(...)` at the site | `tests/test_docx_warnings.py::test_every_code_has_a_severity` fails if the table is missed; the message names what the caller should change |
 
 ## Invariants and gotchas
 
-- **A failing block is skipped, not fatal** ([#114](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/114)). `process_markdown_block()` catches
+- **A failing block is skipped, not fatal.** `process_markdown_block()` catches
   every exception, logs it at ERROR with the line number, and advances one
   line. The document is still produced, minus that block. Keep this when
   editing: a rendering bug must not cost the user the whole document.
+- **Anything skipped or substituted goes on the warnings channel**
+  ([#114](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/114)).
+  A log line alone is not enough: the caller gets a success response and never
+  reads the server log. A new forgiving branch needs a `warnings.add()` beside
+  its `logger` call — see "The warnings channel".
 - **A failing image becomes text.** `add_image_to_doc()` writes a paragraph
-  reading `[Image could not be loaded: <url>]` and logs a warning. The caller
-  never sees an error, and the Word tool has no warnings channel to report it.
+  reading `[Image could not be loaded: <url>]`, logs a warning and reports
+  `image_failed`.
 - **Never hold a `StyleMap` in module state.** See style mapping above.
 - **`normalize_newlines()` and `expand_br_to_block_breaks()` are
   idempotent.** The template path calls them for routing and the processor
@@ -287,7 +370,9 @@ it on open.
 | `tests/test_docx_escaped_newlines.py` | Literal `\n` and backslash escapes |
 | `tests/test_docx_soft_breaks.py` | The line-break model: `<br>`, trailing spaces, CR, runs stopping before blocks, quotes, cells, headers |
 | `tests/test_docx_templates.py`, `test_docx_placeholder_formatting.py`, `test_docx_conditionals.py` | Dynamic templates: placeholder replacement across runs, formatting preservation, conditionals |
+| `tests/test_docx_warnings.py` | The warnings channel: every code, the source line, de-duplication, the tool-boundary response shape |
 | `tests/test_inline_markdown.py` | The shared inline grammar |
+| `tests/test_warning_channel.py` | The shared record and collector the channel is built on |
 
 The usual pattern is to call `_markdown_to_doc()` directly and inspect the
 returned `Document`, which avoids the upload step entirely. See
@@ -295,7 +380,7 @@ returned `Document`, which avoids the upload step entirely. See
 
 ## Known limitations
 
-The first three are tracked in [#115](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/115); the missing warnings channel in [#114](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/114).
+The first three are tracked in [#115](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/115).
 
 - **Table widths assume US Letter with 1-inch margins.** `add_table_to_doc()`
   distributes `<!-- widths -->` over a fixed 6.5 inches, while

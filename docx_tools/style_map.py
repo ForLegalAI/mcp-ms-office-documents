@@ -20,6 +20,8 @@ from typing import Optional
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 
+from . import warnings as W
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_HEADING = ("Heading 1", "Heading 2", "Heading 3",
@@ -108,11 +110,20 @@ def build_style_map(*mappings) -> StyleMap:
     return replace(DEFAULT_STYLE_MAP, **overrides) if overrides else DEFAULT_STYLE_MAP
 
 
-def apply_style(obj, style_name, fallback="Normal") -> None:
+def apply_style(obj, style_name, fallback="Normal", warnings=None, line=None) -> None:
     """Set ``obj.style`` to *style_name*, falling back if the style is missing.
 
     *obj* is a paragraph or table. A missing style raises ``KeyError`` in
     python-docx; we log and fall back instead of letting it abort the render.
+
+    *warnings* is the build's :class:`~warning_channel.WarningChannel`. A
+    fallback means the document does not look as the caller asked, which is
+    only visible to them if it is reported — so the substitution goes on the
+    channel as well as into the log. The channel de-duplicates, so a template
+    missing ``List Number`` reports once, not once per list item.
+
+    *line* is the 1-based source line, known only where the caller named the
+    style itself — a ``<!-- style: … -->`` directive.
     """
     if not style_name:
         return
@@ -123,15 +134,30 @@ def apply_style(obj, style_name, fallback="Normal") -> None:
         fallback_desc = repr(fallback) if fallback else "the document default"
         logger.warning("Style %r not found in document; falling back to %s.",
                        style_name, fallback_desc)
+        if warnings is not None:
+            warnings.add(
+                W.STYLE_MISSING,
+                f"style '{style_name}' is not defined in the Word template; "
+                f"{fallback or 'the document default'} was used instead.",
+                line=line,
+            )
     if fallback and fallback != style_name:
         try:
             obj.style = fallback
         except KeyError:
             logger.warning("Fallback style %r also missing; leaving default style.",
                            fallback)
+            if warnings is not None:
+                warnings.add(
+                    W.STYLE_FALLBACK_MISSING,
+                    f"fallback style '{fallback}' is missing from the Word "
+                    f"template too; the document default was used.",
+                    line=line,
+                )
 
 
-def apply_style_to_block_element(doc, element, style_name, fallback="Normal") -> None:
+def apply_style_to_block_element(doc, element, style_name, fallback="Normal",
+                                 warnings=None, line=None) -> None:
     """Apply *style_name* to a raw body element (``<w:p>`` or ``<w:tbl>``).
 
     Used by the ``<!-- style: … -->`` directive to style block content after it has
@@ -140,18 +166,21 @@ def apply_style_to_block_element(doc, element, style_name, fallback="Normal") ->
     """
     tag = element.tag
     if tag.endswith('}p'):
-        apply_style(Paragraph(element, doc._body), style_name, fallback)
+        apply_style(Paragraph(element, doc._body), style_name, fallback,
+                    warnings=warnings, line=line)
     elif tag.endswith('}tbl'):
-        apply_style(Table(element, doc._body), style_name, fallback=None)
+        apply_style(Table(element, doc._body), style_name, fallback=None,
+                    warnings=warnings, line=line)
 
 
-def add_mapped_heading(doc, level, style_map=DEFAULT_STYLE_MAP):
+def add_mapped_heading(doc, level, style_map=DEFAULT_STYLE_MAP, warnings=None):
     """Add a heading paragraph using *style_map*'s style for *level* (1-based).
 
     With default styles this is equivalent to ``doc.add_heading('', level)``.
     """
     para = doc.add_paragraph()
-    apply_style(para, style_map.heading_style(level), fallback="Normal")
+    apply_style(para, style_map.heading_style(level), fallback="Normal",
+                warnings=warnings)
     return para
 
 
