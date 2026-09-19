@@ -327,12 +327,21 @@ Cambria, Gelasio for Georgia — whose advances are identical by design, so
 measuring one measures the real thing; then any installed sans face, which is
 a real measurement of the wrong font; and if no font file can be loaded at
 all, `measure_lines()` returns None and the old `AVG_CHAR_WIDTH_RATIO`
-arithmetic runs instead. The runtime image installs one package per family in
-that table (`font-carlito`, `font-liberation`, `font-caladea`,
-`font-gelasio`), so the middle case is the usual one — the shipped templates
-set Aptos, which has no free metric-compatible clone.
-`test_every_metric_compatible_face_is_installed` reads the Dockerfile and
-fails if the table ever promises a face the image does not carry.
+arithmetic runs instead. The runtime image installs a package per family that
+Alpine packages (`font-carlito`, `font-liberation`) — the shipped templates
+set Aptos, which has no free metric-compatible clone, so the generic tier is
+the usual one anyway. **Alpine packages neither Caladea nor Gelasio**, so in
+the container Cambria and Georgia fall through to that generic sans; the two
+stay in the table because a Debian host installing `fonts-crosextra-caladea`
+and `fonts-gelasio` does measure them exactly.
+
+Two tests keep this honest. `test_every_metric_compatible_face_is_installed`
+reads the Dockerfile and fails if the table promises a face the image could
+carry but does not, with the unpackaged families pinned by name so losing one
+more is a deliberate edit. `test_every_font_package_exists_in_alpine`
+(`network`) checks every package the Dockerfile names against Alpine's index:
+a name Alpine does not have fails the image *build*, not a test, and that is
+how v4.0-beta.4 came to publish no image at all.
 
 Tables are sized by row count instead, through `fit_table_font_size()`, and
 warn when they still would not fit at the minimum size.
@@ -411,7 +420,7 @@ Both are reported.
 | `tests/test_pptx_warnings.py` | Warning records: codes, severities, the deck-wide case, and the tool boundary |
 | `tests/test_pptx_bullet_glyphs.py` | Bullets in a text box: the master's glyphs and indents, and the order of `<a:pPr>` |
 | `tests/test_pptx_table_formatting.py` | Column widths, cell and row fills, merged blocks, and what happens when they do not fit the table |
-| `tests/test_pptx_text_metrics.py` | Measured line counts, wrapping, face selection, and the arithmetic fallback |
+| `tests/test_pptx_text_metrics.py` | Measured line counts, wrapping, face selection, the arithmetic fallback, and that the image's font packages exist and match the table |
 | `tests/test_pptx_sections.py` | Outline-pane sections |
 | `tests/test_pptx_templates.py` | Registry loading, `.potx`, layout classification and resolution, defaults |
 | `tests/test_admin_pptx.py` | Admin UI support for PowerPoint templates |

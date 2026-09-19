@@ -32,8 +32,10 @@ python main.py
 Everything works without the image's font packages; the PowerPoint tool's
 overflow warnings are then measured against whichever font the host has, and
 fall back to an arithmetic estimate on a host with none. Install
-`fonts-crosextra-carlito`, `fonts-liberation`, `fonts-crosextra-caladea` and
-`fonts-gelasio` (Debian/Ubuntu names) to match what the image measures.
+`fonts-crosextra-carlito` and `fonts-liberation` (Debian/Ubuntu names) to match
+what the image measures — and `fonts-crosextra-caladea` and `fonts-gelasio` to
+beat it, since Alpine packages neither, so the container measures Cambria and
+Georgia decks with a generic sans while such a host measures them exactly.
 
 The server listens on `0.0.0.0:8958` with the MCP endpoint at `/mcp`.
 Template and config directories are resolved relative to the checkout

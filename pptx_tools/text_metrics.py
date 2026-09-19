@@ -13,7 +13,10 @@ What "available" means in practice:
 * a **metric-compatible** substitute, whose glyph advances are identical by
   design: Carlito for Calibri, Liberation Sans or Arimo for Arial, Liberation
   Serif or Tinos for Times New Roman, Caladea for Cambria. Measuring one of
-  these is measuring the real thing;
+  these is measuring the real thing. The shipped image carries only the ones
+  Alpine packages (Carlito, Liberation); Caladea and Gelasio stay in the table
+  for hosts that have them, so Cambria and Georgia reach the next tier in the
+  container and are measured properly on a host that installs those faces;
 * failing both, any installed sans face, which is a real measurement of the
   wrong font — still shape-aware, and still far closer than a character count;
 * failing everything, nothing: :func:`measure_lines` returns None and the
@@ -35,6 +38,9 @@ logger = logging.getLogger(__name__)
 
 # Faces whose advances match the named typeface exactly. Substituting one of
 # these is not an approximation; they exist to be dropped in for the other.
+# A name here is a candidate, not a promise the file exists: Caladea and Gelasio
+# are packaged by Debian but not by Alpine, so the container falls through to
+# GENERIC_SANS for Cambria and Georgia while a Debian host measures them exactly.
 METRIC_COMPATIBLE = {
     "calibri": ("Carlito",),
     "cambria": ("Caladea",),
