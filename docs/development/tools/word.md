@@ -286,7 +286,11 @@ too: a table whose first row was made the header because no separator row sat
 under it reports `table_separator_missing` in either, at `warning` severity.
 `parse_table()` returns that as its fourth value, and it means the separator
 was in the one position markdown gives it meaning — not merely that one
-appeared somewhere in the run.
+appeared somewhere in the run. A separator row must also carry dashes in
+*every* cell: the empty-cell exemption this once had made `all()` vacuously
+true for a row of blank cells, so `|  |  |` passed as a separator and the
+caller's blank row was swallowed with the table counted as well formed. Excel's
+`_is_separator_row()` checks every cell; so does this.
 
 `process_markdown_content()` takes `warnings=None`, which discards them. The
 dynamic Word template tools render through that path and report nothing, as

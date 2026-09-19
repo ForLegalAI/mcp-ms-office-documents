@@ -85,7 +85,12 @@ def parse_table(lines, start_idx):
         # Detect separator row and extract alignment
         if _SEPARATOR_RE.match(line.replace('|', ' | ')):
             cells = [c.strip() for c in line.split('|')[1:-1]]
-            if all(re.match(r'^:?-+:?$', c.strip()) for c in cells if c.strip()):
+            # Every cell must carry dashes. Skipping the empty ones — as this
+            # did — made `all()` vacuously true for a row of blank cells, so
+            # `|  |  |` passed as a separator: the caller's blank row was
+            # swallowed and the table counted as properly formed. Excel's
+            # _is_separator_row() checks every cell, and now so does this.
+            if cells and all(re.match(r'^:?-+:?$', c) for c in cells):
                 col_alignments = _parse_alignment_row(line)
                 separator_in_place = separator_in_place or idx == 1
                 continue

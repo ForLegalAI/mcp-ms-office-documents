@@ -169,6 +169,26 @@ class TestInstructionsNotFollowed:
 
         assert codes(warnings) == [W.TABLE_SEPARATOR_MISSING]
 
+    def test_a_blank_row_is_not_a_separator_row(self):
+        """`|  |  |` carries no dashes. Treating it as a separator swallowed
+        the caller's blank row and counted the table as properly formed."""
+        doc = Document()
+        warnings = W.channel()
+        process_markdown_content(
+            doc, "| Item | Qty |\n|  |  |\n| A | 1 |\n", warnings=warnings)
+
+        assert len(doc.tables[0].rows) == 3          # the blank row survives
+        assert codes(warnings) == [W.TABLE_SEPARATOR_MISSING]
+
+    def test_a_real_separator_row_still_is_one(self):
+        doc = Document()
+        warnings = W.channel()
+        process_markdown_content(
+            doc, "| A | B |\n|:--|--:|\n| 1 | 2 |\n", warnings=warnings)
+
+        assert len(doc.tables[0].rows) == 2          # the separator is not a row
+        assert list(warnings) == []
+
     def test_the_table_is_still_built(self):
         """A warning, not an error: every row the caller wrote is in it."""
         doc = Document()
