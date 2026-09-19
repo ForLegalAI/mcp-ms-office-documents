@@ -57,10 +57,12 @@ test. `metrics.reset()` clears counters.
 **Mutation-testing a change.** A test-only change has no bug to regress
 against, so the way to show a new test has teeth is to break the source and
 watch it fail. Run those with `PYTHONDONTWRITEBYTECODE=1` and clear
-`__pycache__` between rounds. Python validates a `.pyc` on the source's
-*whole-second* mtime and its size, and a mutation that reorders lines changes
-neither: edit, run, restore within the same second and the interpreter serves
-the stale bytecode instead. It fails in the direction that matters — a real
+`__pycache__` between rounds. A default timestamp-based `.pyc` records the
+source's mtime **truncated** to whole seconds and its size, and validates on
+those two alone; a mutation that reorders lines or swaps equal-length text
+changes neither, so edit, run and restore inside one second and the
+interpreter serves the stale bytecode instead. (A hash-based `.pyc` does not
+have this failure mode, so the trap is specific to the default.) It fails in the direction that matters — a real
 gap looks covered, and a mutation that was never actually applied looks
 killed. This is not hypothetical; it produced two wrong results while #112's
 review was being worked, one of them reported before it was caught.
