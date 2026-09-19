@@ -114,7 +114,7 @@ Each warning is an object rather than a sentence, so you can act on it without r
 | `line` | the line of `markdown_content` to look at, counting from 1; absent when the problem has no single line (a style name that came from configuration) |
 | `message` | the sentence, naming what to change |
 
-The codes are `block_failed`, `table_failed`, `table_cell_failed`, `image_failed`, `style_missing`, `style_fallback_missing` and `widths_invalid`. So `any(w["severity"] == "error" for w in warnings)` answers "did the document lose anything". A document with nothing to report comes back exactly as before — the bare link, no `warnings` key.
+The codes are `block_failed`, `table_failed`, `table_cell_failed`, `image_failed`, `table_not_recognised` (pipe markup with no `|---|---|` separator row under it, written as ordinary text instead), `style_missing`, `style_fallback_missing` and `widths_invalid`. So `any(w["severity"] == "error" for w in warnings)` answers "did the document lose anything". A document with nothing to report comes back exactly as before — the bare link, no `warnings` key.
 
 ## Excel
 

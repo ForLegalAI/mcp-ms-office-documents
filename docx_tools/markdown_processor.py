@@ -370,6 +370,21 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
                 if word_table is not None:
                     _collect(word_table._tbl)
                 return next_idx, elements
+            # Pipe markup that is not a table: a lone row with no separator
+            # beneath it. Nothing is lost — the line falls through to the
+            # paragraph branch below and is written as ordinary text — but the
+            # caller asked for a table and will find pipes, so say so. The
+            # Excel tool reports the same input as an error, because there it
+            # has nowhere to fall through to (#114).
+            if warnings is not None:
+                warnings.add(
+                    W.TABLE_NOT_RECOGNISED,
+                    f"'{stripped}' looks like a table row but is not part of a "
+                    f"table — one needs a header row, a separator row "
+                    f"(|---|---|) and at least one data row — so it was "
+                    f"written as ordinary text.",
+                    line=source_line,
+                )
         # Page break (---)
         if PAGE_BREAK_PATTERN.match(stripped):
             doc.add_page_break()

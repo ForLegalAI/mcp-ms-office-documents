@@ -265,6 +265,7 @@ configuration and has no line to give.
 | `table_failed` | error | `doc.add_table()` raised; the whole table is missing |
 | `table_cell_failed` | error | One cell could not be written; it is empty |
 | `image_failed` | error | The image would not load; the placeholder line stands in for it |
+| `table_not_recognised` | warning | A line of pipe markup with no separator row under it; it fell through to the paragraph branch and was written as text |
 | `style_missing` | warning | The template has no such style; the fallback was used |
 | `style_fallback_missing` | warning | The fallback style is missing too |
 | `widths_invalid` | warning | A `<!-- widths -->` directive is not a list of numbers; it was ignored |
@@ -274,6 +275,12 @@ Two properties of the channel matter here. It **de-duplicates** identical
 once rather than once per list item; and it **caps** the number of distinct
 warnings it carries (`warning_channel.DEFAULT_LIMIT`), appending one
 `warnings_truncated` entry rather than returning thousands.
+
+Severity is about the document, which is why the same input can rate
+differently here and in Excel: pipe markup with no separator row is a
+`warning` in Word, where the line falls through to the paragraph branch and is
+still in the file, and an `error` (`table_incomplete`) in Excel, where a
+worksheet has nowhere to put it.
 
 `process_markdown_content()` takes `warnings=None`, which discards them. The
 dynamic Word template tools render through that path and report nothing, as

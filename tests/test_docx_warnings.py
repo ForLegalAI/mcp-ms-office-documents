@@ -125,6 +125,27 @@ class TestContentThatDidNotArrive:
 
 class TestInstructionsNotFollowed:
 
+    def test_pipe_markup_that_is_not_a_table_is_reported(self):
+        """Nothing is lost — it renders as prose — but the caller asked for a
+        table and will find pipes. Excel calls the same input an error,
+        because there the line has nowhere to fall through to."""
+        warning = only(render("intro\n\n| Item | Qty |\n"), W.TABLE_NOT_RECOGNISED)
+
+        assert warning.severity == SEVERITY_WARNING
+        assert warning.location["line"] == 3
+        assert "| Item | Qty |" in warning.message
+        assert "separator row" in warning.message
+
+    def test_the_text_is_still_in_the_document(self):
+        doc = Document()
+        process_markdown_content(doc, "| Item | Qty |\n")
+
+        assert "| Item | Qty |" in doc.paragraphs[-1].text
+
+    def test_a_well_formed_table_reports_nothing(self):
+        assert list(render("| A | B |\n|---|---|\n| 1 | 2 |\n")) == []
+
+
     def test_a_style_the_template_lacks_is_reported(self):
         warning = only(render("<!-- style: Definitely Not A Style -->\nhello\n"),
                        W.STYLE_MISSING)
