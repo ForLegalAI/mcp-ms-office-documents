@@ -328,10 +328,21 @@ itself has to get right:
   set", and the first save would silently clear it. Opening pre-filled means
   saving without touching anything is a no-op in effect.
 - **A value the base Word template does not define is still offered**, marked
-  *not in the base template*. The dropdowns list the base template's styles
-  because that is what the static Word tool renders onto — but dropping a
-  configured value for being unrecognised would lose configuration by
-  rendering a page.
+  *not in the base Word template*. The dropdowns list the base template's
+  styles because that is what the static Word tool renders onto — but dropping
+  a configured value for being unrecognised would lose configuration by
+  rendering a page. The marker is narrower than the mapping's reach: a Word
+  *template* tool renders onto its own document, which may well define the
+  style, so a note beside the grid says the marker means "missing here" rather
+  than "missing everywhere". It appears only when something is marked.
+- **Saving writes every field on the page**, because `parse_style_mapping()`
+  reads all of `STYLE_KEYS` from the form and each is pre-selected from the
+  mapping in force. That is what makes an untouched field a genuine no-op
+  rather than an almost-no-op. The cost is a narrow TOCTOU: a master edit
+  landing on the volume between the `GET` and the `POST` is overwritten by
+  what the form was rendered with. The page says to reload before saving where
+  that is possible; locking a hand-edited file an admin may be holding open in
+  an editor is not worth it.
 - **A master key the override drops is named on the page** ("Not in force"),
   because the override replaces the master's mapping. Otherwise an admin
   reading `docx_templates.yaml` on the volume sees a setting that is simply

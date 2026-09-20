@@ -458,7 +458,33 @@ def test_a_configured_style_missing_from_the_base_template_is_kept_and_flagged(a
     html = client.get("/admin/styles").text
 
     assert 'value="Ghost Style"' in html
-    assert "not in the base template" in html
+    assert _selected(html, "heading_1") == "Ghost Style", "and still selected"
+    assert "not in the base Word template" in html
+
+
+def test_the_marker_does_not_claim_more_than_it_knows(admin_client):
+    """The dropdowns list the *base* template's styles, because that is what
+    `markdown_to_word` renders onto. The mapping also reaches every Word
+    template tool, each rendering onto its own document — which may well define
+    the style. Reading the marker as "missing everywhere" is the shape of
+    wrongness #161 is about, so the page says which it means."""
+    client, custom, cfg = admin_client
+    _install_base_docx(custom, styles=[])
+    _write(cfg / MASTER, {"style_mapping": {"heading_1": "Ghost Style"}})
+
+    html = client.get("/admin/styles").text
+
+    assert "still uses it" in html, "a marked style is not necessarily wrong"
+    assert "Ghost Style" in re.search(r"Marked styles.*?</p>", html, re.S).group(0)
+
+
+def test_no_note_about_marked_styles_when_nothing_is_marked(admin_client):
+    """A note that is always there is a note nobody reads."""
+    client, custom, cfg = admin_client
+    _install_base_docx(custom, styles=[])
+    _write(cfg / MASTER, {"style_mapping": {"heading_1": "Heading 2"}})
+
+    assert "Marked styles" not in client.get("/admin/styles").text
 
 
 def test_a_key_the_renderer_ignores_is_flagged_and_stays_flagged(admin_client):

@@ -31,6 +31,11 @@ from admin.views.templates import builtin_style_names
 UNSET = "__default__"
 
 
+#: Appended to a style name the base Word template does not define. Says only
+#: what is true — see :func:`_reach_note` for why it cannot say more.
+MISSING_SUFFIX = " — not in the base Word template"
+
+
 def _option_label(style: str, offered: Sequence[str]) -> str:
     """A style name, marked when the base Word template does not define it.
 
@@ -39,7 +44,31 @@ def _option_label(style: str, offered: Sequence[str]) -> str:
     cannot offer it — so it is offered *and* flagged, rather than silently
     listed as though the base template provided it.
     """
-    return style if style in offered else f"{style} — not in the base template"
+    return style if style in offered else f"{style}{MISSING_SUFFIX}"
+
+
+def _reach_note(mapping: Dict[str, str], offered: Sequence[str]):
+    """Why a marked style is not necessarily a mistake.
+
+    The dropdowns list the *base* Word template's styles, because that is what
+    `markdown_to_word` renders onto. But this mapping also reaches every Word
+    template tool, and each of those renders onto its **own** document — which
+    may well define the style. So the marker means "missing here", and saying
+    only that would leave an admin to read it as "missing everywhere", which is
+    the shape of wrongness #161 is about.
+
+    Only shown when something is actually marked; a note that is always there
+    is a note nobody reads.
+    """
+    marked = sorted({v for v in mapping.values() if v and v not in offered})
+    if not marked or not offered:
+        return None
+    return P(
+        "Marked styles (" + ", ".join(marked) + ") are not in the base Word "
+        "template, so documents rendered onto it fall back to the built-in. "
+        "That is not necessarily wrong: a Word template that defines the style "
+        "in its own document still uses it. It is only a mistake where neither "
+        "document has it.", cls="muted")
 
 
 def _style_select(key: str, current: str, offered: Sequence[str],
@@ -95,6 +124,11 @@ def _provenance(stored: bool, mapping: Dict[str, str], master: Dict[str, str],
             "hand-written config/docx_templates.yaml declares. Saving copies "
             "it into this server's managed config; the master file is never "
             "rewritten.", "info"))
+        body.append(P(
+            "Saving writes every field on this page, so reload it before "
+            "saving if the master file may have been edited on the volume "
+            "since it loaded — this form would otherwise store what it was "
+            "rendered with.", cls="muted"))
     if not offered:
         body.append(P(
             "The base Word template's styles could not be read, so the "
@@ -151,6 +185,9 @@ def global_styles_page(ctx, *, csrf: str, mapping: Dict[str, Any],
         ]
         groups.append(Div(P(title, cls="group-title"),
                           Div(*fields, cls="role-grid")))
+    reach = _reach_note(mapping, offered)
+    if reach is not None:
+        groups.append(reach)
 
     controls = [Button("Save & apply", type="submit", cls="btn btn-primary")]
     if stored:
