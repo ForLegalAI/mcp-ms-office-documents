@@ -123,6 +123,7 @@ class PowerpointPresentation(SlideHelpers):
 
         self._remove_template_slides()
         self._build_slides(self.slides)
+        self._drop_unused_placeholders()
         self._apply_sections()
         if self._footer_text or self._show_slide_numbers:
             self._apply_footer_and_slide_numbers()
@@ -326,6 +327,39 @@ class PowerpointPresentation(SlideHelpers):
         if note:
             self._warn(index, W.LAYOUT_SUBSTITUTED, note)
         return self.presentation.slides.add_slide(layout)
+
+    # Chrome is cloned and filled by _apply_footer_and_slide_numbers, which
+    # runs after this pass; an empty one there is not an unused placeholder.
+    _CHROME_PLACEHOLDERS = frozenset((
+        PP_PLACEHOLDER.DATE, PP_PLACEHOLDER.FOOTER, PP_PLACEHOLDER.SLIDE_NUMBER,
+    ))
+
+    def _drop_unused_placeholders(self) -> None:
+        """Remove placeholders no slide content reached.
+
+        ``add_slide()`` copies every placeholder its layout defines, so a
+        layout offering more than the slide filled — the third card of a
+        three-card layout, the heading strip of a Comparison column a caller
+        gave no heading, the body of a Section Header — left a box reading
+        "Click to add text" in the deck. It does not print and does not show
+        in a slideshow, but it is the first thing anyone opening the file to
+        edit it sees, and on the template in #194 there were three per slide.
+
+        A placeholder holding a picture, table or chart is not an ``<p:sp>``
+        with a text frame any more, so filling one keeps it. Dropping a
+        placeholder does not change what a reader sees; PowerPoint's Reset
+        Slide puts it back from the layout.
+        """
+        for slide in self.presentation.slides:
+            for placeholder in list(slide.placeholders):
+                if placeholder.placeholder_format.type in self._CHROME_PLACEHOLDERS:
+                    continue
+                if not placeholder.has_text_frame:
+                    continue
+                if placeholder.text_frame.text.strip():
+                    continue
+                element = placeholder._element
+                element.getparent().remove(element)
 
     def _remove_template_slides(self) -> None:
         """Remove every slide the template ships with, parts included.

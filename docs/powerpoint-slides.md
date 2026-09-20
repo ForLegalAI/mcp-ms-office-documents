@@ -37,6 +37,8 @@ Every slide takes `type` plus optional `title`, `notes` (speaker notes) and `lay
 | `closing` | `subtitle?`, `contact?` |
 | `blank` | `elements` — positioned items, each `{kind: text\|image\|shape, x, y, w, h?}` with lengths in inches (`1.5`, `"1.5in"`) or as a share of the slide (`"40%"`) |
 
+**Empty placeholders are removed.** A layout usually reserves more boxes than a slide fills — a section layout's body, a comparison column you gave no heading, a third card. Anything left empty is dropped from the finished deck, so it does not open with "Click to add text" boxes in it. PowerPoint's Reset Slide brings them back from the layout if you want them.
+
 **Two columns.** A `two_column` slide lands on the template's comparison layout when either column has a `heading`, and on its two-content layout otherwise. Columns are matched to the layout by position, not by placeholder number, so a template that numbers its placeholders unusually still gets the left column on the left. When the template gives you less than you asked for you keep the words and are told what changed: without heading strips each `heading` becomes a bold first line of its column (`heading_inlined`), with only one content area the two columns are merged into it in order (`columns_merged`), and with no content placeholder at all nothing can be written and it is an error (`column_dropped`).
 
 **Sections.** Every `section` slide also starts a section in PowerPoint's outline pane and slide sorter, so the presenter sees the deck's structure rather than a flat list. Slides before the first section slide go in a "Default Section", as PowerPoint would name it.

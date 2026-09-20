@@ -258,6 +258,24 @@ answer for a caller positioning a `blank` slide's elements: those coordinates
 stay absolute on the slide — changing them would silently move every existing
 deck — so the safe band is published instead.
 
+### Unused placeholders are removed
+
+`add_slide()` copies every placeholder its layout defines, so a layout that
+offers more than the slide filled left empty prompt boxes in the deck: the
+third card of a three-card layout, the heading strip of a Comparison column
+given no heading, the body of a Section Header (a `section` slide carries only
+a title), the subtitle of a title slide without one. They neither print nor
+appear in a slideshow, but they are the first thing anyone opening the file to
+edit it sees, and on the template in #194 there were three on a single slide.
+
+`_drop_unused_placeholders()` runs once after every slide is built and removes
+any non-chrome placeholder still holding an empty text frame. A placeholder
+that took a picture, table or chart is no longer an `<p:sp>` with a text
+frame, so filling one keeps it; date, footer and slide-number placeholders are
+skipped because `_apply_footer_and_slide_numbers()` runs after this pass.
+Removing a placeholder changes nothing a reader sees, and PowerPoint's Reset
+Slide restores it from the layout.
+
 ### Two columns, matched by geometry
 
 `two_column` slides do **not** address placeholders by `idx`. The indices
@@ -518,6 +536,7 @@ Both are reported.
 | `tests/test_pptx_bullet_glyphs.py` | Bullets in a text box: the master's glyphs and indents, and the order of `<a:pPr>` |
 | `tests/test_pptx_table_formatting.py` | Column widths, cell and row fills, merged blocks, and what happens when they do not fit the table |
 | `tests/test_pptx_text_metrics.py` | Measured line counts, wrapping, face selection, the arithmetic fallback, and that the image's font packages exist and match the table |
+| `tests/test_pptx_unused_placeholders.py` | That no generated slide keeps an empty "Click to add text" box, and that filled ones survive |
 | `tests/test_pptx_body_font_size.py` | Reading the template's real body size, and the shrink factor and overflow warning that follow from it |
 | `tests/test_pptx_two_columns.py` | Columns matched by geometry on renumbered templates, and the warning each degraded path owes |
 | `tests/test_pptx_sections.py` | Outline-pane sections |
