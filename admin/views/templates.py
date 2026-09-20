@@ -601,6 +601,7 @@ def preview_values_page(ctx, kind: str, spec: Dict[str, Any],
     import json
 
     from admin.forms import CARRIED_SPEC_FIELD
+    from admin.preview import VALUES_MARKER
 
     d = descriptor(kind)
     cond_set = set(conditionals or [])
@@ -627,6 +628,7 @@ def preview_values_page(ctx, kind: str, spec: Dict[str, Any],
             c.post_form(
                 ctx.u(f"/{kind}/preview"),
                 c.hidden(CARRIED_SPEC_FIELD, json.dumps(spec)),
+                c.hidden(VALUES_MARKER, "1"),
                 *controls,
                 c.action_bar(
                     Button(d.preview_label, type="submit",

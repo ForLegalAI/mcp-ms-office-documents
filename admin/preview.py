@@ -66,12 +66,24 @@ def sample_values(args: List[Dict[str, Any]], conditionals: List[str] = None) ->
 VALUE_PREFIX = "value_"
 
 
+#: Hidden marker the values form always submits. An unticked checkbox sends
+#: nothing, so a template whose arguments are all booleans can submit *no*
+#: ``value_`` key at all — and "no values" would then be read as "generate
+#: samples", quietly overriding the admin's explicit off with a sample on.
+VALUES_MARKER = "preview_values"
+
+
 def has_submitted_values(form) -> bool:
     """Whether this POST carries explicit preview values.
 
     Absence means "generate samples", which is what keeps Preview one click
     for anyone who does not care (#168).
+
+    The marker is what makes that reliable; the prefix check stays so a POST
+    built by hand, without the form, still counts as submitting values.
     """
+    if form.get(VALUES_MARKER):
+        return True
     return any(str(k).startswith(VALUE_PREFIX) for k in form.keys())
 
 

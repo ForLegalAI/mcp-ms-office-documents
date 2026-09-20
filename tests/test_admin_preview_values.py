@@ -445,3 +445,45 @@ def test_the_body_and_cell_distinction_becomes_visible(admin_client):
         "the cell must actually be rendered, or the next assertion is vacuous"
     assert "List Bullet" not in cell_styles, \
         "a table cell is inline-only, and now you can see that"
+
+
+def test_a_template_of_only_flags_can_have_them_all_unticked(admin_client):
+    """The narrowest case, and the one #168 exists for.
+
+    An unticked checkbox sends nothing at all. A template whose arguments are
+    all booleans therefore submits *no* `value_` key when every box is off —
+    and "no values" used to mean "generate samples", so the admin's explicit
+    off came back as a sample on. The form carries a marker so that the
+    submission is recognised whatever the controls happen to send.
+    """
+    client, _custom = admin_client
+    _post(client, "/admin/docx/draft", data={"name": "flagonly"},
+          files={"file": ("flagonly.docx",
+                          _template_bytes("{{#if extras}}", "OPTIONAL BLOCK",
+                                          "{{/if}}", "Always here"),
+                          "application/octet-stream")})
+    fields = dict(FIELDS, name="flagonly", original_name="flagonly",
+                  asset_filename="flagonly.docx",
+                  arg_name=["extras"], arg_type=["bool"],
+                  arg_required=["true"], arg_default=[""], arg_desc=[""])
+    _post(client, "/admin/docx/save", data=fields)
+    form = _post(client, "/admin/docx/preview/values", data=fields).text
+
+    from admin.preview import VALUES_MARKER
+    assert f'name="{VALUES_MARKER}"' in form, "the form must mark its submission"
+
+    # Exactly what a browser sends with the only box unticked.
+    r = _post(client, "/admin/docx/preview",
+              data={"spec_json": _carried(form), VALUES_MARKER: "1"})
+
+    texts = [t for _s, t, _b in _paragraphs(r)]
+    assert any("Always here" in t for t in texts), "the document must render"
+    assert not any("OPTIONAL BLOCK" in t for t in texts), \
+        "an unticked flag must stay off even when it is the only argument"
+
+
+def test_the_marker_alone_is_enough_to_mean_values_were_submitted():
+    from admin.preview import VALUES_MARKER
+
+    assert has_submitted_values({VALUES_MARKER: "1"}) is True
+    assert has_submitted_values({"name": "rpt"}) is False

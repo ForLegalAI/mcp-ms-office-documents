@@ -218,7 +218,11 @@ along as JSON in `forms.CARRIED_SPEC_FIELD`, and `carried_spec()` ignores
 anything that is not a named mapping. The values themselves are prefixed
 (`preview.VALUE_PREFIX`) so they cannot collide with the spec fields, and
 their absence is what means "generate samples" — which is what keeps the
-plain Preview button one click.
+plain Preview button one click. That absence is not a reliable signal on its
+own: an unticked checkbox sends nothing, so a template whose arguments are
+all booleans submits no `value_` key when every box is off. The form carries
+`preview.VALUES_MARKER` so the submission is recognised whatever its controls
+happen to send; without it the admin's explicit off came back as a sample on.
 
 A sampled boolean is subtler than it looks: `sample_values()` uses the
 declared default and only falls back to True when there is none. An
