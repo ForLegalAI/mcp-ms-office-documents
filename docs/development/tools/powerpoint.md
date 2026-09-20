@@ -88,7 +88,7 @@ problems go to the warnings list instead.
 | `slide_builder.py` | `PowerpointPresentation`: template selection, one `_build_*` method per slide type, sections, footer and slide numbers, language, the warnings list |
 | `helpers.py` | `SlideHelpers` mixin (titles, placeholders, bullets, tables, images, notes) and free functions: `body_to_bullets()`, `parse_table_data()`, `estimate_text_fill()`, `apply_autofit()`, `fit_table_font_size()`, `set_runs_language()`, `resolve_fill()` |
 | `layouts.py` | Layout roles, `classify_layout()`, `role_for_slide()`, `LayoutResolver` |
-| `placeholder_style.py` | Reading placeholder geometry, character style and list style from a template, and replaying them on plain text boxes (`read_title_style()`, `read_content_rect()`, `content_columns()`, `draw_title_box()`, `apply_list_style()`) |
+| `placeholder_style.py` | Reading placeholder geometry, character style, size and list style from a template, and replaying them on plain text boxes (`read_title_style()`, `read_content_rect()`, `content_columns()`, `read_body_font_size()`, `draw_title_box()`, `apply_list_style()`) |
 | `templates.py` | `TemplateSpec`, the registry loaded from YAML with an mtime-fingerprint cache, `.potx` handling, `select_template()`, `validate_templates()` |
 | `chart_utils.py` | Category charts from `CategoryChartData`, scatter from `XyChartData`, legend, title, data labels, axis titles |
 | `inline_formatting.py` | Renders the shared inline grammar into python-pptx runs |
@@ -372,6 +372,26 @@ The result drives two things: `apply_autofit()` writes
 shrink the text, and a warning is returned when the estimate passes the
 shrink floor.
 
+**Which size gets measured** matters as much as which face. The estimate used
+to assume `DEFAULT_BODY_FONT_SIZE` (18pt) for every template, and both
+templates this server ships set **28pt** in the master's `<p:bodyStyle>` — so
+every estimate was low by the square of the ratio, about 2.4x. Text needing
+1.9x its placeholder measured as 0.86x: `apply_autofit()` was handed no scale,
+wrote a bare `<a:normAutofit/>`, and PowerPoint rendered the text at full size
+straight off the bottom of the slide, because it only recomputes autofit when
+someone clicks into the box. The overflow warning is derived from the same
+number, so the caller was not told either
+([#194](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/194)).
+
+`read_body_font_size()` resolves the real size the way PowerPoint inherits it,
+nearest first: the shape's own `<a:lstStyle>`, the layout placeholder it came
+from, the master's body placeholder, the master's `<p:bodyStyle>`, then the
+presentation's `<p:defaultTextStyle>`. `_fit_text()` uses it per placeholder;
+the boxes the builder draws itself use `read_master_body_font_size()` through
+`_fit_scale()`, because `apply_list_style()` gives them the master's body
+style. `DEFAULT_BODY_FONT_SIZE` remains only as the last resort for a template
+that states no size anywhere.
+
 Which face gets measured, best first: the deck's own typeface
 (`theme_body_typeface()` reads the theme's minor latin font), then a
 **metric-compatible** substitute — Carlito for Calibri, Liberation Sans or
@@ -448,6 +468,10 @@ Both are reported.
   image that fails becomes a placeholder box **and** a warning.
 - **A builder exception fails the deck.** This is intentional: a half-built
   deck with a success response is worse than an error naming the slide.
+- **Never measure text against a hardcoded point size.** Ask
+  `read_body_font_size()` what the template actually renders at; the estimate
+  is wrong by the *square* of any error, and it is the same number the
+  overflow warning is derived from.
 - **Never match a content placeholder by `idx`.** Use `content_columns()`
   (columns) or `_content_placeholders()` (single body). `idx` numbering is a
   PowerPoint convention a customer template need not follow, and assuming it
@@ -477,6 +501,7 @@ Both are reported.
 | `tests/test_pptx_bullet_glyphs.py` | Bullets in a text box: the master's glyphs and indents, and the order of `<a:pPr>` |
 | `tests/test_pptx_table_formatting.py` | Column widths, cell and row fills, merged blocks, and what happens when they do not fit the table |
 | `tests/test_pptx_text_metrics.py` | Measured line counts, wrapping, face selection, the arithmetic fallback, and that the image's font packages exist and match the table |
+| `tests/test_pptx_body_font_size.py` | Reading the template's real body size, and the shrink factor and overflow warning that follow from it |
 | `tests/test_pptx_two_columns.py` | Columns matched by geometry on renumbered templates, and the warning each degraded path owes |
 | `tests/test_pptx_sections.py` | Outline-pane sections |
 | `tests/test_pptx_templates.py` | Registry loading, `.potx`, layout classification and resolution, defaults |
@@ -490,10 +515,11 @@ assert on shapes and XML. See [`../testing.md`](../testing.md).
 ## Known limitations
 
 - **Fit estimation measures the shapes, not the layout.** Text is measured
-  against a real font file, but PowerPoint's own line breaking, kerning and
-  autofit are not reproduced, and the deck's face may only be approximated by
-  a substitute. The shrink factor remains a hint PowerPoint recomputes on
-  first edit.
+  against a real font file at the size the template states, but PowerPoint's
+  own line breaking, kerning and autofit are not reproduced, and the deck's
+  face may only be approximated by a substitute. The shrink factor remains a
+  hint PowerPoint recomputes on first edit. Every bullet is measured at the
+  level-1 size, so a slide of deeply indented bullets is estimated high.
 - **Placeholder `idx` conventions are assumed for footers and slide numbers**
   (`idx` 11 and 12). Bodies and columns are matched by geometry instead.
 - **No SmartArt.** KPI and timeline slides are built from autoshapes.

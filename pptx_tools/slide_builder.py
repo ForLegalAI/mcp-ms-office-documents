@@ -47,6 +47,7 @@ from .chart_utils import (
 from .layouts import LayoutResolver, role_for_slide
 from .placeholder_style import (
     TitleStyle, apply_list_style, content_columns, draw_title_box,
+    read_body_font_size, read_master_body_font_size,
 )
 from .text_metrics import theme_body_typeface
 from .schema import Bullet, coerce_slides
@@ -109,6 +110,7 @@ class PowerpointPresentation(SlideHelpers):
         # The face body text is actually set in, so the fit estimate measures
         # this deck's text rather than a generic one (#125).
         self._typeface = theme_body_typeface(self.presentation)
+        self._body_size = None
 
         defaults = self.spec.defaults if self.spec else {}
         self._footer_text = footer_text if footer_text is not None else defaults.get("footer_text")
@@ -1284,18 +1286,42 @@ class PowerpointPresentation(SlideHelpers):
         return box
 
     def _fit_scale(self, bullets, width, height):
-        """Shrink factor for a text box, or None when the text already fits."""
+        """Shrink factor for a text box, or None when the text already fits.
+
+        Measured at the master's body size, because that is what
+        :func:`apply_list_style` gives these boxes — not the built-in default.
+        """
         fill = estimate_text_fill(
-            bullets, width, height, font_size_pt=float(DEFAULT_BODY_FONT_SIZE.pt),
+            bullets, width, height, font_size_pt=self._master_body_font_size(),
             typeface=self._typeface,
         )
         return (1.0 / fill) if fill > 1.0 else None
+
+    def _master_body_font_size(self) -> float:
+        """The template's own body size, read once per deck."""
+        if self._body_size is None:
+            master = self.presentation.slide_masters[0] if self.presentation.slide_masters else None
+            size = read_master_body_font_size(master)
+            self._body_size = size if size else float(DEFAULT_BODY_FONT_SIZE.pt)
+        return self._body_size
+
+    def _body_font_size(self, placeholder) -> float:
+        """The size body text in *placeholder* really renders at, in points.
+
+        Measuring against ``DEFAULT_BODY_FONT_SIZE`` regardless of the template
+        made the fit estimate wrong by the square of the ratio. Both templates
+        this server ships set 28pt, not 18: a body needing 1.9x its box
+        measured as 0.86x, so no shrink factor was written and the overflow
+        warning — computed from the same number — never fired either (#194).
+        """
+        size = read_body_font_size(placeholder)
+        return size if size else float(DEFAULT_BODY_FONT_SIZE.pt)
 
     def _fit_text(self, placeholder, bullets, index: int) -> None:
         """Ask PowerPoint to shrink overfull body text, and warn when it is far gone."""
         fill = estimate_text_fill(
             bullets, placeholder.width, placeholder.height,
-            font_size_pt=float(DEFAULT_BODY_FONT_SIZE.pt),
+            font_size_pt=self._body_font_size(placeholder),
             typeface=self._typeface,
         )
         apply_autofit(placeholder.text_frame, scale=(1.0 / fill) if fill > 1.0 else None)

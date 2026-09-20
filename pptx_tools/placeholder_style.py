@@ -246,6 +246,106 @@ def _body_properties(placeholder, master) -> Iterator[object]:
             yield bodyPr
 
 
+def _level_properties(element, level: int):
+    """``<a:lvlNpPr>`` of a ``lstStyle``/``bodyStyle`` element, or None."""
+    if element is None:
+        return None
+    return element.find(qn(f'a:lvl{level + 1}pPr'))
+
+
+def _size_of(properties) -> Optional[float]:
+    """The ``sz`` on a paragraph-properties element, in points."""
+    if properties is None:
+        return None
+    defRPr = properties.find(qn('a:defRPr'))
+    if defRPr is None:
+        return None
+    sz = defRPr.get('sz')
+    return int(sz) / 100.0 if sz else None
+
+
+def _matching_layout_placeholder(placeholder):
+    """The layout placeholder a slide placeholder inherits from, or None."""
+    part = getattr(placeholder, "part", None)
+    layout = getattr(part, "slide_layout", None)
+    if layout is None:
+        return None
+    idx = placeholder.placeholder_format.idx
+    for candidate in layout.placeholders:
+        if candidate.placeholder_format.idx == idx:
+            return candidate
+    return None
+
+
+def read_master_body_font_size(master, level: int = 0) -> Optional[float]:
+    """The size *master* gives body text at *level*, or None.
+
+    What a plain text box laid out by :func:`apply_list_style` renders at, so
+    the builder's own bullet boxes are measured against the same number a
+    placeholder would be.
+    """
+    if master is None:
+        return None
+    for shape in content_placeholders(master):
+        txBody = shape._element.find(qn('p:txBody'))
+        if txBody is None:
+            continue
+        size = _size_of(_level_properties(txBody.find(qn('a:lstStyle')), level))
+        if size is not None:
+            return size
+    txStyles = master._element.find(qn('p:txStyles'))
+    if txStyles is None:
+        return None
+    return _size_of(_level_properties(txStyles.find(qn('p:bodyStyle')), level))
+
+
+def read_body_font_size(placeholder, level: int = 0) -> Optional[float]:
+    """The point size text in *placeholder* actually renders at, or None.
+
+    The fit estimate used to assume ``DEFAULT_BODY_FONT_SIZE`` — 18pt — for
+    every template. A template whose master sets a different body size was
+    then measured against a font it does not use: the one in
+    [#194] sets 28pt, so a body needing 1.9x its box measured as 0.86x, no
+    shrink factor was written, and PowerPoint rendered the text at full size
+    straight off the bottom of the slide. Being wrong in this direction is
+    silent, because the overflow warning is computed from the same number.
+
+    Resolution follows what PowerPoint inherits, nearest first: the shape's
+    own list style, the layout placeholder it came from, the master's body
+    placeholder, the master's ``<p:bodyStyle>``, then the presentation's
+    default text style. None when nothing in the chain states a size.
+    """
+    def own_style(shape):
+        if shape is None:
+            return None
+        txBody = shape._element.find(qn('p:txBody'))
+        if txBody is None:
+            return None
+        return _size_of(_level_properties(txBody.find(qn('a:lstStyle')), level))
+
+    layout_placeholder = _matching_layout_placeholder(placeholder)
+    for shape in (placeholder, layout_placeholder):
+        size = own_style(shape)
+        if size is not None:
+            return size
+
+    layout = getattr(getattr(placeholder, "part", None), "slide_layout", None)
+    master = _master_of(layout) if layout is not None else None
+    size = read_master_body_font_size(master, level)
+    if size is not None:
+        return size
+
+    presentation = getattr(getattr(placeholder, "part", None), "package", None)
+    presentation_part = getattr(presentation, "presentation_part", None)
+    element = getattr(getattr(presentation_part, "presentation", None), "_element", None)
+    if element is not None:
+        size = _size_of(_level_properties(
+            element.find(qn('p:defaultTextStyle')), level))
+        if size is not None:
+            return size
+    return None
+
+
 def read_title_style(layout) -> Optional[TitleStyle]:
     """The geometry and character style of *layout*'s title placeholder.
 
