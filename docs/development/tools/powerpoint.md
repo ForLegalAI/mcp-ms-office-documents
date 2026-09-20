@@ -146,6 +146,11 @@ each template file, so overwriting a template or dropping in a new one takes
 effect without a restart. The aspect ratio is read from the file, never from
 the config, and exactly one spec is marked default.
 
+`templates.content_area_summary()` formats that rectangle as percentages of
+the slide. It is public because the admin UI reports the same rectangle in the
+same units (#171): one formatter means the page and the tool's own diagnostics
+cannot drift apart on the number an admin is checking.
+
 `select_template()` picks by name, else by aspect, else the default, and
 returns a warning string whenever it had to substitute. A `.potx` is opened
 by rewriting its content type in memory, since python-pptx refuses the

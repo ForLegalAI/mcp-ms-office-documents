@@ -215,6 +215,12 @@ class PptxAnalysis:
     theme_fonts: Dict[str, str] = field(default_factory=dict)
     theme_colors: Dict[str, str] = field(default_factory=dict)
     embedded_slides: int = 0
+    #: The rectangle the template reserves for content, as percentages of the
+    #: slide (``layout``/``x``/``y``/``w``/``h``), or ``None`` when no layout
+    #: declares one. Slides the tool positions itself stay inside it, so a
+    #: wrong or missing value puts generated content on the template's own
+    #: logo, rules and footer (#171).
+    content_area: Optional[Dict[str, str]] = None
     warnings: List[str] = field(default_factory=list)
 
     @property
@@ -313,9 +319,59 @@ def analyze_pptx(data: bytes) -> PptxAnalysis:
         analysis.role_map = seen_roles
         analysis.missing_roles = [role for role in ROLES if role not in seen_roles]
         analysis.theme_fonts, analysis.theme_colors = _read_theme(presentation)
+        _read_content_area(analysis, presentation)
 
     _add_pptx_warnings(analysis)
     return analysis
+
+
+def _read_content_area(analysis: PptxAnalysis, presentation) -> None:
+    """Record the template's content rectangle, and flag an unusable one.
+
+    Built with no overrides, and that matches the builder exactly rather than
+    merely approximating it: ``LayoutResolver`` applies a configured
+    ``layouts:`` mapping in ``provides()`` and ``resolve()``, but ``_by_role``
+    — which is what ``content_area()`` reads — is filled from
+    ``classify_layout()`` alone. So a spec's overrides do not move this
+    rectangle at build time, and the card is not hiding a difference.
+    """
+    from pptx_tools.layouts import LayoutResolver
+    from pptx_tools.templates import content_area_summary
+
+    resolver = LayoutResolver(presentation, {})
+    rect = resolver.content_area()
+    analysis.content_area = content_area_summary(resolver, presentation)
+    width, height = presentation.slide_width, presentation.slide_height
+    if rect is None or not width or not height:
+        # Nothing to read it from, so a slide the tool positions itself falls
+        # back to a fixed band that knows nothing about this template.
+        analysis.warnings.append(
+            "No layout reserves a content area, so slides the tool positions "
+            "itself (blank, KPI, timeline) use a fixed band instead — which "
+            "may sit on this template's logo, rules or footer. Giving one "
+            "layout a body placeholder fixes it for all of them."
+        )
+        return
+
+    w = rect.width / width
+    h = rect.height / height
+    if w >= 0.95 and h >= 0.95:
+        analysis.warnings.append(
+            f"The content area read from '{rect.source}' is almost the whole "
+            "slide, so positioned content will not stay clear of anything the "
+            "template draws. Check that layout's body placeholder, or set a "
+            "content-role override below."
+        )
+    elif w * h < 0.08:
+        # Area, not either dimension on its own: a narrow full-height sidebar
+        # and a wide shallow banner are both ordinary content shapes, and a
+        # rule on width-or-height calls them cramped when they are not. What
+        # actually makes content cramped is how little room there is in total.
+        analysis.warnings.append(
+            f"The content area read from '{rect.source}' is unusually small "
+            f"({round(w * 100)}% × {round(h * 100)}% of the slide). Positioned "
+            "content will be cramped; check that layout's body placeholder."
+        )
 
 
 def _read_theme(presentation) -> tuple:
