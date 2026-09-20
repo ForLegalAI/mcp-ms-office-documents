@@ -69,12 +69,21 @@ def template_table(ctx, kind: str, csrf: str = ""):
                 A("Delete", href=ctx.u(f"/{kind}/{name}/delete"), cls="btn btn-danger btn-sm"),
             )),
         ))
-    # Read-only templates from the master YAML (live but not UI-managed).
-    for name in sorted(live - managed_names):
+    # Hand-written master-YAML templates that no managed spec overrides.
+    # Listed from the YAML rather than from the live tool names, so one that
+    # is disabled or failed to register is still shown, inspectable and
+    # adoptable rather than simply absent (#167).
+    for spec in ctx.unmanaged_master_specs(kind):
+        name = spec.get("name")
         rows.append(Tr(
-            Td(name), Td("—"),
-            Td(c.badge("● Live", "live")),
-            Td(c.badge("from master YAML — read-only", "ro")),
+            Td(A(name, href=ctx.u(f"/{kind}/{name}/master"))),
+            Td(d.detail_cell(spec)),
+            Td(c.status_badge(name in live, is_enabled(spec))),
+            Td(c.action_bar(
+                A("Inspect", href=ctx.u(f"/{kind}/{name}/master"),
+                  cls="btn btn-secondary btn-sm"),
+                c.badge("master YAML", "ro"),
+            )),
         ))
 
     # Every kind keeps a create link in both states. When the empty state was
@@ -544,6 +553,96 @@ def new_page(ctx, kind: str, csrf: str = "", error: Optional[str] = None):
             csrf=csrf, enctype="multipart/form-data",
         )),
         _authoring_help(kind),
+    )
+
+
+def _readonly_args_table(spec: Dict[str, Any]):
+    """The declared arguments, as a table rather than an editor."""
+    args = spec.get("args") or []
+    if not args:
+        return P("This template declares no arguments.", cls="muted")
+    rows = [
+        Tr(
+            Td(Code(a.get("name", ""))),
+            Td(str(a.get("type", "string"))),
+            Td("required" if a.get("required", True) else "optional"),
+            Td(Code(str(a["default"])) if a.get("default") not in (None, "")
+               else Span("—", cls="muted")),
+            Td(a.get("description", "") or Span("—", cls="muted")),
+        )
+        for a in args if isinstance(a, dict)
+    ]
+    return c.data_table(["Name", "Type", "Required", "Default", "Description"], rows)
+
+
+def _readonly_style_mapping(spec: Dict[str, Any]):
+    mapping = spec.get("style_mapping") or {}
+    if not mapping:
+        return P("No per-template style mapping; the built-in names are used.",
+                 cls="muted")
+    return c.data_table(
+        ["Style key", "Name in the document"],
+        [Tr(Td(Code(k)), Td(Code(str(v)))) for k, v in sorted(mapping.items())],
+    )
+
+
+def master_page(ctx, kind: str, name: str, spec: Dict[str, Any], analysis,
+                asset_path, live: bool, csrf: str = "",
+                error: Optional[str] = None):
+    """A hand-written master-YAML template, read only, with an Adopt action.
+
+    The UI knew all of this already — `gather_specs()` returned the spec to
+    build the row — and showed none of it. For anyone whose templates predate
+    the admin UI, that was most of their templates, permanently second-class
+    (#167).
+    """
+    d = descriptor(kind)
+    filename = spec.get(d.path_key) or "—"
+    where = "not found in any template directory"
+    if asset_path is not None:
+        where = ("custom_templates/" if "custom" in str(asset_path.parent)
+                 else str(asset_path.parent.name) + "/")
+
+    details = [
+        c.static_row("Status", c.status_badge(live, is_enabled(spec))),
+        c.static_row("Description", spec.get("description") or
+                     Span("none", cls="muted")),
+        c.static_row("Source file", Span(Code(filename), " — ", where)),
+    ]
+    if d.has_args:
+        details.append(c.static_row("Arguments", str(len(spec.get("args") or []))))
+
+    cards = [
+        c.flash(error, "err"),
+        c.card(*details, title="Details"),
+        c.card(_readonly_args_table(spec), title="Arguments") if d.has_args else None,
+    ]
+    if kind == KIND_DOCX:
+        cards.append(c.card(_readonly_style_mapping(spec), title="Style mapping"))
+    if analysis is not None:
+        cards.append(c.card(analysis_report(analysis, spec),
+                            title="What we found in the document"))
+    cards.append(c.card(spec_yaml_block(spec), title="As written"))
+
+    adopt = c.post_form(
+        ctx.u(f"/{kind}/{name}/adopt"),
+        P("Adopting copies this entry into the templates this UI manages, so "
+          "you can edit it here. Your master YAML is not modified — the copy "
+          "simply takes precedence.", cls="muted"),
+        c.action_bar(
+            Button("Adopt for editing", type="submit", cls="btn btn-primary"),
+            A("Back to all templates", href=ctx.u("/"), cls="btn"),
+        ),
+        csrf=csrf,
+    )
+    cards.append(c.card(adopt, title="Bring it under UI management"))
+
+    return page(
+        ctx, name,
+        H1(name),
+        P("Defined in your hand-written master YAML, so it is shown read-only "
+          "here.", cls="muted"),
+        *[card for card in cards if card is not None],
     )
 
 

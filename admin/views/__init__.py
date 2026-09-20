@@ -25,7 +25,7 @@ from admin.views.status import (
 )
 from admin.views.templates import (
     analysis_report, arg_row, clone_page, configure_page, delete_page,
-    edit_form, edit_page,
+    edit_form, edit_page, master_page,
     index_page,
     builtin_style_names, new_page, pptx_analysis_report, spec_yaml_block,
     style_mapping_block, template_table,
@@ -37,7 +37,8 @@ __all__ = [
     "fmt_size",
     "edit_form",
     "edit_page", "fmt_ts", "fmt_uptime", "form_actions", "index_page",
-    "login_page", "logout_page", "name_field", "new_page", "not_found_page",
+    "login_page", "logout_page", "master_page", "name_field", "new_page",
+    "not_found_page",
     "page", "pptx_analysis_report", "refresh_seconds", "replace_card",
     "save_failed_page",
     "saved_page", "status_page",

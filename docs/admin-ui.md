@@ -41,6 +41,16 @@ http://localhost:8958/admin
   heading levels, three numbered and three bulleted list levels, quote, table,
   normal and code), and each dropdown's default option names what that key
   resolves to today — including when a global `style_mapping` sets it.
+- **Inspect a hand-written template** — a template defined in your master
+  `config/<kind>_templates.yaml` now links to a read-only page showing its
+  description, arguments, style mapping, which file it uses and where that
+  file lives, plus the same analysis the edit page runs. Nothing on it can be
+  edited: the master file is yours.
+- **Adopt** — from that page, copy the entry into the templates this UI
+  manages, after which it edits like any other. Your master YAML is **not**
+  modified; the copy simply takes precedence. If the document ships in
+  `default_templates/`, it is copied into the uploads directory so you can
+  replace it later.
 - **Clone** — start a new template from an existing one, from its row or its
   edit page. Name the copy and everything else comes across: the description
   and every argument with its type, default and description, plus a **copy**
