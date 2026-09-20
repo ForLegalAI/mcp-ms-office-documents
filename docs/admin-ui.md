@@ -48,9 +48,14 @@ http://localhost:8958/admin
   edited: the master file is yours.
 - **Adopt** — from that page, copy the entry into the templates this UI
   manages, after which it edits like any other. Your master YAML is **not**
-  modified; the copy simply takes precedence. If the document ships in
+  modified; the copy simply takes precedence, **matched by name**. From then
+  on the copy is the template — later edits to that entry in your YAML,
+  including turning it off, no longer have any effect, and renaming it there
+  leaves you with two templates. If the document ships in
   `default_templates/`, it is copied into the uploads directory so you can
-  replace it later.
+  replace it later; a document named like one of the base templates is copied
+  under the template's own name instead, so adopting can never change the
+  look of every document the server generates.
 - **Clone** — start a new template from an existing one, from its row or its
   edit page. Name the copy and everything else comes across: the description
   and every argument with its type, default and description, plus a **copy**

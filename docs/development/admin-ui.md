@@ -210,6 +210,17 @@ names every such file (both the `custom_` and the `default_` spelling of all
 five slots); adopting a master entry that points at one gives the template a
 private copy under its own name instead.
 
+**Adoption records no provenance, so the copy is keyed by name and nothing
+else.** Two consequences follow from `gather_specs()` replacing the whole spec
+rather than merging fields, and both are pinned by tests so a change to either
+is deliberate: editing the master entry after adoption — including disabling
+it — has no effect, because the override replaces it entirely; and renaming
+the master entry by hand leaves *two* templates, the renamed master entry
+(no longer overridden) and the adopted copy (now standing alone). Following a
+rename would mean recording where a copy came from, which is a bigger feature
+than adopting; the adopt card says plainly that the copy stops following the
+entry instead.
+
 The master rows are listed from `_master_specs()` rather than from the live
 tool names: keyed off what is registered, a master template that is disabled
 or that failed to load vanished from the page entirely, with no way to inspect

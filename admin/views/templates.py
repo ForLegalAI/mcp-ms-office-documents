@@ -250,12 +250,16 @@ def style_mapping_block(analysis: Optional[Analysis], spec: Dict[str, Any],
     )
 
 
-def spec_yaml_block(spec: Dict[str, Any]):
+def spec_yaml_block(spec: Dict[str, Any], managed: bool = True):
     """The YAML this template is stored as, read-only (#163).
 
     The YAML *is* the documented interface — config/*.yaml is hand-written and
     docs/templates.md teaches templates in it — so a template built by
     clicking should be readable in the same vocabulary.
+
+    *managed* is False on the master-YAML detail page, where the UI wrote
+    nothing: saying it did would be a plain lie on the one page whose whole
+    point is that the file belongs to the admin (#167).
     """
     from admin.store import FileTemplateStore
 
@@ -263,11 +267,16 @@ def spec_yaml_block(spec: Dict[str, Any]):
         text = FileTemplateStore.dump_spec(spec)
     except Exception:  # pragma: no cover - a spec that will not serialise
         return None
+    caption = (
+        "Read-only. This is what the UI wrote into the template directory, "
+        "merged on top of the hand-written master file at load time."
+        if managed else
+        "Read-only, and written by you: this is the entry as it stands in "
+        "your master YAML file."
+    )
     return c.details_block(
         "The YAML this is stored as",
-        P("Read-only. This is what the UI wrote into the template directory, "
-          "merged on top of the hand-written master file at load time.",
-          cls="muted"),
+        P(caption, cls="muted"),
         Pre(Code(text), cls="yaml-view"),
     )
 
@@ -622,13 +631,15 @@ def master_page(ctx, kind: str, name: str, spec: Dict[str, Any], analysis,
     if analysis is not None:
         cards.append(c.card(analysis_report(analysis, spec),
                             title="What we found in the document"))
-    cards.append(c.card(spec_yaml_block(spec), title="As written"))
+    cards.append(c.card(spec_yaml_block(spec, managed=False), title="As written"))
 
     adopt = c.post_form(
         ctx.u(f"/{kind}/{name}/adopt"),
         P("Adopting copies this entry into the templates this UI manages, so "
           "you can edit it here. Your master YAML is not modified — the copy "
-          "simply takes precedence.", cls="muted"),
+          "simply takes precedence, matched by name. From then on the copy is "
+          "the template: later edits to this entry in the YAML, including "
+          "turning it off, no longer have any effect.", cls="muted"),
         c.action_bar(
             Button("Adopt for editing", type="submit", cls="btn btn-primary"),
             A("Back to all templates", href=ctx.u("/"), cls="btn"),

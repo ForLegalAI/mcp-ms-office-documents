@@ -390,3 +390,73 @@ def test_adopting_a_disabled_master_template_keeps_it_disabled(admin_client):
     _post(client, "/admin/docx/legacy_letter/adopt", data={})
 
     assert _store().get_spec("docx", "legacy_letter")["enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# What adoption does *not* promise: the copy is keyed by name, and that is all
+# ---------------------------------------------------------------------------
+
+
+def test_disabling_the_master_entry_after_adopting_has_no_effect(admin_client):
+    """The override replaces the whole entry, so the master's flag is ignored.
+
+    Pinned as a decision rather than left to be discovered: once adopted, the
+    managed copy is the template, and the master entry of that name is dead
+    config. Editing it — including turning it off — changes nothing.
+    """
+    from template_registry import gather_specs
+
+    client, _mcp, custom, cfg = admin_client
+    master = _write_master(cfg, MASTER_SPEC)
+    (custom / "legacy_letter.docx").write_bytes(_docx_bytes())
+    _post(client, "/admin/docx/legacy_letter/adopt", data={})
+
+    _write_master(cfg, dict(MASTER_SPEC, enabled=False))
+
+    merged, _ = gather_specs(master, cfg / "docx_templates.d")
+    assert [s["name"] for s in merged] == ["legacy_letter"], \
+        "the adopted copy still wins, and it is still enabled"
+
+
+def test_renaming_the_master_entry_after_adopting_leaves_both(admin_client):
+    """A name-keyed merge cannot follow a rename it was never told about.
+
+    Hand-renaming an adopted entry in the master YAML gives two templates:
+    the renamed master entry, no longer overridden, and the adopted copy,
+    now standing alone. Inherent to keying the merge on the name — adoption
+    records no provenance — but surprising enough to pin so that a change in
+    this behaviour is deliberate.
+    """
+    from template_registry import gather_specs
+
+    client, _mcp, custom, cfg = admin_client
+    master = _write_master(cfg, MASTER_SPEC)
+    (custom / "legacy_letter.docx").write_bytes(_docx_bytes())
+    _post(client, "/admin/docx/legacy_letter/adopt", data={})
+
+    _write_master(cfg, dict(MASTER_SPEC, name="legacy_letter_v2"))
+
+    merged, _ = gather_specs(master, cfg / "docx_templates.d")
+    assert sorted(s["name"] for s in merged) == ["legacy_letter", "legacy_letter_v2"]
+
+
+def test_the_yaml_block_does_not_claim_the_ui_wrote_the_file(admin_client):
+    """The one page whose point is that the file belongs to the admin."""
+    client, _mcp, custom, cfg = admin_client
+    _write_master(cfg, MASTER_SPEC)
+    (custom / "legacy_letter.docx").write_bytes(_docx_bytes())
+
+    html = client.get("/admin/docx/legacy_letter/master").text
+    assert "what the UI wrote" not in html
+    assert "written by you" in html
+
+
+def test_a_managed_templates_yaml_block_still_says_the_ui_wrote_it(admin_client):
+    """And the wording must not flip for templates the UI really did write."""
+    client, _mcp, custom, cfg = admin_client
+    _write_master(cfg, MASTER_SPEC)
+    (custom / "legacy_letter.docx").write_bytes(_docx_bytes())
+    _post(client, "/admin/docx/legacy_letter/adopt", data={})
+
+    html = client.get("/admin/docx/legacy_letter/edit").text
+    assert "what the UI wrote" in html
