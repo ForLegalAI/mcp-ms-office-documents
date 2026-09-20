@@ -35,7 +35,7 @@ import hashlib
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import metrics
 
@@ -47,7 +47,7 @@ from admin import auth, base_templates, views
 from admin import assets as asset_index
 from admin.analysis import analyze, is_unusable
 from admin.components import head_tags
-from admin.forms import build_spec, carried_spec, checked
+from admin.forms import build_spec, carried_spec, checked, parse_style_mapping
 from admin.kinds import (
     KINDS, content_disposition, descriptor, is_kind, media_type,
 )
@@ -58,7 +58,9 @@ from admin.preview import (
 from admin.store import (
     FileTemplateStore, KIND_DOCX, KIND_PPTX, TemplateStoreError, validate_name,
 )
-from template_registry import gather_specs, is_enabled
+from template_registry import (
+    gather_specs, is_enabled, overlay_global, read_master_yaml,
+)
 from template_utils import find_file_in_template_dirs
 
 logger = logging.getLogger(__name__)
@@ -82,12 +84,70 @@ class AdminContext:
         return f"{self.path}{path}"
 
     @property
+    def docx_master_yaml(self) -> Path:
+        """The hand-written master Word template config. Never rewritten here."""
+        return self.store.config_dir / "docx_templates.yaml"
+
+    @property
     def global_style_mapping(self) -> Dict[str, Any]:
-        """Master-YAML ``style_mapping``, re-read each access so edits on disk
-        take effect without a restart (the admin UI is about live editing)."""
-        master = self.store.config_dir / "docx_templates.yaml"
-        _templates, cfg = gather_specs(master, None)
+        """The ``style_mapping`` actually in force for Word.
+
+        The master YAML under whatever the UI has stored in the ``.d`` layer,
+        re-read each access so an edit — here or on the volume — takes effect
+        without a restart (the admin UI is about live editing). Goes through
+        ``global_config`` so this page, the dynamic loader and the static Word
+        tool cannot disagree about which mapping applies (#161).
+        """
+        cfg = overlay_global(read_master_yaml(self.docx_master_yaml),
+                             self.store.global_settings(KIND_DOCX))
         return cfg.get("style_mapping") or {}
+
+    @property
+    def master_style_mapping(self) -> Dict[str, Any]:
+        """What the master YAML alone declares, ignoring the UI's override.
+
+        Shown beside the editable mapping so a master setting the override has
+        switched off is visible rather than merely gone.
+        """
+        return read_master_yaml(self.docx_master_yaml).get("style_mapping") or {}
+
+    def resync_docx_style_map(self) -> Tuple[int, List[str]]:
+        """Re-register every live Word template tool for a changed global map.
+
+        The global mapping is *baked into each tool at registration time* —
+        ``_register_single_template`` resolves ``build_style_map(global,
+        per-template)`` once and closes over the result — so saving a new
+        global mapping without this leaves every existing tool rendering on the
+        old one, and only the static Word tool (which resolves per document)
+        would follow the change. That split is precisely the kind of thing an
+        admin would never think to suspect.
+
+        Returns ``(live, lost)``. ``lost`` is why the before/after comparison
+        is here at all: ``register_docx_template()`` removes the existing tool
+        *before* rebuilding it, so a template whose source file has gone
+        missing since startup does not merely fail to re-register — it is
+        taken off the server, and the loop that registers them logs the
+        failure and moves on. The caller has to be able to say so, because
+        from the admin's side the only thing that happened was saving a style.
+        """
+        from docx_tools.dynamic_docx_tools import (
+            register_docx_template_tools_from_yaml, registered_docx_template_names,
+        )
+        from docx_tools.style_map import invalidate_global_style_map
+
+        # The static tool's cache is fingerprinted on the config files' mtime
+        # and size, which cannot be trusted to notice two writes inside one
+        # filesystem timestamp tick. A write we made ourselves we simply know
+        # about, so say so rather than hope the fingerprint moved.
+        invalidate_global_style_map()
+        before = set(registered_docx_template_names())
+        register_docx_template_tools_from_yaml(self.mcp, self.docx_master_yaml)
+        after = registered_docx_template_names()
+        lost = sorted(before - set(after))
+        if lost:
+            logger.error("[admin] Re-registration dropped Word template(s): %s",
+                         ", ".join(lost))
+        return len(after), lost
 
     # -- live MCP tool registration ----------------------------------------
 
@@ -596,6 +656,98 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         return views.assets_page(
             ctx, ctx.scan_assets(), csrf=auth.ensure_csrf(sess),
             message=f"Deleted {found.name}.")
+
+    # ---- Global style mapping (#161) -------------------------------------
+    # Registered BEFORE the generic /{kind}/… routes below: "/styles/save"
+    # also fits "/{kind}/save" with kind="styles", which would 404 through
+    # is_kind() instead of reaching this handler. Starlette matches in
+    # registration order; tests/test_admin_global_styles.py pins it.
+
+    def _resync_message(ok: str, lost):
+        """The flash for a save, worded for what the re-registration did.
+
+        A template that could not be rebuilt is *gone*, not merely stale, and
+        the admin was only saving a style — so that outcome must not arrive as
+        a success message with a smaller number in it.
+        """
+        if not lost:
+            return ok, "ok"
+        return (
+            ok + " But " + ", ".join(lost) + " could not be rebuilt and is no "
+            "longer registered — its source file is most likely missing. Check "
+            "Source files, then re-upload it on the template's page.",
+            "warn",
+        )
+
+    def _styles_page(sess, message=None, message_kind="ok"):
+        return views.global_styles_page(
+            ctx, csrf=auth.ensure_csrf(sess),
+            mapping=ctx.global_style_mapping,
+            master=ctx.master_style_mapping,
+            stored=ctx.store.has_global_settings(KIND_DOCX),
+            offered=_base_docx_styles(),
+            message=message, message_kind=message_kind,
+        )
+
+    def _base_docx_styles():
+        """Styles the base Word template defines — what this mapping can pick.
+
+        The base template is the right reference here and not a guess: this
+        mapping applies to every document, and the static Word tool renders
+        onto exactly this file. A style named in the mapping but missing from
+        it is still offered by the view, marked, so an existing value is never
+        dropped for being unrecognised.
+        """
+        slot = base_templates.slot("docx")
+        active = base_templates.active_path(slot)
+        if active is None:
+            return []
+        try:
+            return list(analyze(slot.analysis_kind, active.read_bytes()).styles_present)
+        except Exception:
+            logger.exception("[admin] Could not read styles from %s", active)
+            return []
+
+    @rt("/styles")
+    def global_styles(sess):
+        return _styles_page(sess)
+
+    @rt("/styles/save", methods=["post"])
+    async def save_global_styles(req, sess):
+        form = await req.form()
+        bad = _csrf_guard(sess, form)
+        if bad:
+            return bad
+        mapping = parse_style_mapping(form)
+        try:
+            ctx.store.save_global_settings(KIND_DOCX, {"style_mapping": mapping})
+        except (TemplateStoreError, OSError) as e:
+            logger.exception("[admin] Could not save the global style mapping")
+            return _styles_page(sess, f"Could not save: {e}", "err")
+        live, lost = ctx.resync_docx_style_map()
+        logger.info("[admin] Global style mapping set to %r", mapping)
+        return _styles_page(sess, *_resync_message(
+            f"Saved. {len(mapping)} key(s) overridden; {live} Word template "
+            "tool(s) re-registered on the new mapping.", lost))
+
+    @rt("/styles/revert", methods=["post"])
+    async def revert_global_styles(req, sess):
+        form = await req.form()
+        bad = _csrf_guard(sess, form)
+        if bad:
+            return bad
+        try:
+            removed = ctx.store.clear_global_settings(KIND_DOCX)
+        except (TemplateStoreError, OSError) as e:
+            logger.exception("[admin] Could not clear the global style mapping")
+            return _styles_page(sess, f"Could not revert: {e}", "err")
+        live, lost = ctx.resync_docx_style_map()
+        if not removed:
+            return _styles_page(sess, "There was nothing stored to revert.", "info")
+        logger.info("[admin] Global style mapping reverted to the master YAML")
+        return _styles_page(sess, *_resync_message(
+            "Reverted to config/docx_templates.yaml. "
+            f"{live} Word template tool(s) re-registered.", lost))
 
     @rt("/new/{kind}")
     def new(sess, kind: str):

@@ -89,6 +89,18 @@ and logs anything it recognises in neither direction. `safe_remove_tool(mcp, nam
 tool across FastMCP versions. It lives at the root so the core tool modules
 never import the optional `admin` package.
 
+`global_config(master_yaml, spec_dir)` is the same idea for the master file's
+*top-level* keys (for Word, `style_mapping`): the parsed master under a
+reserved `<kind>_templates.d/_global.yaml`, which the admin UI writes so those
+settings can be edited without rewriting the hand-written master. A key there
+**replaces** the master's key rather than merging into it, `templates:` is
+never taken from it, and `read_spec_dir()` skips the file so it is never read
+as a template. `overlay_global(master_cfg, settings)` is the merge rule alone,
+for a caller that already holds the settings. `spec_dir_for(master_yaml)`
+names the `.d` directory (`x.yaml` → `x.d`) for a module that only has the
+master path. See
+[dynamic-templates.md](dynamic-templates.md#kind-wide-settings).
+
 ## `inline_markdown.py`
 
 The single inline-emphasis grammar. `build_inline_pattern(highlight=,

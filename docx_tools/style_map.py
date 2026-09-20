@@ -8,17 +8,24 @@ touching the call sites — the defaults reproduce today's behaviour exactly.
 A map is threaded explicitly through the processors (not held in global state) so
 concurrent conversions on worker threads never share mutable mapping state. Config
 overrides come from the ``style_mapping`` section of ``config/docx_templates.yaml``
-(global) and each template's own ``style_mapping`` (per-template, wins over global).
+(global, overridable by the admin UI through
+``config/docx_templates.d/_global.yaml`` — see
+:func:`template_registry.global_config`) and each template's own
+``style_mapping`` (per-template, wins over global).
 See docs/development/tools/word.md ("Style mapping") for the design rationale;
 the original discussion is issue #66.
 """
 import logging
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 from docx.table import Table
 from docx.text.paragraph import Paragraph
+
+from template_registry import (
+    GLOBAL_SETTINGS_FILENAME, global_config, spec_dir_for,
+)
 
 from . import warnings as W
 
@@ -196,28 +203,92 @@ _CONFIG_PATHS = (
     Path("/app/config") / "docx_templates.yaml",
     Path(__file__).resolve().parent.parent / "config" / "docx_templates.yaml",
 )
-_cached_global_style_map: Optional[StyleMap] = None
+
+
+def _resolve_config() -> Tuple[Optional[Path], Optional[Path]]:
+    """``(master YAML, spec dir)`` for the first candidate location in use.
+
+    A location counts as in use when *either* half is there: the admin UI can
+    write ``docx_templates.d/_global.yaml`` on a deployment that never had a
+    master YAML, and that mapping still has to apply.
+    """
+    for path in _CONFIG_PATHS:
+        spec_dir = spec_dir_for(path)
+        try:
+            if path.is_file() or (spec_dir and spec_dir.is_dir()):
+                return path, spec_dir
+        except OSError:  # pragma: no cover - unreadable candidate directory
+            logger.warning("Could not stat %s", path, exc_info=True)
+    return None, None
+
+
+def _stamp(path: Optional[Path]) -> Tuple:
+    """A cheap fingerprint of one config file: absent, or its mtime and size."""
+    if path is None:
+        return ()
+    try:
+        st = path.stat()
+        return (str(path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        return (str(path), None, None)
+
+
+#: ``(fingerprint, map)``. A plain tuple assignment, so two threads racing here
+#: both compute the same answer and one wins — never a half-built cache.
+_cached_global_style_map: Optional[Tuple[Tuple, StyleMap]] = None
+
+
+def invalidate_global_style_map() -> None:
+    """Drop the cached global map, so the next read re-resolves from disk.
+
+    Called by whoever *writes* the mapping — the admin UI — because the
+    fingerprint below cannot be trusted to notice two writes inside one
+    filesystem timestamp tick when the file happens to keep its size.
+    Hand edits on the volume are what the fingerprint is for; a write we made
+    ourselves we simply know about.
+    """
+    global _cached_global_style_map
+    _cached_global_style_map = None
 
 
 def load_global_style_map() -> StyleMap:
-    """Build the global :class:`StyleMap` from ``docx_templates.yaml`` (cached).
+    """Build the global :class:`StyleMap` from the docx template config.
 
-    Reads the top-level ``style_mapping`` section. Returns :data:`DEFAULT_STYLE_MAP`
-    if no config file or section is present. Result is cached for the process.
+    Reads the top-level ``style_mapping`` in force — the master
+    ``docx_templates.yaml`` under whatever ``docx_templates.d/_global.yaml``
+    overrides — through the same :func:`template_registry.global_config` the
+    dynamic loader and the admin UI use, so the static Word tool cannot end up
+    on a different mapping from a template tool.
+
+    Cached against the two files' mtime and size, *not* for the life of the
+    process as it used to be: that meant editing the mapping in the admin UI
+    left every subsequent document on the old one until a restart — the
+    setting with the widest blast radius being the one that could not be
+    changed live (#161). Re-parsing unconditionally would be correct too, but
+    the master file is a few hundred lines of worked examples and parsing it
+    costs more than the markdown render it would be paying for.
+
+    Two ``stat`` calls, once per document build
+    (:mod:`docx_tools.base_docx_tool` calls this only when the caller passed
+    no map). A caller generating in a loop should still build the map once and
+    pass it down, which is what every dynamic template tool already does.
     """
     global _cached_global_style_map
-    if _cached_global_style_map is not None:
-        return _cached_global_style_map
-    mapping = {}
-    for path in _CONFIG_PATHS:
-        try:
-            if not path.is_file():
-                continue
-            import yaml
-            cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-            mapping = cfg.get("style_mapping") or {}
-            break
-        except Exception:
-            logger.warning("Failed to read style_mapping from %s", path, exc_info=True)
-    _cached_global_style_map = build_style_map(mapping)
-    return _cached_global_style_map
+
+    master, spec_dir = _resolve_config()
+    settings = (spec_dir / GLOBAL_SETTINGS_FILENAME) if spec_dir else None
+    fingerprint = (_stamp(master), _stamp(settings))
+
+    cached = _cached_global_style_map
+    if cached is not None and cached[0] == fingerprint:
+        return cached[1]
+
+    try:
+        mapping = global_config(master, spec_dir).get("style_mapping") or {}
+    except Exception:
+        logger.warning("Failed to read the global style_mapping; using defaults.",
+                       exc_info=True)
+        mapping = {}
+    style_map = build_style_map(mapping)
+    _cached_global_style_map = (fingerprint, style_map)
+    return style_map

@@ -35,7 +35,9 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
-from template_registry import read_spec_file
+from template_registry import (
+    GLOBAL_SETTINGS_FILENAME, read_global_settings, read_spec_dir, read_spec_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -111,12 +113,36 @@ def _require_kind(kind: str) -> Dict[str, Any]:
     return meta
 
 
+#: Names whose spec file would collide with a reserved file in the spec
+#: directory. ``_NAME_RE`` allows a leading underscore, so a template called
+#: ``_global`` would be written to ``_global.yaml`` — the kind-wide settings
+#: file (#161) — and take the global style mapping with it.
+_RESERVED_NAMES = frozenset({Path(GLOBAL_SETTINGS_FILENAME).stem})
+
+#: Header on the kind-wide settings file. Says the one thing a person editing
+#: it by hand has to know and cannot infer: a key here does not merge into the
+#: master YAML's value for that key, it replaces it outright.
+_GLOBAL_HEADER = (
+    "# Settings for every template of this kind, managed by the template-admin\n"
+    "# UI. Each top-level key here REPLACES the master YAML's key of the same\n"
+    "# name -- it is not merged into it, so a setting the master declares and\n"
+    "# this file does not is off. Delete this file to hand the kind back to the\n"
+    "# master YAML. Prefer editing via the admin UI.\n"
+)
+
+
 def validate_name(name: str) -> str:
     """Validate and return a template/tool *name*, or raise ``TemplateStoreError``."""
     if not name or not _NAME_RE.match(name):
         raise TemplateStoreError(
             f"Invalid template name {name!r}: use letters, digits and underscores "
             "and do not start with a digit."
+        )
+    if name in _RESERVED_NAMES:
+        raise TemplateStoreError(
+            f"{name!r} is reserved: its spec file is where this server keeps "
+            "settings that apply to every template of the kind. Choose "
+            "another name."
         )
     return name
 
@@ -219,6 +245,34 @@ class TemplateStore(ABC):
     def asset_exists(self, kind: str, filename: str) -> bool:
         """Return True if the asset file exists in the writable custom dir."""
 
+    # -- kind-wide settings (#161) ------------------------------------------
+    #
+    # Not a template: one mapping per kind, holding what the master YAML keeps
+    # at top level (for docx, ``style_mapping``). It lives in the same ``*.d``
+    # merge layer the managed specs do, because the master YAML is hand-written
+    # documentation this UI never rewrites.
+
+    @abstractmethod
+    def global_settings(self, kind: str) -> Dict[str, Any]:
+        """The UI-managed kind-wide settings, or ``{}`` if none are stored."""
+
+    @abstractmethod
+    def has_global_settings(self, kind: str) -> bool:
+        """True when this UI has stored settings overriding the master YAML.
+
+        Distinct from :meth:`global_settings` returning ``{}``: *stored and
+        empty* means every key is deliberately unset, which overrides a master
+        mapping, whereas *not stored* leaves the master's in force.
+        """
+
+    @abstractmethod
+    def save_global_settings(self, kind: str, settings: Dict[str, Any]) -> Dict[str, Any]:
+        """Persist kind-wide *settings*, replacing what was stored."""
+
+    @abstractmethod
+    def clear_global_settings(self, kind: str) -> bool:
+        """Discard the stored settings so the master YAML applies again."""
+
 
 class FileTemplateStore(TemplateStore):
     """Filesystem-backed store writing to ``custom_templates/`` and ``config/*.d/``.
@@ -249,11 +303,12 @@ class FileTemplateStore(TemplateStore):
 
     # -- internal paths -----------------------------------------------------
 
-    def _spec_dir(self, kind: str) -> Path:
+    def spec_dir(self, kind: str) -> Path:
+        """The ``*.d`` directory holding this kind's managed spec files."""
         return self.config_dir / _require_kind(kind)["subdir"]
 
     def _spec_path(self, kind: str, name: str) -> Path:
-        return self._spec_dir(kind) / f"{validate_name(name)}.yaml"
+        return self.spec_dir(kind) / f"{validate_name(name)}.yaml"
 
     def asset_path(self, kind: str, filename: str) -> Path:
         validate_asset_filename(filename, kind)
@@ -262,14 +317,11 @@ class FileTemplateStore(TemplateStore):
     # -- reads --------------------------------------------------------------
 
     def list_specs(self, kind: str) -> List[Dict[str, Any]]:
-        spec_dir = self._spec_dir(kind)
-        if not spec_dir.is_dir():
-            return []
-        specs: List[Dict[str, Any]] = []
-        for path in sorted(spec_dir.glob("*.yaml")):
-            spec = self._read_spec_file(path)
-            if spec is not None:
-                specs.append(spec)
+        # Through read_spec_dir so the reserved _global.yaml is skipped here
+        # exactly as it is on the registration path — listing it would log it
+        # as a malformed spec on every page load, and a second skip written out
+        # here is a second place to forget.
+        specs = list(read_spec_dir(self.spec_dir(kind)))
         specs.sort(key=lambda s: str(s.get("name", "")))
         return specs
 
@@ -372,6 +424,50 @@ class FileTemplateStore(TemplateStore):
                         pass
         return existed
 
+    # -- kind-wide settings (#161) ------------------------------------------
+
+    def _global_settings_path(self, kind: str) -> Path:
+        return self.spec_dir(kind) / GLOBAL_SETTINGS_FILENAME
+
+    def global_settings(self, kind: str) -> Dict[str, Any]:
+        _require_kind(kind)
+        return read_global_settings(self.spec_dir(kind))
+
+    def has_global_settings(self, kind: str) -> bool:
+        _require_kind(kind)
+        return self._global_settings_path(kind).is_file()
+
+    def save_global_settings(self, kind: str, settings: Dict[str, Any]) -> Dict[str, Any]:
+        """Write *settings* as the kind's global override, replacing what was there.
+
+        A replace rather than a merge, and the whole mapping is written even
+        where a key is empty: the override's job is to say what is in force, so
+        a key the admin cleared has to be *absent from the result*, not quietly
+        refilled from the master YAML or from the previous save.
+        """
+        _require_kind(kind)
+        if not isinstance(settings, dict):
+            raise TemplateStoreError("Global settings must be a mapping.")
+        path = self._global_settings_path(kind)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = dict(settings)
+        # ``templates`` belongs to the per-template files; a list here would be
+        # ignored by gather_specs anyway, so refuse it rather than store a key
+        # that silently does nothing.
+        payload.pop("templates", None)
+        path.write_text(self.dump_spec(payload, header=_GLOBAL_HEADER), encoding="utf-8")
+        logger.info("[template-store] Saved %s global settings -> %s", kind, path)
+        return payload
+
+    def clear_global_settings(self, kind: str) -> bool:
+        _require_kind(kind)
+        path = self._global_settings_path(kind)
+        if not path.is_file():
+            return False
+        path.unlink()
+        logger.info("[template-store] Cleared %s global settings (%s)", kind, path)
+        return True
+
     def set_enabled(self, kind: str, name: str, enabled: bool) -> Dict[str, Any]:
         """Write ``enabled`` into the managed spec, leaving everything else alone.
 
@@ -460,17 +556,18 @@ class FileTemplateStore(TemplateStore):
         return stored
 
     @staticmethod
-    def dump_spec(spec: Dict[str, Any]) -> str:
+    def dump_spec(spec: Dict[str, Any], header: Optional[str] = None) -> str:
         """Serialise a spec to YAML with a header marking it UI-managed.
 
         Public because the admin UI shows it: the YAML is the format the rest
         of the documentation teaches, so an admin who built a template by
         clicking can still read it in that vocabulary (#163).
         """
-        header = (
-            "# Managed by the template-admin UI. Edits here are merged on top of\n"
-            "# the master YAML at startup. Prefer editing via the admin UI.\n"
-        )
+        if header is None:
+            header = (
+                "# Managed by the template-admin UI. Edits here are merged on top of\n"
+                "# the master YAML at startup. Prefer editing via the admin UI.\n"
+            )
         body = yaml.safe_dump(
             spec,
             sort_keys=False,

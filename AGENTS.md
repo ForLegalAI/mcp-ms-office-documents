@@ -30,7 +30,8 @@ async_runner.py     run_blocking(): bounded thread pool for every blocking call
 librechat_integration.py   request-header user context; upload_and_format_response()
 upload_tools/       upload_file() / upload_file_async() dispatch; backends/<strategy>.py
 template_utils.py   template file resolution (custom → default, container → local)
-template_registry.py  YAML spec merging (master + *.d/) and live tool removal
+template_registry.py  YAML merging (master + *.d/) for specs and for the
+                    kind-wide _global.yaml; live tool removal
 inline_markdown.py  the inline-emphasis grammar shared by Word and PowerPoint
 warning_channel.py  DocumentWarning + WarningChannel: what a build worked around
 image_utils.py      image download/decode with the SSRF guard
@@ -39,7 +40,8 @@ docx_tools/ xlsx_tools/ pptx_tools/ email_tools/ xml_tools/   one package per ty
 admin/              optional FastHTML admin UI (ADMIN_ENABLED); app.py holds
                     routes only — components.py (markup + theme), kinds.py
                     (dynamic kinds), base_templates.py (static base
-                    templates), forms.py, views/
+                    templates), forms.py, views/ (views/settings.py = the
+                    server-wide style mapping)
 docs/               user reference (docs/*.md) and development docs (docs/development/)
 ```
 
@@ -139,6 +141,18 @@ backend → URL string or LibreChat artifact dict. Details:
   path uses — never at a call site. A new consumer of `gather_specs()` gets
   the filtering for free; only the admin UI passes `include_disabled=True`.
   Absent means enabled, so specs written before #165 stay live.
+- Kind-wide settings (a master file's *top-level* keys, e.g. Word's
+  `style_mapping`) merge in `template_registry.global_config()` — the one
+  merge point, as `gather_specs()` is for templates. A `*.d/_global.yaml` key
+  **replaces** the master's key, never merges into it, and `templates:` is
+  never taken from it. The filename is reserved: `read_spec_dir()` skips it
+  and `store.validate_name()` refuses the name `_global` (#161).
+- The global style map is cached against its config files' mtime and size,
+  never for the process lifetime: a UI edit must apply without a restart.
+  Anything that *writes* it calls `invalidate_global_style_map()` — the
+  fingerprint cannot see two writes in one timestamp tick — and must also
+  re-register the Word tools, which bake the map in at registration.
+  `AdminContext.resync_docx_style_map()` does both.
 
 **Docs — part of every change, never a follow-up**
 - Before you finish any change, find every page under `docs/` that describes
