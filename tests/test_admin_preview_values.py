@@ -368,3 +368,80 @@ def test_an_empty_string_is_honoured_rather_than_replaced(admin_client):
     """Clearing a field means "render it empty", not "put the sample back"."""
     args = [{"name": "a", "type": "string"}]
     assert values_from_form({"value_a": ""}, args) == {"a": ""}
+
+
+# ---------------------------------------------------------------------------
+# The carried spec is client-supplied, so its asset path is still gated
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("attempt", [
+    "../secret.docx",
+    "../../secret.docx",
+    "/etc/passwd",
+    "../config/docx_templates.yaml",
+    "sub/../../secret.docx",
+])
+def test_a_carried_spec_cannot_read_outside_the_uploads_directory(admin_client,
+                                                                  tmp_path,
+                                                                  attempt):
+    """The spec rides through the form, so its path key is attacker-shaped.
+
+    `asset_exists()` resolves through `asset_path()`, which runs
+    `validate_asset_filename()` and refuses anything but a bare filename — so
+    a crafted path never reaches `read_asset()`.
+    """
+    client, _custom = admin_client
+    (tmp_path / "secret.docx").write_bytes(b"SENSITIVE")
+
+    spec = {"name": "x", "description": "d", "docx_path": attempt, "args": []}
+    r = _post(client, "/admin/docx/preview",
+              data={"spec_json": json.dumps(spec), "value_a": "x"})
+
+    assert r.status_code == 400
+    assert b"SENSITIVE" not in r.content
+
+
+def test_the_body_and_cell_distinction_becomes_visible(admin_client):
+    """Answering my own question: is the third invisible thing now testable?
+
+    docs/templates.md promises block-level Markdown in a body placeholder but
+    inline-only inside a table cell. With a generated `[body]` sample neither
+    treatment is exercised, so the difference is invisible. Typing the same
+    Markdown into both shows it: the body becomes a real bullet list, the
+    cell does not gain list paragraphs.
+    """
+    from docx import Document as Doc
+
+    client, _custom = admin_client
+    doc = Doc()
+    doc.add_paragraph("{{body}}")
+    table = doc.add_table(rows=1, cols=1)
+    table.cell(0, 0).paragraphs[0].text = "{{cell}}"
+    buf = io.BytesIO()
+    doc.save(buf)
+
+    _post(client, "/admin/docx/draft", data={"name": "rpt"},
+          files={"file": ("rpt.docx", buf.getvalue(), "application/octet-stream")})
+    fields = dict(FIELDS, arg_name=["body", "cell"], arg_type=["string", "string"],
+                  arg_required=["true", "true"], arg_default=["", ""],
+                  arg_desc=["", ""])
+    _post(client, "/admin/docx/save", data=fields)
+    form = _post(client, "/admin/docx/preview/values", data=fields).text
+
+    markdown = "- one\n- two"
+    r = _post(client, "/admin/docx/preview", data={
+        "spec_json": _carried(form),
+        "value_body": markdown, "value_cell": markdown})
+
+    out = Document(io.BytesIO(r.content))
+    body_styles = [p.style.name for p in out.paragraphs if p.text.strip()]
+    cell_styles = [p.style.name for p in out.tables[0].cell(0, 0).paragraphs
+                   if p.text.strip()]
+    cell_text = "\n".join(p.text for p in out.tables[0].cell(0, 0).paragraphs)
+    assert "List Bullet" in body_styles, \
+        "a body placeholder must render block-level Markdown"
+    assert "one" in cell_text, \
+        "the cell must actually be rendered, or the next assertion is vacuous"
+    assert "List Bullet" not in cell_styles, \
+        "a table cell is inline-only, and now you can see that"
