@@ -120,6 +120,25 @@ checks `UploadFile.size` (falling back to a seek) *first*, and only reads a
 file that is within `ADMIN_MAX_UPLOAD_MB`. The post-read check stays as a
 backstop for an upload whose size could not be known in advance.
 
+**The log view filters the whole buffer, then limits.** `metrics.recent_logs()`
+takes the level, source and search and applies them before the `limit`, so the
+limit counts *matches* rather than records scanned — limiting first would lose
+a match that happens to sit behind the newest page and make a filter look
+empty. The level choices come from `available_levels()`, which drops any level
+below what the buffer is actually capturing at: offering "debug and above" on
+a server running at INFO is a filter that can only ever come back empty.
+
+**The scan snapshots the ring buffer before filtering it.** `recent_logs()`
+and `counts_by_level()` both do `list(_LOG_HANDLER.records)` first. Builds run
+on worker threads and each one logs, so a record can arrive mid-scan — and a
+`deque` raises `RuntimeError: deque mutated during iteration` if it does.
+Filter the snapshot, never the live deque.
+
+**`refresh_seconds()` clamps to `REFRESH_CHOICES`.** A value outside the
+offered set turns auto-refresh off rather than arming a timer, because no
+`<option>` would render as selected for it — the control would read "off"
+while the page reloaded under the reader.
+
 **3. Colours are tokens.** Custom properties on `:root`, redefined under
 `@media (prefers-color-scheme: dark)`. A rule written with a literal colour
 will be wrong in one of the two themes.
@@ -172,4 +191,5 @@ argument, so "live" means the registry re-read it.
 | `tests/test_admin_style_keys.py` | the style-key lists cannot drift from the renderer |
 | `tests/test_admin_base_templates.py` | the five base-template slots: state, upload, download, revert |
 | `tests/test_metrics_warnings.py` | warnings reach the counters and the Status page |
+| `tests/test_admin_log_view.py` | the log view's level, source and search filters |
 | `tests/test_admin_config.py` | `ADMIN_*` settings |

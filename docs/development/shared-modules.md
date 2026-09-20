@@ -162,9 +162,17 @@ tool's own codes are covered by `tests/test_<tool>_warnings.py`.
 
 In-process counters per tool (`record_call`, `record_error`,
 `record_warnings`, `tool_stats`) under a lock, plus a `RecentLogHandler` ring
-buffer of 300 records that the admin app attaches to the root logger when
-enabled. No external dependencies, so the core tool modules can import it.
+buffer of `LOG_BUFFER_CAPACITY` records that the admin app attaches to the
+root logger when enabled. No external dependencies, so the core tool modules
+can import it.
 `reset()` is for tests.
+
+`recent_logs()` filters the buffer by level, top-level logger package and a
+case-insensitive substring (matched against the message *and* the logger name)
+before applying its limit, so the limit bounds matches rather than records
+scanned. `log_sources()` lists the packages present, for the Status page's
+filter; `capture_level()` reports what the buffer is recording at, so the page
+can withhold a level filter that could never match.
 
 `record_warnings()` is what makes a degrading build visible. A build that
 substitutes a style or drops a row still *succeeds*, so `calls` counts it and

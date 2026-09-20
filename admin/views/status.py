@@ -5,7 +5,10 @@ import logging
 import time
 from typing import Optional
 
-from fasthtml.common import A, Div, H1, P, Span, Table, Tbody, Td, Tr
+from fasthtml.common import (
+    A, Button, Div, Form, H1, Input, Option, P, Select, Span, Table, Tbody,
+    Td, Tr,
+)
 
 import metrics
 from admin import components as c
@@ -93,8 +96,95 @@ def _warnings_card():
     return c.data_table(["Tool", "Worked around"], rows)
 
 
-def _log_block(errors_only: bool):
-    min_level = logging.WARNING if errors_only else logging.INFO
+#: The level choices, coarsest last. Replaces a two-state All / Warnings
+#: toggle that could not express "errors only" without also showing warnings.
+LEVELS = (("debug", logging.DEBUG), ("info", logging.INFO),
+          ("warning", logging.WARNING), ("error", logging.ERROR))
+_LEVEL_NO = dict(LEVELS)
+
+#: Auto-refresh intervals offered, in seconds. Off by default: a page that
+#: reloads under you while you are reading it is worse than one you refresh.
+REFRESH_CHOICES = ((0, "off"), (10, "10s"), (30, "30s"), (60, "60s"))
+
+LOG_LIMIT = 200
+
+
+def level_no(level: str) -> int:
+    """The numeric level for a query-string value, defaulting to INFO."""
+    return _LEVEL_NO.get((level or "").strip().lower(), logging.INFO)
+
+
+def refresh_seconds(raw) -> int:
+    """The refresh interval for a query-string value, or 0 (off).
+
+    Clamped to `REFRESH_CHOICES`: anything else — a negative number, junk, or
+    `?refresh=999999` — turns it off rather than arming a timer no option in
+    the <select> would show as chosen.
+    """
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 0
+    return value if value in {v for v, _ in REFRESH_CHOICES} else 0
+
+
+def available_levels():
+    """The level choices that can actually match something.
+
+    The buffer captures at the server's configured level, so below it there is
+    nothing to find. Offering "debug and above" on a server running at INFO
+    would be a filter that always comes back empty and looks broken.
+    """
+    floor = metrics.capture_level()
+    if floor is None:
+        return LEVELS
+    return tuple((name, no) for name, no in LEVELS if no >= floor) or LEVELS[-1:]
+
+
+def _log_filters(ctx, level: str, source: str, search: str, refresh: int):
+    """The filter bar. A plain GET form, so every view has a shareable URL."""
+    levels = available_levels()
+    level_opts = [Option(f"{name} and above", value=name,
+                         selected=(name == level)) for name, _no in levels]
+    source_opts = [Option("every source", value="", selected=not source)]
+    source_opts += [Option(name, value=name, selected=(name == source))
+                    for name in metrics.log_sources()]
+    refresh_opts = [Option(label, value=str(value),
+                           selected=(value == refresh))
+                    for value, label in REFRESH_CHOICES]
+    return Form(
+        Div(
+            c.field("Level", Select(*level_opts, name="level")),
+            c.field("Source", Select(*source_opts, name="logger")),
+            c.field("Search", Input(name="q", value=search,
+                                    placeholder="message or logger name"),
+                    cls="field grow"),
+            c.field("Auto-refresh", Select(*refresh_opts, name="refresh")),
+            Div(Button("Apply", type="submit", cls="btn btn-primary"),
+                A("Reset", href=ctx.u("/status"), cls="btn"),
+                cls="actions"),
+            cls="filters",
+        ),
+        _capture_note(levels),
+        action=ctx.u("/status"), method="get",
+    )
+
+
+def _capture_note(levels):
+    """Say why `debug` is missing, rather than leaving it unexplained."""
+    if any(name == "debug" for name, _no in levels):
+        return None
+    return P("Capturing at info and above. Set DEBUG=true on the server to "
+             "record debug lines as well.", cls="muted")
+
+
+def _log_block(level: str, source: str, search: str):
+    records = metrics.recent_logs(level_no(level), limit=LOG_LIMIT,
+                                  search=search, source=source)
+    if not records:
+        if search or source or level != "info":
+            return P("No records match these filters.", cls="muted")
+        return P("No log records captured yet.", cls="muted")
     rows = [
         Tr(
             Td(fmt_ts(r["time"]), cls="ts"),
@@ -102,15 +192,17 @@ def _log_block(errors_only: bool):
             Td(r["logger"]),
             Td(r["message"], cls="msg"),
         )
-        for r in metrics.recent_logs(min_level, limit=150)
+        for r in records
     ]
-    if not rows:
-        return P("No log records captured yet.", cls="muted")
+    shown = P(f"{len(rows)} record(s)"
+              + (f", newest {LOG_LIMIT}" if len(rows) == LOG_LIMIT else ""),
+              cls="muted")
     # Already its own scroll container, so not c.data_table.
-    return Div(Table(Tbody(*rows)), cls="logs")
+    return Div(shown, Div(Table(Tbody(*rows)), cls="logs"))
 
 
-def status_page(ctx, level: str = "info"):
+def status_page(ctx, level: str = "info", source: str = "",
+                search: str = "", refresh: int = 0):
     live_docx = ctx.live_names(KIND_DOCX)
     live_email = ctx.live_names(KIND_EMAIL)
     lvl_counts = metrics.counts_by_level()
@@ -129,24 +221,14 @@ def status_page(ctx, level: str = "info"):
                num_cls="warn-text" if degraded else ""),
     )
 
-    errors_only = level == "error"
-    toggle = Div(
-        Span("Show:", cls="muted"),
-        A("All", href=ctx.u("/status"),
-          cls="btn btn-sm " + ("btn-secondary" if errors_only else "btn-primary")),
-        A("Warnings & errors", href=ctx.u("/status?level=error"),
-          cls="btn btn-sm " + ("btn-primary" if errors_only else "btn-secondary")),
-        A("Refresh", href=ctx.u(f"/status{'?level=error' if errors_only else ''}"),
-          cls="btn btn-sm"),
-        cls="toggle-row",
-    )
-
     return page(
         ctx, "Status",
         H1("Status"),
         stats,
         c.card(_usage_table(), title="Tool usage (this session)", level=2),
         c.card(_warnings_card(), title="What builds worked around", level=2),
-        c.card(toggle, _log_block(errors_only),
-               title="Recent activity & errors", level=2),
+        c.card(_log_filters(ctx, level, source, search, refresh),
+               _log_block(level, source, search),
+               title="Recent activity", level=2),
+        c.auto_refresh(refresh),
     )

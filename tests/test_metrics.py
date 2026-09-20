@@ -71,3 +71,27 @@ def test_reset_clears_state():
     metrics.reset()
     assert metrics.tool_stats() == []
     assert metrics.recent_logs(logging.INFO) == []
+
+
+def test_recent_logs_survives_an_append_mid_scan():
+    """A worker logging while the Status page renders must not blow it up.
+
+    `recent_logs()` filters record by record, and every filter step is a
+    chance for the interpreter to hand off to a worker thread whose `emit()`
+    appends to the same deque; CPython then raises `RuntimeError: deque
+    mutated during iteration` on the next step. Rather than race a real
+    thread for it, this puts the append exactly where that hand-off would
+    land — inside the first field `recent_logs()` reads off a record.
+    """
+    handler = metrics._LOG_HANDLER
+
+    class _AppendsWhenRead(dict):
+        def __getitem__(self, key):
+            handler.records.append(dict(self))
+            return super().__getitem__(key)
+
+    logging.getLogger("probe").error("hello")
+    assert handler.records, "nothing captured — the probe below would be vacuous"
+    handler.records[0] = _AppendsWhenRead(handler.records[0])
+
+    assert metrics.recent_logs(logging.INFO), "the scan must survive the append"
