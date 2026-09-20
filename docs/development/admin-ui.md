@@ -22,6 +22,26 @@ contain, [`dynamic-templates.md`](dynamic-templates.md).
 | `admin/preview.py` | rendering a template without touching the upload backend |
 | `admin/auth.py` | the shared-password gate and CSRF tokens |
 
+### Mounting
+
+`build_combined_app()` puts three routes on one Starlette app, and the order is
+load-bearing:
+
+```python
+Route(config.admin.path, endpoint=_admin_root_redirect, methods=["GET", "HEAD"])
+Mount(config.admin.path, app=admin_app)
+Mount("/", app=mcp_app)
+```
+
+The `Route` is not a nicety. Starlette compiles `Mount("/admin")` to
+`^/admin/(?P<path>.*)$`, which does **not** match `/admin`, and its router only
+offers the missing-trailing-slash redirect when *nothing* matched at all. The
+catch-all MCP mount matches everything, so `GET /admin` used to reach the MCP
+app and come back **404** — the address an admin is given, and the one they
+type, was the one URL that did not work. The redirect is built from
+`config.admin.path`, so a custom `ADMIN_PATH` gets it too;
+`tests/test_admin_app.py` pins both the ordering and that it follows config.
+
 `components`, `kinds`, `forms`, `store`, `analysis` and `assets` do not import
 `admin.app`; views take the `AdminContext` as a parameter. `store`, `analysis`
 and `forms` have no FastHTML dependency at all, so their rules can be unit
