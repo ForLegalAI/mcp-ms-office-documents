@@ -42,6 +42,14 @@ type, was the one URL that did not work. The redirect is built from
 `config.admin.path`, so a custom `ADMIN_PATH` gets it too;
 `tests/test_admin_app.py` pins both the ordering and that it follows config.
 
+**`methods=["GET", "HEAD"]` is load-bearing, not caution.** `ADMIN_PATH` is
+free text, so `/mcp` is a legal if unwise value. The MCP endpoint survives it
+only because three things line up: the redirect `Route` does not take POST,
+`Mount("/mcp")` does not match the bare `/mcp`, and the catch-all still does —
+so an MCP client's POST falls past both admin routes to the MCP app. Widening
+the methods "for uniformity" turns that POST into a 307 to `/mcp/` and the
+client never gets a session. `tests/test_entry_points.py` pins it.
+
 `tests/test_entry_points.py` guards the *class* of bug rather than the
 instance. Every URL this server advertises to the outside world — the three
 Kubernetes probes, `/mcp`, `/admin` — is asserted to resolve **exactly as

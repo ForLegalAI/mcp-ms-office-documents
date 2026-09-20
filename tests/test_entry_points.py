@@ -104,6 +104,48 @@ def test_the_admin_url_leads_all_the_way_to_the_ui(combined):
     assert r.url.path.startswith("/admin/"), "it should end up inside the mount"
 
 
+def test_the_mcp_endpoint_survives_an_admin_path_collision(tmp_path, monkeypatch):
+    """Why the root redirect is GET/HEAD only, and must stay that way.
+
+    `ADMIN_PATH` is free text, so `/mcp` is a legal if unwise value. Nothing
+    rejects it, and three things then have to line up for the MCP endpoint to
+    keep working: the redirect Route does not take POST, `Mount("/mcp")` does
+    not match the bare `/mcp`, and the catch-all still does. A POST therefore
+    falls past both admin routes to the MCP app.
+
+    Widen the Route's methods "for uniformity" and this breaks: the POST gets
+    a 307 to `/mcp/` and the client never gets a session. Verified — that is
+    what this test is here to stop, and a comment would not have held it.
+    """
+    import admin.store as store
+    from starlette.testclient import TestClient as TC
+
+    monkeypatch.setattr(store, "_APP_CUSTOM_DIR", tmp_path / "nx1")
+    monkeypatch.setattr(store, "_APP_CONFIG_DIR", tmp_path / "nx2")
+    monkeypatch.setattr(store, "_LOCAL_CUSTOM_DIR", tmp_path / "custom")
+    monkeypatch.setattr(store, "_LOCAL_CONFIG_DIR", tmp_path / "config")
+    monkeypatch.setenv("ADMIN_ENABLED", "true")
+    monkeypatch.setenv("ADMIN_PASSWORD", "pw")
+    monkeypatch.setenv("ADMIN_PATH", "/mcp")
+    monkeypatch.delenv("API_KEY", raising=False)
+
+    import main
+    from admin.app import build_combined_app
+
+    with TC(build_combined_app(main.mcp, Config.from_env())) as client:
+        r = client.post("/mcp", json={
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                       "clientInfo": {"name": "t", "version": "1"}},
+        }, headers={"Accept": "application/json, text/event-stream",
+                    "Content-Type": "application/json"},
+           follow_redirects=False)
+
+    assert r.status_code == 200, \
+        f"an MCP client got {r.status_code} {r.headers.get('location', '')}"
+    assert "mcp-session-id" in r.headers
+
+
 def test_the_mcp_endpoint_is_not_shadowed_by_the_admin_mount(combined):
     """The other side of the same seam.
 
