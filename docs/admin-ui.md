@@ -44,6 +44,13 @@ http://localhost:8958/admin
   placeholders (existing arguments are kept). The edit page also shows the
   **YAML** the template is stored as, so what you built by clicking is readable
   in the same format `docs/templates.md` teaches.
+- **PowerPoint diagnostics** — the analysis card reports the **content area**:
+  the rectangle the template reserves for content, as the same percentages
+  `list_presentation_templates` returns, and which layout it was read from.
+  Slides the tool positions itself stay inside it, so this is what keeps
+  generated content off your logo, rules and footer. You are warned when no
+  layout declares one (a fixed band is used instead), or when the rectangle
+  is implausible.
 - **Style names** — if your Word template renames the built-in styles, map them
   under *Advanced*. Every style the renderer understands is there (all six
   heading levels, three numbered and three bulleted list levels, quote, table,

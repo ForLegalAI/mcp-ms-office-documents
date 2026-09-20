@@ -210,6 +210,17 @@ names every such file (both the `custom_` and the `default_` spelling of all
 five slots); adopting a master entry that points at one gives the template a
 private copy under its own name instead.
 
+**The pptx analysis reports the content area, read with no overrides.**
+`analysis.content_area` comes from the same `templates.content_area_summary()`
+the tool's own diagnostics use, so the page and `list_presentation_templates`
+cannot disagree about it — a test asserts they match, and another pins the
+example `docs/templates.md` prints. Like the role map beside it, it is read
+with no layout overrides applied: the overrides are on the form next to the
+report, so what is shown is what the template says on its own. The warnings
+cover what an admin can act on — no layout declaring one (the builder then
+uses a fixed band that knows nothing about this template), a rectangle
+covering essentially the whole slide, and an implausibly small one.
+
 **Preview values travel in a second POST, carrying the spec with them.** The
 values form is reached from the edit form, so it has to preview what is on
 screen — unsaved edits included — not what is on disk. Rather than re-emit
@@ -316,4 +327,5 @@ longer deletable.
 | `tests/test_admin_clone.py` | what a clone carries, what it drops, and that the asset is copied |
 | `tests/test_admin_master_templates.py` | inspecting a master-YAML entry, and adopting it without touching the file |
 | `tests/test_admin_preview_values.py` | previewing with your own values: Markdown through a placeholder, conditionals off |
+| `tests/test_admin_content_area.py` | the pptx content area: agreeing with the tool, and the cases worth warning about |
 | `tests/test_admin_config.py` | `ADMIN_*` settings |

@@ -327,10 +327,23 @@ def pptx_analysis_report(analysis: PptxAnalysis):
         for layout in analysis.layouts
     ]
 
+    area = analysis.content_area
+    if area:
+        # The same x/y/w/h percentages docs/templates.md shows, because they
+        # are what a caller positioning a blank slide's elements writes.
+        content_area = Span(
+            Code(f"x {area['x']}  y {area['y']}  w {area['w']}  h {area['h']}"),
+            Span(f" — read from '{area['layout']}'", cls="muted"),
+        )
+    else:
+        content_area = Span("none declared; a fixed band is used instead",
+                            cls="muted")
+
     facts = Div(
         c.static_row("Slide size",
                     Span(f"{analysis.slide_size} ({analysis.aspect})"
                          if analysis.slide_size else "unknown")),
+        c.static_row("Content area", content_area),
         c.static_row("Theme fonts",
                     Span(", ".join(f"{k}: {v}" for k, v in analysis.theme_fonts.items())
                          or "not declared",
