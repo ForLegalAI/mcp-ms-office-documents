@@ -55,6 +55,12 @@ http://localhost:8958/admin
   tick the box, and it is never removed while another template still uses it.
   If you only want the AI to stop calling it, Disable instead — Delete
   destroys the arguments and descriptions with it.
+- **Source files** page — every file in the uploads directory, with what
+  still points at it: a template, a hand-written master-YAML entry, or a base
+  template. Anything nothing references is marked **Unreferenced** and listed
+  first, and only those can be deleted — one at a time, with the filename on
+  the confirmation. This is where a source file kept by a delete, or stranded
+  by a rename or a replacement, turns up.
 - **Status** page — filter the activity log by level, by which part of the
   server logged it, or by a search over the message and logger name, and
   optionally have the page refresh itself. Every filter is in the URL, so a
