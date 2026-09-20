@@ -357,3 +357,33 @@ def test_an_awkward_filename_still_deletes(admin_client, filename):
 
     r = _post(client, href.group(1), data={})
     assert not (custom / filename).exists(), f"{filename} should be gone"
+
+
+def test_deleting_a_symlink_does_not_touch_its_target(admin_client, tmp_path):
+    """The one way a name from iterdir() could still reach outside the directory.
+
+    `is_file()` follows the link, so a symlink to a real file is listed and
+    is deletable when nothing references it — but `unlink()` removes the
+    directory entry, so what goes is the link, never the target.
+    """
+    client, custom, _cfg = admin_client
+    target = tmp_path / "precious.docx"
+    target.write_bytes(_docx_bytes())
+    (custom / "link.docx").symlink_to(target)
+
+    _post(client, "/admin/files/link.docx/delete", data={})
+
+    assert not (custom / "link.docx").exists(), "the link itself should go"
+    assert target.exists(), "the file it pointed at must survive"
+
+
+def test_a_broken_symlink_is_not_listed(admin_client, tmp_path):
+    """`is_file()` is False for a dangling link, so it never reaches the page.
+
+    It is therefore also not removable here — a wart, not a hazard, and worth
+    pinning so the behaviour is a decision rather than a surprise.
+    """
+    client, custom, _cfg = admin_client
+    (custom / "dangling.docx").symlink_to(tmp_path / "never_existed.docx")
+
+    assert "dangling.docx" not in client.get("/admin/files").text

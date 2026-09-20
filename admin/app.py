@@ -497,6 +497,10 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         if bad:
             return bad
         try:
+            # unlink() removes the directory entry, so a symlink placed here
+            # by hand takes only the link with it — never what it points at.
+            # Together with the name coming from iterdir(), that is why this
+            # route cannot reach a file outside custom_templates/.
             (Path(ctx.store.custom_dir) / found.name).unlink()
         except OSError as e:
             logger.exception("[admin] Could not delete %s", found.name)
