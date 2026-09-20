@@ -106,9 +106,18 @@ TABLE_ROW_HEIGHT_PER_POINT = 2.1
 # Table Colors
 # =============================================================================
 
-TABLE_HEADER_FILL = RGBColor(0x41, 0x72, 0xC4)
+# Theme names, not literals: `_set_cell_fill()` writes a theme name as
+# `schemeClr`, so the table follows whatever palette the template carries.
+# These were pinned to Office's old default blue and a grey near it, which
+# stayed that blue on every template — including one whose own accent is a
+# brand teal (#194). Both remain overridable per slide through `header_color`
+# and `fills`, and per template through the registry's `table` defaults.
+TABLE_HEADER_FILL = "accent1"
+TABLE_ALT_ROW_FILL = "bg2"
+# Header text stays an explicit white. It is paired with `accent1`, which
+# templates make dark enough to carry it; deriving it from the theme instead
+# would need a luminance decision this tool has no safe way to make.
 TABLE_HEADER_TEXT = RGBColor(0xFF, 0xFF, 0xFF)
-TABLE_ALT_ROW_FILL = RGBColor(0xE9, 0xEC, 0xEF)
 
 
 # =============================================================================

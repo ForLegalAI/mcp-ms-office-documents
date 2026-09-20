@@ -44,6 +44,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional
 
+from pptx.dml.color import RGBColor
+from pptx.enum.dml import MSO_THEME_COLOR
 from pptx.enum.shapes import PP_PLACEHOLDER
 from pptx.oxml.ns import qn
 
@@ -275,6 +277,75 @@ def _matching_layout_placeholder(placeholder):
         if candidate.placeholder_format.idx == idx:
             return candidate
     return None
+
+
+# DrawingML colour names to the enum python-pptx writes them back as, so a
+# colour read from the template keeps following the theme instead of being
+# flattened to whatever it resolves to today.
+_SCHEME_COLORS = {
+    'tx1': MSO_THEME_COLOR.TEXT_1, 'tx2': MSO_THEME_COLOR.TEXT_2,
+    'bg1': MSO_THEME_COLOR.BACKGROUND_1, 'bg2': MSO_THEME_COLOR.BACKGROUND_2,
+    'dk1': MSO_THEME_COLOR.DARK_1, 'dk2': MSO_THEME_COLOR.DARK_2,
+    'lt1': MSO_THEME_COLOR.LIGHT_1, 'lt2': MSO_THEME_COLOR.LIGHT_2,
+    'accent1': MSO_THEME_COLOR.ACCENT_1, 'accent2': MSO_THEME_COLOR.ACCENT_2,
+    'accent3': MSO_THEME_COLOR.ACCENT_3, 'accent4': MSO_THEME_COLOR.ACCENT_4,
+    'accent5': MSO_THEME_COLOR.ACCENT_5, 'accent6': MSO_THEME_COLOR.ACCENT_6,
+    'hlink': MSO_THEME_COLOR.HYPERLINK,
+    'folHlink': MSO_THEME_COLOR.FOLLOWED_HYPERLINK,
+}
+
+
+def read_body_color(master):
+    """The colour *master* gives body text, or None if it states none.
+
+    What the builder's own text boxes should be. They are plain text boxes, so
+    they inherit the presentation's default text style rather than the body
+    style a placeholder would — `tx1`, black, whatever the deck looks like.
+    On a dark template that is black on near-black: the KPI figures in #194
+    were unreadable, and so were the timeline detail lines.
+
+    A scheme colour comes back as its ``MSO_THEME_COLOR`` so it keeps tracking
+    the theme; anything else comes back as an ``RGBColor``.
+    """
+    if master is None:
+        return None
+    txStyles = master._element.find(qn('p:txStyles'))
+    if txStyles is None:
+        return None
+    properties = _level_properties(txStyles.find(qn('p:bodyStyle')), 0)
+    if properties is None:
+        return None
+    defRPr = properties.find(qn('a:defRPr'))
+    if defRPr is None:
+        return None
+    solidFill = defRPr.find(qn('a:solidFill'))
+    if solidFill is None:
+        return None
+
+    schemeClr = solidFill.find(qn('a:schemeClr'))
+    if schemeClr is not None:
+        return _SCHEME_COLORS.get(schemeClr.get('val'))
+    srgbClr = solidFill.find(qn('a:srgbClr'))
+    if srgbClr is not None and srgbClr.get('val'):
+        return RGBColor.from_string(srgbClr.get('val'))
+    return None
+
+
+def apply_text_color(target, color) -> None:
+    """Paint every run of a text frame or paragraph in *color*.
+
+    A no-op when *color* is None, so a template that states no body colour
+    keeps whatever it was inheriting.
+    """
+    if color is None:
+        return
+    paragraphs = getattr(target, "paragraphs", None) or [target]
+    for paragraph in paragraphs:
+        for run in paragraph.runs:
+            if isinstance(color, RGBColor):
+                run.font.color.rgb = color
+            else:
+                run.font.color.theme_color = color
 
 
 def read_master_body_font_size(master, level: int = 0) -> Optional[float]:

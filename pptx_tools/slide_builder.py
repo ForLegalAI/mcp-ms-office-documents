@@ -17,7 +17,7 @@ import logging
 from typing import Any, List, Optional, Sequence, Tuple
 
 from pptx import Presentation
-from pptx.dml.color import MSO_THEME_COLOR
+from pptx.dml.color import MSO_THEME_COLOR, RGBColor
 from pptx.enum.shapes import MSO_SHAPE, PP_PLACEHOLDER
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
@@ -46,8 +46,9 @@ from .chart_utils import (
 )
 from .layouts import LayoutResolver, role_for_slide
 from .placeholder_style import (
-    TitleStyle, apply_list_style, content_columns, draw_title_box,
-    read_body_font_size, read_master_body_font_size,
+    TitleStyle, apply_list_style, apply_text_color, content_columns,
+    draw_title_box, read_body_color, read_body_font_size,
+    read_master_body_font_size,
 )
 from .text_metrics import theme_body_typeface
 from .schema import Bullet, coerce_slides
@@ -111,6 +112,14 @@ class PowerpointPresentation(SlideHelpers):
         # this deck's text rather than a generic one (#125).
         self._typeface = theme_body_typeface(self.presentation)
         self._body_size = None
+        # Text the builder draws itself is a plain text box, so it inherits
+        # the presentation's default text style (tx1, black) rather than the
+        # body style a placeholder gets. On a dark template that is black on
+        # near-black (#194), so the template's own body colour is applied.
+        self._body_color = read_body_color(
+            self.presentation.slide_masters[0]
+            if self.presentation.slide_masters else None
+        )
 
         defaults = self.spec.defaults if self.spec else {}
         self._footer_text = footer_text if footer_text is not None else defaults.get("footer_text")
@@ -911,6 +920,7 @@ class PowerpointPresentation(SlideHelpers):
             )
             configure_data_labels(chart, data_labels, slide_data.number_format)
             set_axis_titles(chart, slide_data.x_title, slide_data.y_title)
+            self._paint_chart(chart)
         except ChartDataError as e:
             logger.error(f"Chart error: {e}")
             self._add_text_box(
@@ -938,7 +948,7 @@ class PowerpointPresentation(SlideHelpers):
         slide, left, top, width, height = self._content_slide(slide_data, index)
 
         try:
-            add_scatter_to_slide(
+            self._paint_chart(add_scatter_to_slide(
                 slide,
                 series=slide_data.series,
                 left=left, top=top, width=width, height=height,
@@ -946,7 +956,7 @@ class PowerpointPresentation(SlideHelpers):
                 title=slide_data.chart_title,
                 x_title=slide_data.x_title,
                 y_title=slide_data.y_title,
-            )
+            ))
         except ChartDataError as e:
             logger.error(f"Scatter chart error: {e}")
             self._add_text_box(
@@ -978,6 +988,7 @@ class PowerpointPresentation(SlideHelpers):
             )
             author_para.space_before = Pt(24)
 
+        self._paint(tf)
         self._add_speaker_notes(slide, slide_data.notes)
 
     # -------------------------------------------------------------------------
@@ -1022,6 +1033,8 @@ class PowerpointPresentation(SlideHelpers):
                 delta.space_before = Pt(2)
                 # Theme accent, so the figure follows the template's palette.
                 delta.font.color.theme_color = MSO_THEME_COLOR.ACCENT_1
+
+            self._paint(frame)
 
         if len(items) > 4:
             self._warn(
@@ -1195,6 +1208,7 @@ class PowerpointPresentation(SlideHelpers):
                     bold=element.bold,
                     alignment=self._ELEMENT_ALIGN[element.align],
                 )
+                self._paint(box.text_frame)
             elif element.kind == "image":
                 picture, error = self._add_image(
                     slide, element.source,
@@ -1297,6 +1311,7 @@ class PowerpointPresentation(SlideHelpers):
                 detail = caption.text_frame.paragraphs[0]
                 write_text(detail, step.detail, font_size=TIMELINE_DETAIL_FONT_SIZE,
                            alignment=PP_ALIGN.CENTER)
+                self._paint(caption.text_frame)
 
         self._add_speaker_notes(slide, slide_data.notes)
 
@@ -1316,6 +1331,7 @@ class PowerpointPresentation(SlideHelpers):
         box = slide.shapes.add_textbox(left, top, width, height)
         self._fill_bullets(box.text_frame, bullets)
         apply_list_style(box.text_frame, slide.slide_layout.slide_master)
+        self._paint(box.text_frame)
         apply_autofit(box.text_frame, scale=self._fit_scale(bullets, width, height))
         return box
 
@@ -1330,6 +1346,27 @@ class PowerpointPresentation(SlideHelpers):
             typeface=self._typeface,
         )
         return (1.0 / fill) if fill > 1.0 else None
+
+    def _paint(self, target) -> None:
+        """Give text the builder drew the colour this template uses for body text."""
+        apply_text_color(target, self._body_color)
+
+    def _paint_chart(self, chart) -> None:
+        """Give a chart's axis labels, legend and title the template's text colour.
+
+        Chart text lives in its own part and inherits nothing from the slide,
+        so it came out `tx1` — black — whatever the deck looked like. Setting
+        it on ``chart.font`` reaches every label that does not override it.
+        """
+        if chart is None or self._body_color is None:
+            return
+        try:
+            if isinstance(self._body_color, RGBColor):
+                chart.font.color.rgb = self._body_color
+            else:
+                chart.font.color.theme_color = self._body_color
+        except (AttributeError, ValueError) as error:  # pragma: no cover
+            logger.debug("Could not colour chart text: %s", error)
 
     def _master_body_font_size(self) -> float:
         """The template's own body size, read once per deck."""

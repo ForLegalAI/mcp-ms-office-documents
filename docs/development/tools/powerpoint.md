@@ -92,7 +92,7 @@ problems go to the warnings list instead.
 | `templates.py` | `TemplateSpec`, the registry loaded from YAML with an mtime-fingerprint cache, `.potx` handling, `select_template()`, `validate_templates()` |
 | `chart_utils.py` | Category charts from `CategoryChartData`, scatter from `XyChartData`, legend, title, data labels, axis titles |
 | `inline_formatting.py` | Renders the shared inline grammar into python-pptx runs |
-| `constants.py` | Aspect ratios, positional layout fallbacks, typography, autofit ratios, table colours |
+| `constants.py` | Aspect ratios, positional layout fallbacks, typography, autofit ratios, table colours (theme names, not literals) |
 | `warnings.py` | The warnings channel as data: `SlideWarning`, the codes, and the one severity per code (severities from the shared `warning_channel.py`) |
 | `text_metrics.py` | Font resolution (metric-compatible substitutes, generic fallback) and wrapped line counting through Pillow |
 
@@ -257,6 +257,37 @@ percentages, which `list_presentation_templates` passes through. That is the
 answer for a caller positioning a `blank` slide's elements: those coordinates
 stay absolute on the slide — changing them would silently move every existing
 deck — so the safe band is published instead.
+
+### Colour follows the template
+
+Anything the builder *draws* rather than places in a placeholder is a plain
+text box, so it inherits the presentation's `<p:defaultTextStyle>` — `tx1`,
+black — not the body style a placeholder gets. On the dark template in #194
+the KPI figures and the timeline detail lines were black on near-black.
+
+`read_body_color()` reads the master's `<p:bodyStyle>` colour and returns a
+**`MSO_THEME_COLOR`** for a scheme colour, so it keeps tracking the theme
+instead of being flattened to whatever it resolves to today; an `srgbClr`
+comes back as an `RGBColor`. `_paint()` applies it to the KPI cells, the
+timeline detail captions, the quote, blank-slide text elements and the
+bulleted box drawn beside a picture or chart. `_paint_chart()` does the same
+through `chart.font`, which chart text needs because it lives in its own part
+and inherits nothing from the slide.
+
+Two things are deliberately left alone: a timeline chevron's label, which
+takes its colour from the autoshape's `<p:style>` against the accent fill it
+sits on, and a drawn title, which `draw_title_box()` styles from the
+template's *title* style. A template stating no body colour paints nothing.
+
+Table fills were literals — Office's old default blue and a grey beside it —
+so a table came out that blue on every template. `TABLE_HEADER_FILL` and
+`TABLE_ALT_ROW_FILL` are now the theme names `accent1` and `bg2`;
+`_set_cell_fill()` already wrote a theme name as `schemeClr`, only the default
+was not one. `TABLE_HEADER_TEXT` stays an explicit white: it is paired with
+`accent1`, and choosing it from the theme would need a luminance decision this
+tool has no safe way to make. Both remain overridable per slide through
+`header_color` and `fills`, and per template through the registry's `table`
+defaults.
 
 ### Unused placeholders are removed
 
@@ -536,6 +567,7 @@ Both are reported.
 | `tests/test_pptx_bullet_glyphs.py` | Bullets in a text box: the master's glyphs and indents, and the order of `<a:pPr>` |
 | `tests/test_pptx_table_formatting.py` | Column widths, cell and row fills, merged blocks, and what happens when they do not fit the table |
 | `tests/test_pptx_text_metrics.py` | Measured line counts, wrapping, face selection, the arithmetic fallback, and that the image's font packages exist and match the table |
+| `tests/test_pptx_theme_colors.py` | Drawn text, chart text and table fills taking the template's colours rather than literals |
 | `tests/test_pptx_unused_placeholders.py` | That no generated slide keeps an empty "Click to add text" box, and that filled ones survive |
 | `tests/test_pptx_body_font_size.py` | Reading the template's real body size, and the shrink factor and overflow warning that follow from it |
 | `tests/test_pptx_two_columns.py` | Columns matched by geometry on renumbered templates, and the warning each degraded path owes |
