@@ -125,7 +125,13 @@ class AdminContext:
         from docx_tools.dynamic_docx_tools import (
             register_docx_template_tools_from_yaml, registered_docx_template_names,
         )
+        from docx_tools.style_map import invalidate_global_style_map
 
+        # The static tool's cache is fingerprinted on the config files' mtime
+        # and size, which cannot be trusted to notice two writes inside one
+        # filesystem timestamp tick. A write we made ourselves we simply know
+        # about, so say so rather than hope the fingerprint moved.
+        invalidate_global_style_map()
         register_docx_template_tools_from_yaml(self.mcp, self.docx_master_yaml)
         return len(registered_docx_template_names())
 

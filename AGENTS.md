@@ -147,10 +147,12 @@ backend → URL string or LibreChat artifact dict. Details:
   **replaces** the master's key, never merges into it, and `templates:` is
   never taken from it. The filename is reserved: `read_spec_dir()` skips it
   and `store.validate_name()` refuses the name `_global` (#161).
-- The global style map is **not** cached. `load_global_style_map()` resolves
-  it per document so a UI edit applies without a restart; a dynamic tool bakes
-  it in at registration, so anything that changes it must re-register the Word
-  tools (`AdminContext.resync_docx_style_map`).
+- The global style map is cached against its config files' mtime and size,
+  never for the process lifetime: a UI edit must apply without a restart.
+  Anything that *writes* it calls `invalidate_global_style_map()` — the
+  fingerprint cannot see two writes in one timestamp tick — and must also
+  re-register the Word tools, which bake the map in at registration.
+  `AdminContext.resync_docx_style_map()` does both.
 
 **Docs — part of every change, never a follow-up**
 - Before you finish any change, find every page under `docs/` that describes

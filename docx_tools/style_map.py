@@ -23,6 +23,10 @@ from typing import Optional, Tuple
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 
+from template_registry import (
+    GLOBAL_SETTINGS_FILENAME, global_config, spec_dir_for,
+)
+
 from . import warnings as W
 
 logger = logging.getLogger(__name__)
@@ -208,8 +212,6 @@ def _resolve_config() -> Tuple[Optional[Path], Optional[Path]]:
     write ``docx_templates.d/_global.yaml`` on a deployment that never had a
     master YAML, and that mapping still has to apply.
     """
-    from template_registry import spec_dir_for
-
     for path in _CONFIG_PATHS:
         spec_dir = spec_dir_for(path)
         try:
@@ -218,6 +220,35 @@ def _resolve_config() -> Tuple[Optional[Path], Optional[Path]]:
         except OSError:  # pragma: no cover - unreadable candidate directory
             logger.warning("Could not stat %s", path, exc_info=True)
     return None, None
+
+
+def _stamp(path: Optional[Path]) -> Tuple:
+    """A cheap fingerprint of one config file: absent, or its mtime and size."""
+    if path is None:
+        return ()
+    try:
+        st = path.stat()
+        return (str(path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        return (str(path), None, None)
+
+
+#: ``(fingerprint, map)``. A plain tuple assignment, so two threads racing here
+#: both compute the same answer and one wins — never a half-built cache.
+_cached_global_style_map: Optional[Tuple[Tuple, StyleMap]] = None
+
+
+def invalidate_global_style_map() -> None:
+    """Drop the cached global map, so the next read re-resolves from disk.
+
+    Called by whoever *writes* the mapping — the admin UI — because the
+    fingerprint below cannot be trusted to notice two writes inside one
+    filesystem timestamp tick when the file happens to keep its size.
+    Hand edits on the volume are what the fingerprint is for; a write we made
+    ourselves we simply know about.
+    """
+    global _cached_global_style_map
+    _cached_global_style_map = None
 
 
 def load_global_style_map() -> StyleMap:
@@ -229,22 +260,35 @@ def load_global_style_map() -> StyleMap:
     dynamic loader and the admin UI use, so the static Word tool cannot end up
     on a different mapping from a template tool.
 
-    **Not cached.** It was, for the life of the process, which meant editing
-    the mapping in the admin UI left every subsequent document on the old one
-    until a restart — the setting with the widest blast radius being the one
-    that could not be changed live (#161). Two small YAML reads, once per
-    document build (:mod:`docx_tools.base_docx_tool` calls this only when the
-    caller passed no map), is not a cost worth a stale answer for. A caller
-    generating in a loop should build the map once and pass it down, which is
-    what every dynamic template tool already does.
-    """
-    master, spec_dir = _resolve_config()
-    try:
-        from template_registry import global_config
+    Cached against the two files' mtime and size, *not* for the life of the
+    process as it used to be: that meant editing the mapping in the admin UI
+    left every subsequent document on the old one until a restart — the
+    setting with the widest blast radius being the one that could not be
+    changed live (#161). Re-parsing unconditionally would be correct too, but
+    the master file is a few hundred lines of worked examples and parsing it
+    costs more than the markdown render it would be paying for.
 
+    Two ``stat`` calls, once per document build
+    (:mod:`docx_tools.base_docx_tool` calls this only when the caller passed
+    no map). A caller generating in a loop should still build the map once and
+    pass it down, which is what every dynamic template tool already does.
+    """
+    global _cached_global_style_map
+
+    master, spec_dir = _resolve_config()
+    settings = (spec_dir / GLOBAL_SETTINGS_FILENAME) if spec_dir else None
+    fingerprint = (_stamp(master), _stamp(settings))
+
+    cached = _cached_global_style_map
+    if cached is not None and cached[0] == fingerprint:
+        return cached[1]
+
+    try:
         mapping = global_config(master, spec_dir).get("style_mapping") or {}
     except Exception:
         logger.warning("Failed to read the global style_mapping; using defaults.",
                        exc_info=True)
         mapping = {}
-    return build_style_map(mapping)
+    style_map = build_style_map(mapping)
+    _cached_global_style_map = (fingerprint, style_map)
+    return style_map

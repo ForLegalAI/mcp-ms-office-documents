@@ -43,6 +43,14 @@ MASTER = "docx_templates.yaml"
 SPEC_DIR = "docx_templates.d"
 
 
+def _docx_bytes() -> bytes:
+    doc = Document()
+    doc.add_paragraph("Hi")
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
 # ---------------------------------------------------------------------------
 # The merge layer
 # ---------------------------------------------------------------------------
@@ -127,6 +135,38 @@ def test_a_template_cannot_be_named_global():
         validate_name("_global")
 
 
+def test_no_store_operation_can_reach_the_reserved_file(tmp_path):
+    """One guard, but it has to cover every door.
+
+    `validate_name` is called from `_spec_path`, which every read and write of
+    a managed spec goes through — so this passes for the same reason each of
+    them does, and fails the day one of them builds a path itself.
+    """
+    from admin.store import KIND_DOCX, FileTemplateStore
+
+    store = FileTemplateStore(custom_dir=tmp_path / "c", config_dir=tmp_path / "g")
+    store.save_global_settings(KIND_DOCX, {"style_mapping": {"heading_1": "Brand"}})
+    store.save_spec(KIND_DOCX, {"name": "real", "docx_path": "real.docx"},
+                    asset_bytes=_docx_bytes())
+
+    doors = {
+        "save_spec": lambda: store.save_spec(
+            KIND_DOCX, {"name": "_global", "docx_path": "x.docx"},
+            asset_bytes=_docx_bytes()),
+        "rename_spec": lambda: store.rename_spec(KIND_DOCX, "real", "_global"),
+        "clone_spec": lambda: store.clone_spec(KIND_DOCX, "real", "_global"),
+        "set_enabled": lambda: store.set_enabled(KIND_DOCX, "_global", False),
+        "get_spec": lambda: store.get_spec(KIND_DOCX, "_global"),
+        "delete_spec": lambda: store.delete_spec(KIND_DOCX, "_global"),
+    }
+    for label, call in doors.items():
+        with pytest.raises(TemplateStoreError, match="reserved"):
+            call()
+
+    assert store.global_settings(KIND_DOCX) == {"style_mapping": {"heading_1": "Brand"}}
+    assert [s["name"] for s in store.list_specs(KIND_DOCX)] == ["real"]
+
+
 def test_a_malformed_override_does_not_take_the_config_with_it(tmp_path, caplog):
     master = _write(tmp_path / MASTER, {"style_mapping": {"heading_1": "Master H1"}})
     path = tmp_path / SPEC_DIR / GLOBAL_SETTINGS_FILENAME
@@ -174,6 +214,27 @@ def test_the_static_word_tool_follows_an_edit_without_a_restart(config_dir):
     assert load_global_style_map().heading_style(1) == "Master H1"
 
 
+def test_editing_a_stored_mapping_in_place_is_picked_up(config_dir):
+    """Content changing under an unchanged filename.
+
+    Creating and deleting the file moves its *existence*, which a fingerprint
+    could notice while still being blind to an edit. This one rewrites the
+    same file to the same length, so only reading its mtime catches it.
+    """
+    from docx_tools.style_map import invalidate_global_style_map, load_global_style_map
+
+    path = config_dir / SPEC_DIR / GLOBAL_SETTINGS_FILENAME
+    _write(path, {"style_mapping": {"quote": "AAAA"}})
+    invalidate_global_style_map()
+    assert load_global_style_map().quote == "AAAA"
+
+    before = path.stat().st_size
+    _write(path, {"style_mapping": {"quote": "BBBB"}})
+    assert path.stat().st_size == before, "same length, so only mtime differs"
+
+    assert load_global_style_map().quote == "BBBB"
+
+
 def test_a_stored_mapping_applies_with_no_master_yaml_at_all(config_dir):
     """Resolution used to stop at the first *existing* master file; a
     deployment that never had one would ignore the managed mapping."""
@@ -182,6 +243,32 @@ def test_a_stored_mapping_applies_with_no_master_yaml_at_all(config_dir):
     _write(config_dir / SPEC_DIR / GLOBAL_SETTINGS_FILENAME,
            {"style_mapping": {"quote": "Managed Quote"}})
     assert load_global_style_map().quote == "Managed Quote"
+
+
+def test_an_unchanged_config_is_not_reparsed(config_dir, monkeypatch):
+    """The cache has to actually cache, or `invalidate_global_style_map` is
+    dead weight and every document pays for parsing the master file.
+
+    Measured on the shipped `config/docx_templates.yaml` — a few hundred lines
+    of worked examples — a full resolution is ~8 ms against ~0.02 ms for a hit.
+    """
+    import docx_tools.style_map as sm
+
+    _write(config_dir / MASTER, {"style_mapping": {"heading_1": "Master H1"}})
+    sm.invalidate_global_style_map()
+    sm.load_global_style_map()
+
+    parses = []
+    real = sm.global_config
+    monkeypatch.setattr(sm, "global_config",
+                        lambda m, d: (parses.append(1), real(m, d))[1])
+
+    assert sm.load_global_style_map().heading_style(1) == "Master H1"
+    assert parses == [], "an unchanged config must not be re-parsed"
+
+    sm.invalidate_global_style_map()
+    sm.load_global_style_map()
+    assert parses == [1], "and invalidating must make it re-parse"
 
 
 def test_no_config_at_all_gives_the_built_in_map(config_dir):
@@ -466,6 +553,35 @@ def test_saving_re_registers_the_dynamic_word_tools(admin_client, monkeypatch):
 
     assert seen, "the save must re-register the dynamic Word tools"
     assert seen[0].name == MASTER
+
+
+def test_a_save_applies_even_when_the_files_look_unchanged(admin_client, monkeypatch):
+    """The reason the save path invalidates explicitly rather than trusting
+    the fingerprint.
+
+    The cache is keyed on the config files' mtime and size. Two writes inside
+    one filesystem timestamp tick that leave the size unchanged — a
+    coarse-granularity mount, or simply a fast admin swapping one six-letter
+    style name for another — would look identical, and the static Word tool
+    would go on rendering with the old mapping. Freezing the fingerprint here
+    is that filesystem, deterministically.
+    """
+    import docx_tools.style_map as sm
+
+    client, _custom, cfg = admin_client
+    _write(cfg / MASTER, {"style_mapping": {"heading_1": "Master"}})
+
+    # Frozen *before* the first read, so the cached entry carries the frozen
+    # fingerprint and the read after the save is a cache hit. Freezing it
+    # afterwards would change the fingerprint and force a miss — which is the
+    # bug passing itself off as the fix.
+    monkeypatch.setattr(sm, "_stamp", lambda path: ("frozen",))
+    sm.invalidate_global_style_map()
+    assert sm.load_global_style_map().heading_style(1) == "Master"
+
+    _post(client, "/admin/styles/save", {"style_heading_1": "Brandy"})
+
+    assert sm.load_global_style_map().heading_style(1) == "Brandy"
 
 
 def test_the_page_and_the_renderer_agree_on_what_is_in_force(admin_client):

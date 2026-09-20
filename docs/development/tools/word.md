@@ -207,12 +207,29 @@ consumers reach it by different routes and must not diverge:
 | a dynamic template tool | once, at registration | on re-registration |
 | the admin preview | per render, via `AdminContext` | immediately |
 
-`load_global_style_map()` is deliberately **not** cached. It was cached for
-the life of the process, which meant an edit in the admin UI left every
-subsequent document on the old mapping until a restart
-([#161](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/161)). A
-caller generating many documents should build the map once and pass it down,
-which is what every dynamic template tool already does.
+`load_global_style_map()` used to cache for the life of the process, which
+meant an edit in the admin UI left every subsequent document on the old
+mapping until a restart
+([#161](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/161)). It
+now caches against the two config files' **mtime and size**, so a hand edit on
+the volume is picked up on the next document.
+
+Re-parsing unconditionally would also be correct, and was the first version of
+this. It is not free: the master file is a few hundred lines of worked
+examples, and a full resolution measures ~8 ms against ~0.02 ms for a cache
+hit — more than the markdown render it would be paying for. Two `stat` calls
+per document build is the trade.
+
+The fingerprint alone is not enough, which is why
+`invalidate_global_style_map()` exists and
+`AdminContext.resync_docx_style_map()` calls it: two writes inside one
+filesystem timestamp tick that leave the file the same length look identical,
+and swapping one six-letter style name for another does exactly that. The
+fingerprint is for edits made *outside* the server; a write the server made
+itself it simply knows about.
+
+A caller generating many documents should still build the map once and pass it
+down, which is what every dynamic template tool already does.
 
 Because the middle row bakes the map in, the admin UI re-registers every Word
 template tool after saving a global mapping (`AdminContext.resync_docx_style_map`).
