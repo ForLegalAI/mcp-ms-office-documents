@@ -12,15 +12,94 @@ contain, [`dynamic-templates.md`](dynamic-templates.md).
 |--------|------|
 | `admin/app.py` | `AdminContext` (the services a view needs), the routes, `build_admin_app()` / `build_combined_app()` — and nothing else |
 | `admin/components.py` | markup primitives (`card`, `field`, `data_table`, …) and the inlined theme |
+| `admin/sections.py` | one `Section` per product area (Word, PowerPoint, Excel, Email, XML, Server) and its tabs — the top-level navigation |
 | `admin/kinds.py` | one `KindDescriptor` per *dynamic* template kind: label, icon, wording, `has_args` |
 | `admin/base_templates.py` | one `BaseSlot` per *static* base template (fixed filename, one of each) |
 | `admin/forms.py` | reading a submitted form back into a spec dict |
 | `admin/assets.py` | what is in `custom_templates/` and what still references it |
-| `admin/views/` | the pages — `shell`, `templates`, `base`, `assets`, `settings`, `status`, `login` |
+| `admin/views/` | the pages — `shell`, `sections`, `templates`, `base`, `assets`, `settings`, `status`, `login` |
 | `admin/store.py` | persistence: `config/<kind>_templates.d/<name>.yaml` + the asset |
 | `admin/analysis.py` | what is inside an uploaded `.docx` / `.html` / `.pptx` |
 | `admin/preview.py` | rendering a template without touching the upload backend |
 | `admin/auth.py` | the shared-password gate and CSRF tokens |
+
+### Sections, tabs and panels
+
+The UI is organised by **what an admin is working on**, not by function. Six
+sections sit in the top bar; the views that used to be pages of their own are
+tabs inside them:
+
+| Section | Tabs | Comes from |
+|---------|------|------------|
+| Word `/word` | Overview · Templates · Base template · Style mapping | kind `docx`, slot `docx` |
+| PowerPoint `/powerpoint` | Overview · Templates · Base designs | kind `pptx`, slots `pptx_16_9`, `pptx_4_3` |
+| Excel `/excel` | Overview · Named styles | slot `xlsx` |
+| Email `/email` | Overview · Templates · Base wrapper | kind `email`, slot `email` |
+| XML `/xml` | Overview | neither |
+| Server `/server` | Status · Source files · Activity log | neither |
+
+`admin/sections.py` is the join: a `Section` names an optional template `kind`,
+the `slot_keys` it owns and the static tools it exposes, and everything else —
+the nav, the tab bars, the routes, the dashboard — is derived from the table.
+Adding a section is one row.
+
+Three consequences worth knowing:
+
+* **A tab renderer is a panel, not a page.** `views.templates_panel()`,
+  `views.base_panel()`, `views.style_mapping_panel()`, `views.status_panel()`,
+  `views.log_panel()` and `views.source_files_panel()` each return a *list of
+  cards* with no shell. `views.sections.section_page()` wraps one, so the same
+  renderer serves a tab without knowing which section it is under. `app.py`'s
+  `_panel()` is the single (section, tab) → renderer map, and every route that
+  re-renders a tab after a POST goes back through it — an upload, a revert and
+  a style save cannot drift into looking different from a plain GET of the
+  same tab.
+* **A page reached from a tab is still a full page** and names its section, so
+  the nav keeps the right item lit: `views.shell.kind_page()` does that from a
+  template kind, and `views.shell.back_link()` builds the "back to the list"
+  link out of it. An editor is not a tab — it has no tab bar — but it is not
+  homeless either.
+* **The Overview tab is why Excel and XML have pages at all.** Neither has a
+  template to manage, but both expose a tool; `AdminContext.section_facts()`
+  loads the counts, the per-tool `metrics` counters and the base-slot state
+  into a `views.SectionFacts`, and the view renders that. A tool no page in
+  the admin UI mentions is a tool nobody can check on.
+
+### Section routes must not shadow the handlers below them
+
+A section slug occupies the same first path segment as a template kind, and
+`email` is deliberately **both** — the Email section and the `email` kind. The
+section routes are registered first and Starlette matches in registration
+order, so two rules keep that from eating a handler:
+
+1. **Section routes are GET-only** (`rt(..., methods=["get"])`), and every
+   two-segment `/{kind}/…` route is a POST. That is what lets `GET /email` be
+   the Email section while `POST /email/save` still reaches the save handler.
+2. **The slugs are literal**, registered one section at a time, never a
+   `/{slug}` pattern — a catch-all would also match `/new/docx` and `/base`
+   and swallow them. `sections.assert_slugs_free()` refuses a slug that is one
+   of the literal first segments the app already serves, failing at startup
+   rather than quietly breaking that page.
+
+`tests/test_admin_sections.py` asserts the **invariant** rather than the two
+rules: it walks the real route table and fails if anything registered after
+the section routes is shadowed by one. A change that keeps the property some
+other way passes; one that breaks it fails wherever it happens.
+
+> **`sec` must be captured in a closure, never as a keyword argument with a
+> default.** FastHTML fills every parameter of a handler from the request, so a
+> "private" `_sec=sec` argument arrives as `None` and the handler looks up a
+> section called `None`. `_register_section()` and `_register_moved()` are
+> factories for exactly this reason.
+
+### Moved URLs
+
+`app.MOVED_PATHS` maps the four pages that used to be top-level — `/status`,
+`/files`, `/styles`, `/base` — to the tab that replaced each. They redirect
+(303) rather than 404: each was a top-bar link for the whole life of the UI, so
+they are in bookmarks and in links people pasted to each other. The test
+asserts both the redirect *and* that its target renders, so a redirect to a
+page that no longer exists cannot pass.
 
 ### Mounting
 
@@ -117,12 +196,17 @@ without the second — the file on disk is still the old one, so it is the right
 thing to prefill from and the wrong thing to describe under a heading that
 means "the file you just uploaded" everywhere else it appears.
 
-**Every kind's create page stays reachable.** `kinds.NAV_KINDS` puts a "New …"
-entry in the top bar for each kind, and `template_table()` renders a create
-link in *both* its states. That redundancy is deliberate: when only the empty
-state linked to the page, adding a template removed the last route to it, which
-was invisible for Word and Email (the top bar covered them) and a dead end for
-PowerPoint (it did not) — #157.
+**Every kind's create page stays reachable.** The top bar no longer carries
+"New …" links — creating lives on the section's Templates tab, beside the list
+it adds to. That makes `template_table()`'s create link the *only* one, so it
+renders in both the empty and the populated state, and `templates_panel()`
+puts a second one in the card header (the page header repeats it via
+`views.new_template_button()`). When only the empty state linked to the page,
+adding a template removed the last route to it — invisible for Word and Email,
+which the old top bar covered, and a dead end for PowerPoint, which it did not
+(#157). `test_every_kind_has_a_reachable_create_link` checks both states on
+each kind's own tab, and `test_the_dashboard_links_to_every_section` is the
+same question one level up: a section no page links to is invisible.
 
 **Deleting never removes a file something else uses.** Assets share one flat
 `custom_templates/` directory, so several templates can name the same file.
@@ -199,9 +283,50 @@ offered set turns auto-refresh off rather than arming a timer, because no
 `<option>` would render as selected for it — the control would read "off"
 while the page reloaded under the reader.
 
-**3. Colours are tokens.** Custom properties on `:root`, redefined under
-`@media (prefers-color-scheme: dark)`. A rule written with a literal colour
-will be wrong in one of the two themes.
+**3. Colours are tokens — and so is everything else on a scale.** Custom
+properties on `:root`: colours (redefined under
+`@media (prefers-color-scheme: dark)`), plus spacing `--sp-1…7`, type sizes
+`--fs-xs…2xl`, radii `--r-sm/md/lg/full`, shadows and the monospace stack. A
+rule written with a literal colour will be wrong in one of the two themes; one
+written with a literal size will be out of step with every other rule. Use the
+token nearest what you want rather than adding a value between two of them.
+
+**4. Navigation is links, not script.** `components.tab_bar()` renders anchors
+to real URLs, so a tab is bookmarkable, survives a reload, works with
+JavaScript off and needs no client state. It returns `None` for a section with
+one tab — a tab bar of one is furniture that says nothing. The only script on
+any page remains the argument-row cloner.
+
+## Building a page
+
+Compose from `admin/components.py`; never hand-write a FastHTML tree.
+
+| Primitive | For |
+|-----------|-----|
+| `page_header(title, subtitle, *actions, crumb=)` | the title block: breadcrumb, H1, the page's own actions, a blurb |
+| `tab_bar(items)` | one section's tabs, from `sections.tab_items()` |
+| `nav(links, end_links)` / `topbar(brand, …)` | the app bar, from `sections.nav_items()` |
+| `card(*body, title=, level=, actions=, subtitle=)` | a panel; `actions` puts controls in a divided header strip |
+| `data_table(headers, rows)` | a table inside a horizontal scroll container |
+| `field(label, control, hint=)` | the only thing that associates a `<label>` with its control |
+| `stat` / `stats_row` | the number tiles |
+| `tile` / `tile_grid` | the dashboard's linked section cards |
+| `empty_state(message, *actions, icon=)` | "nothing here yet", with the action that fills it |
+
+A card's own buttons belong in `actions=`, not appended to its body, so they
+are not read as part of the content below them. A page's primary action
+belongs in `page_header`, where it is visible without scrolling past a table.
+
+## Adding a section
+
+One row in `admin/sections.SECTIONS`, plus a renderer for any tab slug that is
+not already in `app.py`'s `_panel()`. The nav, the tab bar, the routes and the
+dashboard tile all follow from the table — and `test_every_section_renders`
+and `test_every_tab_renders` are parameterised over it, so a new section is
+covered the moment it is added.
+
+Pick a slug that is not one of `sections.RESERVED_SEGMENTS`; the startup
+assertion will tell you if you do not.
 
 ## Adding a template kind
 
@@ -370,7 +495,7 @@ has to still be an orphan when the request arrives. A crafted path matches
 nothing, and a file that gained a reference since the page was rendered is no
 longer deletable.
 
-## Global styles (#161)
+## The Word style mapping (#161)
 
 `/styles` edits the Word `style_mapping` that applies to **every** document —
 the setting with the widest blast radius on the server, and the last one that

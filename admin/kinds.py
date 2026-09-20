@@ -4,6 +4,8 @@
 extensions and the spec key naming its asset. This module owns how a kind is
 *presented*: its label and icon, the noun for the thing it produces, the wording
 on its forms and confirmations, and whether it declares arguments at all.
+:mod:`admin.sections` owns *where* it is presented — which product area's
+Templates tab lists it.
 
 The two halves are deliberately separate — ``store`` stays import-light and
 FastHTML-free — but a view should only ever need this one lookup, so
@@ -24,7 +26,7 @@ branch on where behaviour genuinely differs.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Sequence, Tuple
+from typing import Any, Dict, Tuple
 
 from admin.store import KIND_DOCX, KIND_EMAIL, KIND_PPTX, kind_meta
 
@@ -219,13 +221,10 @@ _PPTX = KindDescriptor(
 
 DESCRIPTORS: Dict[str, KindDescriptor] = {d.kind: d for d in (_DOCX, _EMAIL, _PPTX)}
 
-#: Every supported kind, in the order the index page shows them.
+#: Every supported kind. The order no longer decides a page's layout — each
+#: kind is listed on its own section's Templates tab — but it is still the
+#: order anything iterating the kinds reports them in.
 KINDS: Tuple[str, ...] = tuple(DESCRIPTORS)
-
-#: Kinds offered as "New …" in the top bar — all of them. PowerPoint used to be
-#: missing, which left its create page unreachable once one template existed,
-#: because the only other link was the template table's empty state (#157).
-NAV_KINDS: Tuple[str, ...] = KINDS
 
 
 def descriptor(kind: str) -> KindDescriptor:
@@ -236,14 +235,3 @@ def descriptor(kind: str) -> KindDescriptor:
 def is_kind(kind: str) -> bool:
     return kind in DESCRIPTORS
 
-
-def nav_links(url, authed: bool = True) -> Sequence[Tuple[str, str]]:
-    """``(label, href)`` pairs for the top bar, given a URL builder."""
-    if not authed:
-        return ()
-    links = [("All templates", url("/"))]
-    links += [(f"New {DESCRIPTORS[k].label}", url(f"/new/{k}")) for k in NAV_KINDS]
-    links += [("Base templates", url("/base")), ("Source files", url("/files")),
-              ("Global styles", url("/styles")),
-              ("Status", url("/status")), ("Log out", url("/logout"))]
-    return links

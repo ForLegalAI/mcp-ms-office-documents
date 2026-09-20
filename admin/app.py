@@ -51,6 +51,10 @@ from admin.forms import build_spec, carried_spec, checked, parse_style_mapping
 from admin.kinds import (
     KINDS, content_disposition, descriptor, is_kind, media_type,
 )
+from admin.sections import (
+    SECTIONS, TAB_BASE, TAB_FILES, TAB_LOG, TAB_OVERVIEW, TAB_STATUS,
+    TAB_STYLES, TAB_TEMPLATES, assert_slugs_free, section, slot_section,
+)
 from admin.preview import (
     has_submitted_values, render_docx_preview, render_email_preview,
     render_pptx_preview, sample_values, values_from_form,
@@ -64,6 +68,17 @@ from template_registry import (
 from template_utils import find_file_in_template_dirs
 
 logger = logging.getLogger(__name__)
+
+#: Pages that used to be top-level and are now tabs, and where they went.
+#: Redirected rather than dropped: each was a top-bar link for the whole life
+#: of the UI, so they are in bookmarks and in links people pasted to each
+#: other. ``tests/test_admin_sections.py`` pins every one of them.
+MOVED_PATHS = {
+    "/status": ("server", TAB_STATUS),
+    "/files": ("server", TAB_FILES),
+    "/styles": ("word", TAB_STYLES),
+    "/base": ("word", TAB_BASE),
+}
 
 class AdminContext:
     """Shared services the views depend on."""
@@ -274,6 +289,79 @@ class AdminContext:
             logger.exception("[admin] Could not read the %s master YAML", kind)
             return []
         return [t for t in templates if isinstance(t, dict)]
+
+    # -- what an Overview tab reports --------------------------------------
+
+    def section_facts(self, s) -> "views.SectionFacts":
+        """Counts, tools and base-template state for one section's Overview.
+
+        Loaded here rather than in the view because it reaches into the store,
+        the live registries and the metrics counters — the three things a view
+        is not allowed to know about. The view gets a plain record.
+        """
+        specs = self.store.list_specs(s.kind) if s.kind else []
+        live_names = set(self.live_names(s.kind)) if s.kind else set()
+        enabled = [spec for spec in specs if is_enabled(spec)]
+
+        tools = [self._tool_fact(name, origin="static") for name in s.tools]
+        # A docx or email template is a tool of its own and belongs in the
+        # same list; a pptx template is not, so it is counted as a template
+        # and nothing else. descriptor().has_args is the distinction.
+        if s.kind and descriptor(s.kind).has_args:
+            for spec in specs:
+                name = spec.get("name")
+                tools.append(self._tool_fact(
+                    name, origin="template", live=name in live_names))
+
+        slots = []
+        for slot in s.slots:
+            active = base_templates.active_path(slot)
+            slots.append(views.SlotFact(
+                key=slot.key, label=slot.label,
+                filename=active.name if active else "",
+                source=base_templates.source_of(self.store.custom_dir, slot,
+                                                active),
+            ))
+
+        notes = []
+        for slot, fact in zip(s.slots, slots):
+            if fact.source == "none":
+                notes.append((
+                    f"No {slot.label} file is installed. {slot.controls}",
+                    "warn"))
+        if s.kind:
+            unmanaged = self.unmanaged_master_specs(s.kind)
+            if unmanaged:
+                notes.append((
+                    f"{len(unmanaged)} template(s) come from the hand-written "
+                    "master YAML and are shown read-only on the Templates tab.",
+                    "info"))
+
+        extra = []
+        if s.kind == KIND_PPTX:
+            extra.append(("Registered designs", len(live_names)))
+
+        return views.SectionFacts(
+            templates=len(specs),
+            live=len([spec for spec in specs
+                      if spec.get("name") in live_names]),
+            disabled=len(specs) - len(enabled),
+            tools=tuple(tools), slots=tuple(slots), notes=tuple(notes),
+            extra_stats=tuple(extra),
+        )
+
+    @staticmethod
+    def _tool_fact(name: str, origin: str = "static",
+                   live: bool = True) -> "views.ToolFact":
+        """One tool's counters, or zeroes when it has not been called yet."""
+        st = metrics.get_tool_stat(name)
+        if st is None:
+            return views.ToolFact(name=name, origin=origin, live=live)
+        return views.ToolFact(
+            name=name, origin=origin, live=live, calls=st.calls,
+            errors=st.errors, degraded=st.degraded,
+            last_called=views.fmt_ts(st.last_called),
+        )
 
     def scan_assets(self) -> List[asset_index.AssetFile]:
         """Every file in ``custom_templates/`` and what references it (#166)."""
@@ -491,28 +579,25 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             return RedirectResponse(login_path, status_code=303)
         return views.logout_page(ctx, ctx.u("/logout"), auth.ensure_csrf(sess))
 
-    @rt("/")
-    def index(sess):
-        return views.index_page(ctx, auth.ensure_csrf(sess))
+    # ---- Sections (the tabbed product pages) -----------------------------
+    # Registered BEFORE the /{kind}/... routes below, and GET-only. Both
+    # matter: a section slug shares the first path segment with a template
+    # kind ("email" is both a section and a kind), and every two-segment
+    # /{kind}/... route is a POST, so GET-only is what keeps "/email" the
+    # Email section while "/email/save" still reaches the save handler.
+    # The slugs are literal rather than a "/{slug}" pattern for the same
+    # reason: a catch-all would also swallow "/new/docx".
+    assert_slugs_free()
 
-    @rt("/status")
-    def status(level: str = "info", logger: str = "", q: str = "",
-               refresh: str = "0"):
-        """The Status page. Every filter is a query parameter, so a filtered
-        view is a URL that can be bookmarked or pasted to a colleague."""
-        return views.status_page(ctx, level=level, source=logger, search=q,
-                                 refresh=views.refresh_seconds(refresh))
+    def _slot_states(keys=None):
+        """One (slot, active path, source, analysis) per slot, read fresh.
 
-    # ---- Base templates (#169) -------------------------------------------
-    # Registered BEFORE the generic /{kind}/{name}/… routes below: Starlette
-    # matches in registration order, and "/base/docx/download" also fits
-    # "/{kind}/{name}/download", which would redirect home instead of serving
-    # the file. tests/test_admin_base_templates.py pins this ordering.
-
-    def _slot_states():
-        """One (slot, active path, source, analysis) per slot, read fresh."""
+        *keys* limits it to one section's slots; ``None`` means all of them.
+        """
         states = []
         for s in base_templates.SLOTS:
+            if keys is not None and s.key not in keys:
+                continue
             active = base_templates.active_path(s)
             source = base_templates.source_of(ctx.store.custom_dir, s, active)
             analysis = None
@@ -525,15 +610,118 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             states.append((s, active, source, analysis))
         return states
 
-    def _base_page(sess, focus=None, message=None, message_kind="ok"):
-        return views.base_templates_page(
-            ctx, csrf=auth.ensure_csrf(sess), states=_slot_states(),
-            focus=focus, message=message, message_kind=message_kind,
-        )
+    def _panel(sec, tab, sess, *, focus=None, message=None, message_kind="ok",
+               query=None):
+        """The body of one section tab, as a list of cards.
 
-    @rt("/base")
-    def base_templates_index(sess):
-        return _base_page(sess)
+        The single place that maps a (section, tab) pair to a renderer. Every
+        route that has to re-render a tab after a POST - an upload, a revert,
+        a style save - comes back through here rather than building the page
+        its own way, so a tab looks the same however it was reached.
+        """
+        csrf = auth.ensure_csrf(sess)
+        query = query or {}
+        if tab == TAB_OVERVIEW:
+            return views.overview_panel(ctx, sec, ctx.section_facts(sec))
+        if tab == TAB_TEMPLATES:
+            return [views.templates_panel(ctx, sec.kind, csrf)]
+        if tab == TAB_BASE:
+            return views.base_panel(
+                ctx, csrf=csrf, states=_slot_states(sec.slot_keys),
+                focus=focus, message=message, message_kind=message_kind)
+        if tab == TAB_STYLES:
+            return views.style_mapping_panel(
+                ctx, csrf=csrf, mapping=ctx.global_style_mapping,
+                master=ctx.master_style_mapping,
+                stored=ctx.store.has_global_settings(KIND_DOCX),
+                offered=_base_docx_styles(),
+                message=message, message_kind=message_kind)
+        if tab == TAB_STATUS:
+            return views.status_panel(ctx)
+        if tab == TAB_FILES:
+            return views.source_files_panel(
+                ctx, ctx.scan_assets(), csrf=csrf,
+                message=message or "", message_kind=message_kind)
+        if tab == TAB_LOG:
+            return views.log_panel(
+                ctx, level=query.get("level", "info"),
+                source=query.get("logger", ""), search=query.get("q", ""),
+                refresh=views.refresh_seconds(query.get("refresh", "0")))
+        raise KeyError(f"No renderer for tab {tab!r}")  # pragma: no cover
+
+    def _section_page(sec, tab, sess, **kw):
+        """A section tab, wrapped in the section shell."""
+        actions = []
+        if tab == TAB_TEMPLATES:
+            actions.append(views.new_template_button(ctx, sec.kind))
+        return views.section_page(ctx, sec, tab, *_panel(sec, tab, sess, **kw),
+                                  actions=actions)
+
+    def _section_redirect(sec, tab=None):
+        return RedirectResponse(sec.href(ctx.u, tab), status_code=303)
+
+    @rt("/")
+    def index(sess):
+        auth.ensure_csrf(sess)
+        return views.dashboard_page(
+            ctx, [(sec, ctx.section_facts(sec)) for sec in SECTIONS])
+
+    def _register_section(sec):
+        """One section's two GET routes: its default tab, and a named tab.
+
+        An unknown tab redirects to the section rather than 404ing: a stale
+        bookmark to a tab that has been renamed is far likelier than a
+        hand-typed URL, and the section it names is still where to land.
+
+        *sec* is captured in the closure and must not become a parameter with
+        a default: FastHTML fills every parameter of a handler from the
+        request, so a "private" keyword argument arrives as None and the
+        handler looks up a section called None.
+        """
+        def index(sess):
+            return _section_page(sec, sec.default_tab, sess)
+
+        def tab(req, sess, tab: str):
+            if not sec.has_tab(tab):
+                return _section_redirect(sec)
+            return _section_page(sec, tab, sess, query=dict(req.query_params))
+
+        index.__name__ = f"section_{sec.slug}"
+        tab.__name__ = f"section_{sec.slug}_tab"
+        rt(f"/{sec.slug}", methods=["get"])(index)
+        rt(f"/{sec.slug}/{{tab}}", methods=["get"])(tab)
+
+    for _sec in SECTIONS:
+        _register_section(_sec)
+
+    # ---- Legacy URLs ------------------------------------------------------
+    # The pages these named are now tabs. Redirected rather than dropped:
+    # they were in the top bar for the UI's whole life, so they are in
+    # bookmarks and in links people have pasted to each other.
+
+    def _register_moved(old_path, slug, tab):
+        # A factory, not a default argument: FastHTML fills a handler's
+        # parameters from the request, so a captured value passed that way
+        # arrives as None (see _register_section).
+        def moved():
+            return _section_redirect(section(slug), tab)
+        moved.__name__ = f"moved{old_path.replace('/', '_')}"
+        rt(old_path, methods=["get"])(moved)
+
+    for _old, (_slug, _tab) in MOVED_PATHS.items():
+        _register_moved(_old, _slug, _tab)
+
+    # ---- Base templates (#169) -------------------------------------------
+    # Registered BEFORE the generic /{kind}/{name}/... routes below:
+    # Starlette matches in registration order, and "/base/docx/download" also
+    # fits "/{kind}/{name}/download", which would redirect home instead of
+    # serving the file. tests/test_admin_base_templates.py pins this ordering.
+
+    def _base_page(sess, focus=None, message=None, message_kind="ok"):
+        """Re-render the Base tab of whichever section owns *focus*'s slot."""
+        sec = slot_section(focus) if focus else section("word")
+        return _section_page(sec, TAB_BASE, sess, focus=focus, message=message,
+                             message_kind=message_kind)
 
     @rt("/base/{key}/download")
     def base_download(key: str):
@@ -614,10 +802,10 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
     # Registered BEFORE the generic /{kind}/{name}/… routes below, or
     # /files/{name}/delete would be matched as a template delete.
 
-    @rt("/files")
-    def files_index(sess):
-        return views.assets_page(ctx, ctx.scan_assets(),
-                                 csrf=auth.ensure_csrf(sess))
+    def _files_page(sess, message=None, message_kind="ok"):
+        """Re-render the Server section's Source files tab."""
+        return _section_page(section("server"), TAB_FILES, sess,
+                             message=message, message_kind=message_kind)
 
     @rt("/files/{filename}/delete", methods=["get", "post"])
     async def delete_file(req, sess, filename: str):
@@ -648,14 +836,10 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             (Path(ctx.store.custom_dir) / found.name).unlink()
         except OSError as e:
             logger.exception("[admin] Could not delete %s", found.name)
-            return views.assets_page(
-                ctx, ctx.scan_assets(), csrf=auth.ensure_csrf(sess),
-                message=f"Could not delete {found.name}: {e}",
-                message_kind="err")
+            return _files_page(sess, f"Could not delete {found.name}: {e}",
+                               "err")
         logger.info("[admin] Deleted unreferenced source file %r", found.name)
-        return views.assets_page(
-            ctx, ctx.scan_assets(), csrf=auth.ensure_csrf(sess),
-            message=f"Deleted {found.name}.")
+        return _files_page(sess, f"Deleted {found.name}.")
 
     # ---- Global style mapping (#161) -------------------------------------
     # Registered BEFORE the generic /{kind}/… routes below: "/styles/save"
@@ -680,14 +864,9 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         )
 
     def _styles_page(sess, message=None, message_kind="ok"):
-        return views.global_styles_page(
-            ctx, csrf=auth.ensure_csrf(sess),
-            mapping=ctx.global_style_mapping,
-            master=ctx.master_style_mapping,
-            stored=ctx.store.has_global_settings(KIND_DOCX),
-            offered=_base_docx_styles(),
-            message=message, message_kind=message_kind,
-        )
+        """Re-render the Word section's Style mapping tab."""
+        return _section_page(section("word"), TAB_STYLES, sess,
+                             message=message, message_kind=message_kind)
 
     def _base_docx_styles():
         """Styles the base Word template defines — what this mapping can pick.
@@ -707,10 +886,6 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         except Exception:
             logger.exception("[admin] Could not read styles from %s", active)
             return []
-
-    @rt("/styles")
-    def global_styles(sess):
-        return _styles_page(sess)
 
     @rt("/styles/save", methods=["post"])
     async def save_global_styles(req, sess):
