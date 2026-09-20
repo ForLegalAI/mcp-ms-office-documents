@@ -331,7 +331,9 @@ placeholders empty, and reported none of it.
 instead:
 
 1. content placeholders that overlap horizontally by more than half the
-   narrower one are **one column**;
+   narrower one are **one column** — measured against the column's full
+   extent so far, not against whichever box joined it first, so a column
+   headed by a narrow strip still claims the boxes inside its wider body;
 2. the **tallest** placeholder of a column is its body;
 3. a **shorter** placeholder above that body is the column's heading strip —
    at most 60% of the body's height, so a second body is never mistaken for a

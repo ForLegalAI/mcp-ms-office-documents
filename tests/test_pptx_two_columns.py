@@ -326,3 +326,31 @@ def test_closing_is_not_reported_as_a_missing_role():
 
     resolver = LayoutResolver(PptxReader(str(BASE_16_9)))
     assert "closing" not in resolver.missing_roles()
+
+
+def test_a_column_is_matched_on_its_whole_extent_not_its_first_box():
+    """A column is a region, not whichever box happened to sort first.
+
+    Clustering compared each placeholder against `column[0]`. A column whose
+    first box is a narrow heading then measures every later box against the
+    heading's width rather than the column's, so a box sitting inside the
+    *body* below it starts a spurious third column. `classify_layout()` is
+    safe either way — it demands exactly two columns and returns None
+    otherwise — but `_build_two_column_slide()` calls `content_columns()` on
+    whatever layout the slide landed on, vetted or not, and fills columns
+    [0] and [1]. A spurious column there is content in the wrong box.
+    """
+    prs = PptxReader(str(BASE_16_9))
+    layout = next(one for one in prs.slide_layouts if one.name == COMPARISON)
+    _reshape(layout, [
+        (1.0, 1.5, 2.0, 0.5),    # narrow heading: spans 1.0-3.0
+        (1.0, 2.2, 5.0, 3.5),    # its body, wider: spans 1.0-6.0
+        (3.5, 2.2, 2.5, 3.5),    # inside the body's span, outside the heading's
+        (7.5, 2.2, 4.0, 3.5),    # the genuine second column
+    ])
+
+    columns = content_columns(layout)
+    assert len(columns) == 2, (
+        f"expected two columns, got {len(columns)}: "
+        f"{[(round(b.left / 914400, 2), round(b.width / 914400, 2)) for _, b in columns]}"
+    )

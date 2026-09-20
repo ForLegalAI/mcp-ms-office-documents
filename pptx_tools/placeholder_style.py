@@ -42,7 +42,7 @@ from __future__ import annotations
 import copy
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from pptx.dml.color import RGBColor
 from pptx.enum.dml import MSO_THEME_COLOR
@@ -147,22 +147,36 @@ def content_columns(container):
     are one column, the tallest of a column is its body, and a shorter
     placeholder above that body is the heading for it. ``heading`` is None for
     a layout that reserves no heading strip, which is what Two Content is.
+
+    A heading is only ever looked for **above** its body, which is where every
+    Comparison-shaped layout puts one. A layout captioning each column from
+    below reads as headingless here, and its captions become part of the body
+    text — visible, and reported as ``heading_inlined`` if the slide supplied
+    headings of its own.
     """
     placeholders = [ph for ph in content_placeholders(container) if _placed(ph)]
     if not placeholders:
         return []
 
+    # A column is matched on the full extent of what is already in it, not on
+    # whichever box happened to sort first: a column whose first member is a
+    # narrow heading would otherwise measure every later box against the
+    # heading's width, and a box sitting inside the wider body below it would
+    # start a spurious third column.
     columns: List[List[Any]] = []
+    spans: List[Tuple[int, int]] = []
     for placeholder in sorted(placeholders, key=lambda ph: (ph.left, ph.top)):
-        for column in columns:
-            other = column[0]
-            overlap = (min(placeholder.left + placeholder.width, other.left + other.width)
-                       - max(placeholder.left, other.left))
-            if overlap > _COLUMN_OVERLAP_RATIO * min(placeholder.width, other.width):
-                column.append(placeholder)
+        left, right = placeholder.left, placeholder.left + placeholder.width
+        for index, (span_left, span_right) in enumerate(spans):
+            overlap = min(right, span_right) - max(left, span_left)
+            narrower = min(placeholder.width, span_right - span_left)
+            if overlap > _COLUMN_OVERLAP_RATIO * narrower:
+                columns[index].append(placeholder)
+                spans[index] = (min(left, span_left), max(right, span_right))
                 break
         else:
             columns.append([placeholder])
+            spans.append((left, right))
 
     resolved = []
     for column in columns:

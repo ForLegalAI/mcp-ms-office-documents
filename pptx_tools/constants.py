@@ -113,6 +113,10 @@ TABLE_ROW_HEIGHT_PER_POINT = 2.1
 # brand teal (#195). Both remain overridable per slide through `header_color`
 # and `fills`, and per template through the registry's `table` defaults.
 TABLE_HEADER_FILL = "accent1"
+# Zebra shading carries the same unavoidable risk as the header text below:
+# on a template whose `bg2` sits close in luminance to the unshaded rows the
+# stripe reads as barely there. Telling that apart needs a luminance decision,
+# so the theme is followed and the caller can override with `fills`.
 TABLE_ALT_ROW_FILL = "bg2"
 # Header text stays an explicit white. It is paired with `accent1`, which
 # templates make dark enough to carry it; deriving it from the theme instead

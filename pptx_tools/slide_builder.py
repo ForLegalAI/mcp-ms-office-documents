@@ -354,10 +354,15 @@ class PowerpointPresentation(SlideHelpers):
         in a slideshow, but it is the first thing anyone opening the file to
         edit it sees, and on the template in #195 there were three per slide.
 
-        A placeholder holding a picture, table or chart is not an ``<p:sp>``
-        with a text frame any more, so filling one keeps it. Dropping a
-        placeholder does not change what a reader sees; PowerPoint's Reset
-        Slide puts it back from the layout.
+        The test is "has an empty text frame", so anything that replaced its
+        ``<p:sp>`` with a graphic survives. Today only the picture path does
+        that: ``_fill_picture_placeholder()`` calls ``insert_picture()``,
+        which swaps in a ``<p:pic>``. Tables and charts never reach a
+        placeholder at all — ``_add_title_content_slide()`` removes the
+        content placeholder and draws a fresh shape in its rectangle — but a
+        future change that inserted into one would be safe for the same
+        reason. Dropping a placeholder does not change what a reader sees;
+        PowerPoint's Reset Slide puts it back from the layout.
         """
         for slide in self.presentation.slides:
             for placeholder in list(slide.placeholders):
