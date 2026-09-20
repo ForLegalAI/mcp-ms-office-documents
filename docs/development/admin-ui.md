@@ -42,6 +42,15 @@ type, was the one URL that did not work. The redirect is built from
 `config.admin.path`, so a custom `ADMIN_PATH` gets it too;
 `tests/test_admin_app.py` pins both the ordering and that it follows config.
 
+`tests/test_entry_points.py` guards the *class* of bug rather than the
+instance. Every URL this server advertises to the outside world — the three
+Kubernetes probes, `/mcp`, `/admin` — is asserted to resolve **exactly as
+advertised**, with no trailing slash added to make it pass. Its assertions are
+deliberately not written from the route table: each is a URL a stranger uses,
+because what failed here was a URL nothing inside the app ever generated for
+itself. Add an entry to `ENTRY_POINTS` whenever something new is advertised in
+a manifest, the README or the startup log.
+
 `components`, `kinds`, `forms`, `store`, `analysis` and `assets` do not import
 `admin.app`; views take the `AdminContext` as a parameter. `store`, `analysis`
 and `forms` have no FastHTML dependency at all, so their rules can be unit
