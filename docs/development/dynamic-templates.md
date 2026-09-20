@@ -17,13 +17,42 @@ argument of the presentation tool. See
 |--------|------|------------|
 | Master file | `config/docx_templates.yaml`, `config/email_templates.yaml` | a person; heavily commented; never rewritten by tooling |
 | Per-template files | `config/docx_templates.d/<name>.yaml`, `config/email_templates.d/<name>.yaml` | the admin UI (`admin/store.py`) |
+| Kind-wide settings | `config/<kind>_templates.d/_global.yaml` | the admin UI (`admin/store.py`) |
 
 `template_registry.gather_specs()` merges the two: master entries in their
 original order, a `.d` entry replacing a master entry with the same `name`,
-and `.d`-only entries appended in name order. It also returns the master
-file's top-level mapping so callers can read `style_mapping`. A malformed
-`.d` file is logged and skipped; it never aborts the load. The same loader
-serves the PowerPoint registry.
+and `.d`-only entries appended in name order. It also returns the kind's
+top-level config so callers can read `style_mapping` — see
+[Kind-wide settings](#kind-wide-settings). A malformed `.d` file is logged and
+skipped; it never aborts the load. The same loader serves the PowerPoint
+registry.
+
+### Kind-wide settings
+
+`<kind>_templates.d/_global.yaml` is the merge layer's home for what the
+master file keeps at *top level* rather than under `templates:` — for Word,
+`style_mapping`. It exists so the admin UI can edit those settings without
+rewriting the master file, which is hand-written documentation the tooling
+never touches ([#161](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/161)).
+
+`template_registry.global_config(master_yaml, spec_dir)` is the one merge
+point, as `gather_specs()` is for templates. Three rules:
+
+- **A key here replaces the master's key outright; it does not merge into
+  it.** A key-wise merge would make a setting the admin cleared fall back to
+  the master's value, so the UI would show "(use built-in)" while the master's
+  name went on being applied — the lie #161 is about.
+- **Presence is what counts.** An explicit `style_mapping: {}` means *nothing
+  overridden*; deleting the file hands the kind back to the master. The two
+  are different states and the UI offers both (Save with every field cleared,
+  and Revert).
+- **`templates:` is never taken from it.** That list is `gather_specs()`'s
+  business; one file able to register tools by a back door is not a power this
+  layer should have.
+
+The filename is reserved: `read_spec_dir()` skips it so it is never read as a
+template, and `admin.store.validate_name()` refuses the name `_global` so a
+template cannot be written over it.
 
 **`enabled: false` is where a template is turned off.** `gather_specs()`
 drops those specs, so a disabled template is never registered — at startup or
@@ -178,7 +207,7 @@ template name, for the filename.
 |-|------|-------|
 | `TYPE_MAP` | string, int, float, bool, list | the same plus `dict`/`object` |
 | Base fields | none | `subject`, `to`, `cc`, `bcc` |
-| Global config | `style_mapping` from the master file, merged with a per-template one | none |
+| Global config | `style_mapping` from `global_config()`, merged with a per-template one | none |
 | Escaping | Markdown rendering, no HTML | Mustache HTML escaping on `{{x}}` |
 | Conditionals | `{{#if}}` block markers | Mustache sections `{{#x}}…{{/x}}` |
 | Headers set | n/a | `Subject`, `To`/`Cc`/`Bcc`, `X-Unsent` only |

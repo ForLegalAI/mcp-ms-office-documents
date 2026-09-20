@@ -16,7 +16,7 @@ contain, [`dynamic-templates.md`](dynamic-templates.md).
 | `admin/base_templates.py` | one `BaseSlot` per *static* base template (fixed filename, one of each) |
 | `admin/forms.py` | reading a submitted form back into a spec dict |
 | `admin/assets.py` | what is in `custom_templates/` and what still references it |
-| `admin/views/` | the pages — `shell`, `templates`, `base`, `assets`, `status`, `login` |
+| `admin/views/` | the pages — `shell`, `templates`, `base`, `assets`, `settings`, `status`, `login` |
 | `admin/store.py` | persistence: `config/<kind>_templates.d/<name>.yaml` + the asset |
 | `admin/analysis.py` | what is inside an uploaded `.docx` / `.html` / `.pptx` |
 | `admin/preview.py` | rendering a template without touching the upload backend |
@@ -311,16 +311,45 @@ has to still be an orphan when the request arrives. A crafted path matches
 nothing, and a file that gained a reference since the page was rendered is no
 longer deletable.
 
+## Global styles (#161)
+
+`/styles` edits the Word `style_mapping` that applies to **every** document —
+the setting with the widest blast radius on the server, and the last one that
+required hand-editing YAML on the volume.
+
+It writes `config/docx_templates.d/_global.yaml`, the merge layer's home for
+kind-wide settings, never the master file. The storage rules and why the
+override *replaces* rather than merges are in
+[dynamic-templates.md](dynamic-templates.md#kind-wide-settings); what the page
+itself has to get right:
+
+- **The form opens on what is in force**, not empty. On a server whose master
+  YAML has set a mapping all along, an empty form would read as "nothing is
+  set", and the first save would silently clear it. Opening pre-filled means
+  saving without touching anything is a no-op in effect.
+- **A value the base Word template does not define is still offered**, marked
+  *not in the base template*. The dropdowns list the base template's styles
+  because that is what the static Word tool renders onto — but dropping a
+  configured value for being unrecognised would lose configuration by
+  rendering a page.
+- **A master key the override drops is named on the page** ("Not in force"),
+  because the override replaces the master's mapping. Otherwise an admin
+  reading `docx_templates.yaml` on the volume sees a setting that is simply
+  not happening.
+- **Keys the renderer does not act on are flagged**, read from the master as
+  well as from the effective mapping, and kept out of the "Not in force" list:
+  they were never in force, and listing them beside a real one sends an admin
+  looking for a setting they never had.
+- **Saving re-registers every Word template tool.** The mapping is baked into
+  each tool at registration time, so a save would otherwise move the static
+  tool and leave the template tools on the old mapping.
+
+Route ordering matters here as it does for `/base` and `/files`: `/styles/save`
+also fits `/{kind}/save`, so the three `/styles` routes are registered before
+the generic ones and `tests/test_admin_global_styles.py` pins it.
+
 ## Known limitations
 
-- The **global** `style_mapping` is still read-only: the editor now says what
-  each key inherits from it, but there is no way to change it from the UI
-  ([#161](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/161)).
-  Editing it needs a home for global config in the `*.d` merge layer —
-  `gather_specs()` reads top-level keys from the master YAML only — and
-  `style_map.load_global_style_map()` caches its result for the process, so
-  both would have to change together for an edit to take effect without a
-  restart.
 - An **accepted** upload is still read fully into memory. Streaming it
   straight to its destination would need the analysers and
   `store.write_asset()` to take a file object rather than bytes — worth doing

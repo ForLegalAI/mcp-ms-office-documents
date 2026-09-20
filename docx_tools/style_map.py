@@ -8,14 +8,17 @@ touching the call sites — the defaults reproduce today's behaviour exactly.
 A map is threaded explicitly through the processors (not held in global state) so
 concurrent conversions on worker threads never share mutable mapping state. Config
 overrides come from the ``style_mapping`` section of ``config/docx_templates.yaml``
-(global) and each template's own ``style_mapping`` (per-template, wins over global).
+(global, overridable by the admin UI through
+``config/docx_templates.d/_global.yaml`` — see
+:func:`template_registry.global_config`) and each template's own
+``style_mapping`` (per-template, wins over global).
 See docs/development/tools/word.md ("Style mapping") for the design rationale;
 the original discussion is issue #66.
 """
 import logging
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Tuple
 
 from docx.table import Table
 from docx.text.paragraph import Paragraph
@@ -196,28 +199,52 @@ _CONFIG_PATHS = (
     Path("/app/config") / "docx_templates.yaml",
     Path(__file__).resolve().parent.parent / "config" / "docx_templates.yaml",
 )
-_cached_global_style_map: Optional[StyleMap] = None
+
+
+def _resolve_config() -> Tuple[Optional[Path], Optional[Path]]:
+    """``(master YAML, spec dir)`` for the first candidate location in use.
+
+    A location counts as in use when *either* half is there: the admin UI can
+    write ``docx_templates.d/_global.yaml`` on a deployment that never had a
+    master YAML, and that mapping still has to apply.
+    """
+    from template_registry import spec_dir_for
+
+    for path in _CONFIG_PATHS:
+        spec_dir = spec_dir_for(path)
+        try:
+            if path.is_file() or (spec_dir and spec_dir.is_dir()):
+                return path, spec_dir
+        except OSError:  # pragma: no cover - unreadable candidate directory
+            logger.warning("Could not stat %s", path, exc_info=True)
+    return None, None
 
 
 def load_global_style_map() -> StyleMap:
-    """Build the global :class:`StyleMap` from ``docx_templates.yaml`` (cached).
+    """Build the global :class:`StyleMap` from the docx template config.
 
-    Reads the top-level ``style_mapping`` section. Returns :data:`DEFAULT_STYLE_MAP`
-    if no config file or section is present. Result is cached for the process.
+    Reads the top-level ``style_mapping`` in force — the master
+    ``docx_templates.yaml`` under whatever ``docx_templates.d/_global.yaml``
+    overrides — through the same :func:`template_registry.global_config` the
+    dynamic loader and the admin UI use, so the static Word tool cannot end up
+    on a different mapping from a template tool.
+
+    **Not cached.** It was, for the life of the process, which meant editing
+    the mapping in the admin UI left every subsequent document on the old one
+    until a restart — the setting with the widest blast radius being the one
+    that could not be changed live (#161). Two small YAML reads, once per
+    document build (:mod:`docx_tools.base_docx_tool` calls this only when the
+    caller passed no map), is not a cost worth a stale answer for. A caller
+    generating in a loop should build the map once and pass it down, which is
+    what every dynamic template tool already does.
     """
-    global _cached_global_style_map
-    if _cached_global_style_map is not None:
-        return _cached_global_style_map
-    mapping = {}
-    for path in _CONFIG_PATHS:
-        try:
-            if not path.is_file():
-                continue
-            import yaml
-            cfg = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-            mapping = cfg.get("style_mapping") or {}
-            break
-        except Exception:
-            logger.warning("Failed to read style_mapping from %s", path, exc_info=True)
-    _cached_global_style_map = build_style_map(mapping)
-    return _cached_global_style_map
+    master, spec_dir = _resolve_config()
+    try:
+        from template_registry import global_config
+
+        mapping = global_config(master, spec_dir).get("style_mapping") or {}
+    except Exception:
+        logger.warning("Failed to read the global style_mapping; using defaults.",
+                       exc_info=True)
+        mapping = {}
+    return build_style_map(mapping)

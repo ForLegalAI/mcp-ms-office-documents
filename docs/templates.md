@@ -238,6 +238,8 @@ If your template defines styles under **different names** than the built-ins abo
 
 A top-level `style_mapping:` applies to every document; each template may add its own `style_mapping:` which overrides the global one for that template.
 
+> The global mapping is also editable from the admin UI's **Global styles** page, which stores it in `config/docx_templates.d/_global.yaml` rather than rewriting this file. While that file exists its `style_mapping` **replaces** the one below entirely — so a key set here and not there is off. Reverting on that page deletes it and hands the setting back to this file. See [admin-ui.md](admin-ui.md).
+
 ```yaml
 # config/docx_templates.yaml
 

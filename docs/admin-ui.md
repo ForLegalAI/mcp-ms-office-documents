@@ -56,6 +56,15 @@ http://localhost:8958/admin
   heading levels, three numbered and three bulleted list levels, quote, table,
   normal and code), and each dropdown's default option names what that key
   resolves to today — including when a global `style_mapping` sets it.
+- **Global styles** — the same mapping, but for **every** Word document the
+  server produces: the `markdown_to_word` tool and every Word template that
+  does not set the same key itself. The page opens on the mapping in force, so
+  saving without changing anything changes nothing. Your hand-written
+  `config/docx_templates.yaml` is never rewritten — the mapping is stored
+  separately and takes precedence, and **Revert to docx_templates.yaml** hands
+  it back. Two things the page will tell you: a style you have mapped that
+  your base Word template does not define, and a key the master file sets that
+  the mapping managed here no longer applies.
 - **Inspect a hand-written template** — a template defined in your master
   `config/<kind>_templates.yaml` now links to a read-only page showing its
   description, arguments, style mapping, which file it uses and where that

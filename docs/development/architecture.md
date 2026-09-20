@@ -258,7 +258,11 @@ Dynamic template specs are merged by `template_registry.gather_specs()`: the
 hand-written master `config/<kind>_templates.yaml` plus one file per template
 in `config/<kind>_templates.d/`. A `.d` entry wins on a name clash. Tooling
 never rewrites the master file. A spec marked `enabled: false` is dropped
-there, so it is never registered by any path; absent means enabled.
+there, so it is never registered by any path; absent means enabled. The
+master file's top-level keys merge the same way through
+`template_registry.global_config()`, with a reserved
+`<kind>_templates.d/_global.yaml` overriding them — that is how the admin UI
+edits the global Word `style_mapping` without touching the master.
 
 PowerPoint templates have their own registry (`pptx_tools/templates.py`) that
 maps names to files and layout roles. It is cached against a modification-time
@@ -309,7 +313,7 @@ several replicas, put the files on shared storage and restart the pods.
 | `middleware.py` | API-key middleware |
 | `librechat_integration.py` | request-header user context; `upload_and_format_response()` |
 | `template_utils.py` | template file resolution across custom/default and container/local dirs |
-| `template_registry.py` | YAML spec merging and live tool removal, shared by both dynamic-tool modules |
+| `template_registry.py` | YAML merging — template specs and kind-wide settings — and live tool removal, shared by both dynamic-tool modules |
 | `inline_markdown.py` | the inline-markdown grammar shared by the Word and PowerPoint renderers |
 | `image_utils.py` | image download, data-URI decoding, validation, SSRF guard |
 | `warning_channel.py` | the severity vocabulary, the `DocumentWarning` record and the per-build `WarningChannel` the builders write to |

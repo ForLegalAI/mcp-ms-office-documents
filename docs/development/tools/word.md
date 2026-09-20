@@ -190,12 +190,34 @@ past infinite-loop hang and must stay.
 `StyleMap` is a frozen dataclass of Word style names. It is threaded through
 every function as a parameter, never held globally, so concurrent conversions
 on worker threads cannot share mutable state. The defaults reproduce Word's
-built-in names. `build_style_map()` merges the global `style_mapping` from
-`config/docx_templates.yaml` with a template's own section, the template
-winning. `apply_style()` falls back to `Normal` (or the document default for
-tables) and logs a warning when the named style is missing from the template,
-so a wrong name never aborts a render. The global map is cached for the
-process lifetime.
+built-in names. `build_style_map()` merges the global `style_mapping` with a template's own
+section, the template winning. `apply_style()` falls back to `Normal` (or the
+document default for tables) and logs a warning when the named style is
+missing from the template, so a wrong name never aborts a render.
+
+The global mapping is whatever `template_registry.global_config()` resolves —
+`config/docx_templates.yaml`'s top-level section under any
+`config/docx_templates.d/_global.yaml` the admin UI has written (see
+[dynamic-templates.md](../dynamic-templates.md#kind-wide-settings)). Its three
+consumers reach it by different routes and must not diverge:
+
+| Consumer | When it resolves the map | Picks up an edit |
+|---|---|---|
+| `markdown_to_word` (static) | `load_global_style_map()`, per document | immediately |
+| a dynamic template tool | once, at registration | on re-registration |
+| the admin preview | per render, via `AdminContext` | immediately |
+
+`load_global_style_map()` is deliberately **not** cached. It was cached for
+the life of the process, which meant an edit in the admin UI left every
+subsequent document on the old mapping until a restart
+([#161](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/161)). A
+caller generating many documents should build the map once and pass it down,
+which is what every dynamic template tool already does.
+
+Because the middle row bakes the map in, the admin UI re-registers every Word
+template tool after saving a global mapping (`AdminContext.resync_docx_style_map`).
+Without that, a save would move the static tool and leave the template tools
+behind — a split with no symptom an admin could act on.
 
 ### Inline formatting
 

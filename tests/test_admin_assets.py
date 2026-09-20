@@ -121,6 +121,8 @@ def _all_pages(client):
         ("new-email", "/admin/new/email"),
         ("new-pptx", "/admin/new/pptx"),
         ("base-templates", "/admin/base"),
+        ("source-files", "/admin/files"),
+        ("global-styles", "/admin/styles"),
     ]:
         pages.append((label, client.get(url).text))
 
@@ -166,7 +168,7 @@ def _all_pages(client):
 def test_every_page_is_rendered(admin_client):
     """Guard the guard: the sweep below is worthless if a page came back empty."""
     pages = _all_pages(admin_client)
-    assert len(pages) == 13
+    assert len(pages) == 15
     for label, html in pages:
         assert "<html" in html, f"{label} did not render a page"
 
