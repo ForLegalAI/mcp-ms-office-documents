@@ -11,6 +11,7 @@ without sending the admin off to read YAML.
 from __future__ import annotations
 
 from typing import Any, List
+from urllib.parse import quote
 
 from fasthtml.common import A, Button, Code, H1, Li, P, Td, Tr, Ul
 
@@ -18,6 +19,17 @@ from admin import components as c
 from admin.assets import AssetFile
 from admin.views.shell import page
 from admin.views.status import fmt_ts
+
+
+def _href(ctx, filename: str) -> str:
+    """The delete URL for *filename*, percent-encoded.
+
+    `validate_asset_filename` deliberately allows spaces and non-ASCII —
+    "Brand Deck.pptx" is an ordinary name — and a `#` or `?` in a filename
+    would otherwise end the path early and point the link somewhere else
+    entirely. Nothing but the path segment is being built here, so `safe=''`.
+    """
+    return ctx.u(f"/files/{quote(filename, safe='')}/delete")
 
 
 def fmt_size(size: int) -> str:
@@ -43,7 +55,7 @@ def _row(ctx, f: AssetFile):
         Td(fmt_size(f.size)),
         Td(fmt_ts(f.mtime)),
         Td(_references_cell(f)),
-        Td(A("Delete", href=ctx.u(f"/files/{f.name}/delete"),
+        Td(A("Delete", href=_href(ctx, f.name),
              cls="btn btn-danger btn-sm") if f.orphaned else "—"),
     )
 
@@ -92,7 +104,7 @@ def delete_asset_page(ctx, filename: str, csrf: str = ""):
             P("Nothing references it, so no template changes. It cannot be "
               "undone — you would have to upload the file again.", cls="muted"),
             c.post_form(
-                ctx.u(f"/files/{filename}/delete"),
+                _href(ctx, filename),
                 c.action_bar(
                     Button("Delete this file", type="submit",
                            cls="btn btn-danger"),

@@ -321,3 +321,39 @@ def test_scan_reports_size_and_mtime(tmp_path):
 def test_orphaned_is_just_no_references():
     assert AssetFile("a", 1, 1.0, ()).orphaned is True
     assert AssetFile("a", 1, 1.0, ("something",)).orphaned is False
+
+
+# ---------------------------------------------------------------------------
+# Filenames that are legal but awkward in a URL
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("filename", [
+    "Q3 report.docx",      # spaces are explicitly allowed by the store
+    "hash#frag.docx",      # would end the path at the fragment
+    "question?x=1.docx",   # would start a query string
+    "amp&co.docx",
+    "naïve.docx",          # non-ASCII is allowed too
+])
+def test_an_awkward_filename_still_deletes(admin_client, filename):
+    """The link has to survive the round trip, not just look right.
+
+    `validate_asset_filename` allows spaces and non-ASCII on purpose, and a
+    `#` or `?` in a name would otherwise truncate the delete URL and point it
+    at something else entirely.
+    """
+    client, custom, _cfg = admin_client
+    (custom / filename).write_bytes(_docx_bytes())
+
+    html = client.get("/admin/files").text
+    href = re.search(r'href="([^"]*/files/[^"]*/delete)"', html)
+    assert href, "the orphan must offer a delete link"
+    assert "#" not in href.group(1).split("/files/")[1].split("/delete")[0], \
+        "an unencoded # would end the URL early"
+
+    r = client.get(href.group(1).replace("/admin", "/admin"), follow_redirects=True)
+    assert r.status_code == 200
+    assert "Delete this file?" in r.text, f"the link must resolve back to {filename}"
+
+    r = _post(client, href.group(1), data={})
+    assert not (custom / filename).exists(), f"{filename} should be gone"
