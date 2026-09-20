@@ -98,6 +98,7 @@ class KindDescriptor:
     draft_hint: str             # flash after a successful upload+analysis
     save_ok: str                # confirmation when registration succeeded
     save_warn: str              # confirmation when it did not
+    save_disabled: str          # confirmation when it is off on purpose
     preview_label: str
     preview_hint: str = ""
     section_blurb: str = ""     # extra prose under the index section heading
@@ -163,6 +164,8 @@ _DOCX = KindDescriptor(
     draft_hint="Analyzed {filename} — review the arguments below, preview, then save.",
     save_ok="Saved — the tool '{name}' is now live and ready for the AI to use.",
     save_warn="Saved, but the tool '{name}' could not be registered (check the logs).",
+    save_disabled="Saved. '{name}' stays disabled, so the AI cannot call it — "
+                  "enable it from the template list when you are ready.",
     preview_label="Preview",
 )
 
@@ -179,6 +182,8 @@ _EMAIL = KindDescriptor(
     draft_hint="Analyzed {filename} — review the arguments below, preview, then save.",
     save_ok="Saved — the tool '{name}' is now live and ready for the AI to use.",
     save_warn="Saved, but the tool '{name}' could not be registered (check the logs).",
+    save_disabled="Saved. '{name}' stays disabled, so the AI cannot call it — "
+                  "enable it from the template list when you are ready.",
     preview_label="Preview",
 )
 
@@ -200,6 +205,9 @@ _PPTX = KindDescriptor(
     # tool can build on.
     save_ok="Saved — '{name}' is now one of the templates the presentation tool "
             "can build on.",
+    save_disabled="Saved. '{name}' stays disabled, so the presentation tool will "
+                  "not offer it — enable it from the template list when you are "
+                  "ready.",
     save_warn="Saved, but '{name}' did not come back out of the template registry — "
               "check that its file is in custom_templates/ and see the logs.",
     preview_label="Preview sample deck",

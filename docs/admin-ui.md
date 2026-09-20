@@ -41,6 +41,14 @@ http://localhost:8958/admin
   heading levels, three numbered and three bulleted list levels, quote, table,
   normal and code), and each dropdown's default option names what that key
   resolves to today — including when a global `style_mapping` sets it.
+- **Clone** — start a new template from an existing one, from its row or its
+  edit page. Name the copy and everything else comes across: the description
+  and every argument with its type, default and description, plus a **copy**
+  of the source file under the new name. It is a copy, not a shared file, so
+  replacing one template's document never changes the other's. You land on
+  the copy's edit page, since the description usually needs changing at once.
+  A PowerPoint clone does not inherit the default-template flag — only one
+  template can be the default.
 - **Disable** — takes the tool off the server without touching anything else.
   The configuration, the arguments and the uploaded file all stay put; the AI
   simply stops being able to call it, and **Enable** puts it back. Reach for

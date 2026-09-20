@@ -127,7 +127,13 @@ class AdminContext:
         """
         if is_enabled(spec):
             return self.register(kind, spec)
-        return self.unregister(kind, spec.get("name"))
+        # Taking it off is the outcome asked for, so this succeeded. Returning
+        # unregister()'s own bool reported failure whenever there was no live
+        # tool to remove — which is every disabled save and every clone of a
+        # disabled template — and the page then told the admin to go and read
+        # the logs about a registration that was never meant to happen.
+        self.unregister(kind, spec.get("name"))
+        return True
 
     def live_names(self, kind: str) -> List[str]:
         if kind == KIND_PPTX:
@@ -571,6 +577,48 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         return views.edit_page(ctx, kind, name, spec, ctx.analyze_asset(kind, spec),
                                csrf=auth.ensure_csrf(sess))
 
+    @rt("/{kind}/{name}/clone", methods=["get", "post"])
+    async def clone(req, sess, kind: str, name: str):
+        """Start a new template from an existing one (#164).
+
+        "Same as the formal letter, but for the Prague office" used to mean
+        creating one from scratch and re-typing every argument name, type,
+        default and description by hand.
+        """
+        if not is_kind(kind):
+            return _home()
+        spec = ctx.store.get_spec(kind, name)
+        if spec is None:
+            return views.not_found_page(ctx, name)
+        csrf = auth.ensure_csrf(sess)
+
+        if req.method != "POST":
+            return views.clone_page(ctx, kind, name, spec, csrf=csrf)
+
+        form = await req.form()
+        bad = _csrf_guard(sess, form)
+        if bad:
+            return bad
+        try:
+            copy = ctx.store.clone_spec(kind, name, (form.get("name") or "").strip())
+        except (TemplateStoreError, OSError) as e:
+            return views.clone_page(ctx, kind, name, spec, csrf=csrf, error=str(e))
+
+        ok = ctx.sync(kind, copy)
+        new_name = copy["name"]
+        logger.info("[admin] Cloned %s template %r -> %r", kind, name, new_name)
+        # Land on the copy's edit page, not the index: the description almost
+        # always needs changing immediately, and the point is to keep going.
+        note = f"Copied from {name}. Change what differs, then save."
+        if not is_enabled(copy):
+            note += (" It is disabled, like the template it was copied from — "
+                     "enable it from the template list when you are ready.")
+        elif not ok:
+            note += " (It is not live yet — save to register it.)"
+        return views.edit_page(ctx, kind, new_name, copy,
+                               ctx.analyze_asset(kind, copy),
+                               csrf=csrf, message=note)
+
     @rt("/{kind}/{name}/download")
     def download(kind: str, name: str):
         """Serve the source file a template is actually using (#162).
@@ -681,7 +729,8 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             # failure to report, not an unhandled 500.
             return views.save_failed_page(ctx, str(e))
         ok = ctx.sync(kind, spec)
-        return views.saved_page(ctx, kind, spec["name"], ok)
+        return views.saved_page(ctx, kind, spec["name"], ok,
+                                enabled=is_enabled(spec))
 
     @rt("/{kind}/preview", methods=["post"])
     async def preview(req, sess, kind: str):

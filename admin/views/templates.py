@@ -62,6 +62,9 @@ def template_table(ctx, kind: str, csrf: str = ""):
             Td(c.status_badge(name in live, enabled)),
             Td(c.action_bar(
                 A("Edit", href=ctx.u(f"/{kind}/{name}/edit"), cls="btn btn-secondary btn-sm"),
+                A("Clone", href=ctx.u(f"/{kind}/{name}/clone"),
+                  cls="btn btn-secondary btn-sm",
+                  title="Start a new template from this one"),
                 _enabled_toggle(ctx, kind, name, enabled, csrf),
                 A("Delete", href=ctx.u(f"/{kind}/{name}/delete"), cls="btn btn-danger btn-sm"),
             )),
@@ -353,7 +356,7 @@ def _form_shell(ctx, kind: str, spec: Dict[str, Any], is_new: bool,
         # states (#165).
         c.hidden("original_name", spec.get("name", "")) if not is_new else None,
         *cards,
-        form_actions(ctx, kind),
+        form_actions(ctx, kind, "" if is_new else spec.get("name", "")),
         action=ctx.u(f"/{kind}/save"), method="post",
     )
 
@@ -541,6 +544,44 @@ def new_page(ctx, kind: str, csrf: str = "", error: Optional[str] = None):
             csrf=csrf, enctype="multipart/form-data",
         )),
         _authoring_help(kind),
+    )
+
+
+def clone_page(ctx, kind: str, name: str, spec: Dict[str, Any],
+               csrf: str = "", error: Optional[str] = None):
+    """Ask what to call the copy. Everything else comes from the original."""
+    d = descriptor(kind)
+    asset = spec.get(d.path_key) or "—"
+    carried = ["Its description and every argument, with their types, "
+               "defaults and descriptions."] if d.has_args else [
+        "Its description and deck defaults."]
+    carried.append(f"A copy of the source file ({asset}) under the new name — "
+                   "a copy, so replacing one template's document never "
+                   "changes the other's.")
+    if kind == KIND_PPTX:
+        carried.append("Not the default-template flag: only one template can "
+                       "be the default.")
+
+    return page(
+        ctx, f"Clone {name}",
+        H1(f"Clone {name}"),
+        c.flash(error, "err"),
+        c.card(
+            P("The copy starts with everything the original has:", cls="muted"),
+            Ul(*[Li(item) for item in carried]),
+            c.post_form(
+                ctx.u(f"/{kind}/{name}/clone"),
+                c.field(f"New {d.name_label.lower()}",
+                        Input(name="name", required=True,
+                              placeholder=d.name_placeholder),
+                        hint=d.name_hint),
+                c.action_bar(
+                    Button("Create the copy", type="submit", cls="btn btn-primary"),
+                    A("Cancel", href=ctx.u("/"), cls="btn"),
+                ),
+                csrf=csrf,
+            ),
+        ),
     )
 
 

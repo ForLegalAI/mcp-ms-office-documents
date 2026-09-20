@@ -65,6 +65,10 @@ _KIND_META: Dict[str, Dict[str, Any]] = {
     KIND_PPTX: {
         "subdir": "pptx_templates.d", "asset_ext": ".pptx",
         "asset_exts": (".pptx", ".potx"), "path_key": "pptx_path",
+        # Exactly one PowerPoint template is the default, so a clone that
+        # carried the flag would make two — a state the registry resolves by
+        # picking one, silently (#164).
+        "clone_drops": ("default",),
     },
 }
 
@@ -192,6 +196,10 @@ class TemplateStore(ABC):
     @abstractmethod
     def rename_spec(self, kind: str, name: str, new_name: str) -> Dict[str, Any]:
         """Rename the managed spec, returning the stored spec under its new name."""
+
+    @abstractmethod
+    def clone_spec(self, kind: str, name: str, new_name: str) -> Dict[str, Any]:
+        """Copy the managed spec and its asset under *new_name*."""
 
     @abstractmethod
     def read_asset(self, kind: str, filename: str) -> bytes:
@@ -394,6 +402,44 @@ class FileTemplateStore(TemplateStore):
         self._spec_path(kind, old_name).unlink(missing_ok=True)
         logger.info("[template-store] Renamed %s template %r -> %r", kind, old_name, new_name)
         return spec
+
+    def clone_spec(self, kind: str, name: str, new_name: str) -> Dict[str, Any]:
+        """Copy the managed spec *name* to *new_name*, asset and all.
+
+        The asset is **copied**, not shared. Two specs pointing at one file
+        would make "Replace document" on either one silently change the other,
+        which is worse than the duplication (#164). The copy keeps the source's
+        extension rather than the kind's canonical one, so a clone of a .potx
+        stays a .potx.
+
+        Keys a clone must not inherit come from the kind's ``clone_drops``, so
+        a new kind declares its own rather than a branch appearing here.
+        """
+        meta = _require_kind(kind)
+        new_name = validate_name(new_name)
+        source = self.get_spec(kind, validate_name(name))
+        if source is None:
+            raise TemplateStoreError(f"No managed {kind} template named {name!r}.")
+        if self.get_spec(kind, new_name) is not None:
+            raise TemplateStoreError(
+                f"A {kind} template named {new_name!r} already exists."
+            )
+
+        path_key = meta["path_key"]
+        source_asset = source.get(path_key)
+        if not source_asset:
+            raise TemplateStoreError(
+                f"{name!r} has no source file recorded, so there is nothing to copy."
+            )
+        data = self.read_asset(kind, source_asset)
+
+        spec = {k: v for k, v in source.items() if k not in meta.get("clone_drops", ())}
+        spec["name"] = new_name
+        filename = f"{new_name}{Path(source_asset).suffix or meta['asset_ext']}"
+        stored = self.save_spec(kind, spec, asset_bytes=data, asset_filename=filename)
+        logger.info("[template-store] Cloned %s template %r -> %r (asset %s)",
+                    kind, name, new_name, filename)
+        return stored
 
     @staticmethod
     def dump_spec(spec: Dict[str, Any]) -> str:

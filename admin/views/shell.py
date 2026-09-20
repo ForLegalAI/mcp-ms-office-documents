@@ -59,16 +59,24 @@ def name_field(kind: str, value: str, is_new: bool):
     )
 
 
-def form_actions(ctx, kind: str):
-    """The Save / Preview / Cancel card that closes an edit form."""
+def form_actions(ctx, kind: str, name: str = ""):
+    """The Save / Preview / Cancel card that closes an edit form.
+
+    *name* is empty while creating: there is nothing saved to clone yet.
+    """
     d = descriptor(kind)
-    bar = c.action_bar(
+    controls = [
         Button("Save & make live", type="submit", cls="btn btn-primary"),
         Button(d.preview_label, type="submit",
                formaction=ctx.u(f"/{kind}/preview"),
                formtarget="_blank", cls="btn btn-secondary"),
-        A("Cancel", href=ctx.u("/"), cls="btn"),
-    )
+    ]
+    if name:
+        controls.append(A("Clone", href=ctx.u(f"/{kind}/{name}/clone"),
+                          cls="btn btn-secondary",
+                          title="Start a new template from this one"))
+    controls.append(A("Cancel", href=ctx.u("/"), cls="btn"))
+    bar = c.action_bar(*controls)
     body = [bar]
     if d.preview_hint:
         body.append(P(d.preview_hint, cls="muted"))
@@ -111,14 +119,24 @@ def save_failed_page(ctx, message: str):
     )
 
 
-def saved_page(ctx, kind: str, name: str, ok: bool):
-    """Confirmation after a save, worded for what the kind actually produces."""
+def saved_page(ctx, kind: str, name: str, ok: bool, enabled: bool = True):
+    """Confirmation after a save, worded for what the kind actually produces.
+
+    Three outcomes, not two. A template saved while disabled is not live, but
+    that is what was asked for — wording it as a failed registration sends the
+    admin to read logs about something that was never going to happen (#164).
+    """
     d = descriptor(kind)
-    msg = (d.save_ok if ok else d.save_warn).format(name=name)
+    if not enabled:
+        template, heading, tone = d.save_disabled, "✓ Saved", "ok"
+    elif ok:
+        template, heading, tone = d.save_ok, "✓ Saved", "ok"
+    else:
+        template, heading, tone = d.save_warn, "Saved with a warning", "warn"
     return page(
         ctx, "Saved",
-        H1("✓ Saved" if ok else "Saved with a warning"),
-        c.flash(msg, "ok" if ok else "warn"),
+        H1(heading),
+        c.flash(template.format(name=name), tone),
         c.action_bar(
             A("Back to all templates", href=ctx.u("/"), cls="btn btn-primary"),
             A("Keep editing", href=ctx.u(f"/{kind}/{name}/edit"), cls="btn btn-secondary"),
