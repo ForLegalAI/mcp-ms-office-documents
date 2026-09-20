@@ -216,7 +216,12 @@ the tool's own diagnostics use, so the page and `list_presentation_templates`
 cannot disagree about it — a test asserts they match, and another pins the
 example `docs/templates.md` prints. Like the role map beside it, it is read
 with no layout overrides applied: the overrides are on the form next to the
-report, so what is shown is what the template says on its own. The warnings
+report. That is not an approximation: `LayoutResolver` consults a configured
+`layouts:` mapping in `provides()` and `resolve()`, but `_by_role` — which is
+what `content_area()` reads — is built from `classify_layout()` alone, so an
+override does not move this rectangle at build time either. A test pins that,
+because if overrides ever start affecting it the card has to follow. The
+warnings
 cover what an admin can act on — no layout declaring one (the builder then
 uses a fixed band that knows nothing about this template), a rectangle
 covering essentially the whole slide, and an implausibly small one.

@@ -164,3 +164,39 @@ def test_a_zero_sized_slide_does_not_divide_by_zero(monkeypatch):
 
     assert analysis.content_area is None
     assert analysis.warnings, "it should say something rather than crash"
+
+
+def test_a_layout_override_does_not_move_the_content_area():
+    """Why reading it without overrides is exact, not approximate.
+
+    `LayoutResolver` applies a configured `layouts:` mapping in `provides()`
+    and `resolve()`, but `content_area()` reads `_by_role`, which is filled
+    from `classify_layout()` alone. So the card showing the un-overridden
+    rectangle is showing what the builder will actually use.
+
+    If this ever changes, the card must start taking the spec's overrides
+    into account — which is what this test is here to force.
+    """
+    from pptx_tools.layouts import LayoutResolver
+    from pptx_tools.placeholder_style import read_content_rect
+    from pptx_tools.templates import open_template
+
+    with tempfile.TemporaryDirectory() as tmp:
+        staged = Path(tmp) / "x.pptx"
+        staged.write_bytes(SHIPPED.read_bytes())
+        presentation = open_template(staged)
+
+        rects = {layout.name: read_content_rect(layout)
+                 for layout in presentation.slide_layouts}
+        plain = LayoutResolver(presentation, {}).content_area()
+
+        # A layout whose rectangle genuinely differs, so the assertion cannot
+        # pass just because two layouts happen to share a geometry.
+        other = next(name for name, rect in rects.items()
+                     if rect is not None and rect.as_tuple() != plain.as_tuple())
+        overridden = LayoutResolver(presentation, {"content": other}).content_area()
+
+    assert overridden.as_tuple() == plain.as_tuple(), (
+        f"overriding content->{other!r} moved the content area; the admin card "
+        "reads it without overrides and would now be misleading"
+    )

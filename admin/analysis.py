@@ -328,9 +328,12 @@ def analyze_pptx(data: bytes) -> PptxAnalysis:
 def _read_content_area(analysis: PptxAnalysis, presentation) -> None:
     """Record the template's content rectangle, and flag an unusable one.
 
-    Read with no layout overrides applied, like the role map above it: the
-    overrides are on the form beside this report, so what is shown is what
-    the template says on its own.
+    Built with no overrides, and that matches the builder exactly rather than
+    merely approximating it: ``LayoutResolver`` applies a configured
+    ``layouts:`` mapping in ``provides()`` and ``resolve()``, but ``_by_role``
+    — which is what ``content_area()`` reads — is filled from
+    ``classify_layout()`` alone. So a spec's overrides do not move this
+    rectangle at build time, and the card is not hiding a difference.
     """
     from pptx_tools.layouts import LayoutResolver
     from pptx_tools.templates import content_area_summary
