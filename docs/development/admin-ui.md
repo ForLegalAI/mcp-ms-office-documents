@@ -65,6 +65,19 @@ Three consequences worth knowing:
   into a `views.SectionFacts`, and the view renders that. A tool no page in
   the admin UI mentions is a tool nobody can check on.
 
+  It walks **both** halves of what the Templates tab lists — the managed `*.d`
+  specs *and* `unmanaged_master_specs()`. A hand-written master-YAML template
+  registers the same tool as a managed one, so counting only the managed half
+  made this page disagree with the Templates tab beside it and with the Server
+  section's "live Word tools", and left a live tool out of the table headed
+  "Tools the AI can call". It surfaced on the deployed instance, which has
+  exactly that shape: one master-YAML Word template and none managed here. The
+  `origin` on each `ToolFact` keeps the two distinguishable — `From master
+  YAML` rather than `From a template`, since one is editable here and the other
+  is not. `tests/test_admin_master_templates.py` registers the template the way
+  startup does: a fixture that only writes the YAML has nothing registered, and
+  "live 0" would be correct there.
+
 ### Section routes must not shadow the handlers below them
 
 A section slug occupies the same first path segment as a template kind, and

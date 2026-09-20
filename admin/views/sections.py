@@ -38,7 +38,8 @@ class ToolFact:
 
     name: str
     live: bool = True
-    #: "static" for a tool always present, "template" for one a spec created.
+    #: "static" for a tool always present, "template" for one this UI manages,
+    #: "master" for one declared in the hand-written master YAML.
     origin: str = "static"
     calls: int = 0
     errors: int = 0
@@ -111,11 +112,24 @@ def section_page(ctx, s: Section, tab: str, *content,
 # Overview
 # ---------------------------------------------------------------------------
 
+#: How each origin reads in the Overview's tool table.
+_ORIGIN_LABELS = {
+    "template": "From a template",
+    "master": "From master YAML",
+    "static": "Always available",
+}
+
+
 def _origin_badge(t: ToolFact):
-    """Where a tool comes from — a classification, so no status dot."""
-    if t.origin == "template":
-        return c.badge("From a template", "off", plain=True)
-    return c.badge("Always available", "off", plain=True)
+    """Where a tool comes from — a classification, so no status dot.
+
+    A master-YAML template is called out rather than folded in with the rest:
+    it is live like any other, but it is not editable here, so knowing which
+    one it is saves a trip to the Templates tab to find out why it has no
+    Edit button.
+    """
+    label = _ORIGIN_LABELS.get(t.origin, t.origin)
+    return c.badge(label, "off", plain=True)
 
 
 def _tool_row(t: ToolFact):
