@@ -210,6 +210,23 @@ names every such file (both the `custom_` and the `default_` spelling of all
 five slots); adopting a master entry that points at one gives the template a
 private copy under its own name instead.
 
+**Preview values travel in a second POST, carrying the spec with them.** The
+values form is reached from the edit form, so it has to preview what is on
+screen — unsaved edits included — not what is on disk. Rather than re-emit
+every field `build_spec()` reads and drift from it, the rebuilt spec rides
+along as JSON in `forms.CARRIED_SPEC_FIELD`, and `carried_spec()` ignores
+anything that is not a named mapping. The values themselves are prefixed
+(`preview.VALUE_PREFIX`) so they cannot collide with the spec fields, and
+their absence is what means "generate samples" — which is what keeps the
+plain Preview button one click.
+
+A sampled boolean is subtler than it looks: `sample_values()` uses the
+declared default and only falls back to True when there is none. An
+undeclared or required flag therefore always previews on, and an *optional*
+one always previews off, because `build_spec()` writes `default: false` for a
+blank default. Both are pinned by tests, because either way the sample is a
+guess and the point of #168 is not to have to guess.
+
 **Adoption records no provenance, so the copy is keyed by name and nothing
 else.** Two consequences follow from `gather_specs()` replacing the whole spec
 rather than merging fields, and both are pinned by tests so a change to either
@@ -294,4 +311,5 @@ longer deletable.
 | `tests/test_admin_source_files.py` | the reference map, and that only an orphan can be deleted |
 | `tests/test_admin_clone.py` | what a clone carries, what it drops, and that the asset is copied |
 | `tests/test_admin_master_templates.py` | inspecting a master-YAML entry, and adopting it without touching the file |
+| `tests/test_admin_preview_values.py` | previewing with your own values: Markdown through a placeholder, conditionals off |
 | `tests/test_admin_config.py` | `ADMIN_*` settings |
