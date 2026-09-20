@@ -208,6 +208,15 @@ decides that, the same call that decides it on save — landing a live tool
 from a template someone had deliberately taken out of service, with a
 description that has not been edited yet, is the wrong default.
 
+**Saving has three outcomes, not two.** Live, deliberately off, and genuinely
+failed to register. `sync()` answers "does the server match the spec now?", so
+taking a disabled template off succeeds; it used to return `unregister()`'s own
+bool, which is `False` whenever there was no live tool to remove — every
+disabled save and every clone of a disabled template — and the page then told
+the admin to go and read the logs about a registration that was never meant to
+happen. `saved_page()` takes the enabled state and picks between `save_ok`,
+`save_disabled` and `save_warn` rather than inferring it from one boolean.
+
 **An orphan is defined by what does *not* reference a file, so the reference
 map has to be complete.** `assets.reference_map()` counts three things, and
 the page offers to delete anything it misses: managed specs, master-YAML

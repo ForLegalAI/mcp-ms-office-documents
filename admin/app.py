@@ -127,7 +127,13 @@ class AdminContext:
         """
         if is_enabled(spec):
             return self.register(kind, spec)
-        return self.unregister(kind, spec.get("name"))
+        # Taking it off is the outcome asked for, so this succeeded. Returning
+        # unregister()'s own bool reported failure whenever there was no live
+        # tool to remove — which is every disabled save and every clone of a
+        # disabled template — and the page then told the admin to go and read
+        # the logs about a registration that was never meant to happen.
+        self.unregister(kind, spec.get("name"))
+        return True
 
     def live_names(self, kind: str) -> List[str]:
         if kind == KIND_PPTX:
@@ -604,7 +610,10 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         # Land on the copy's edit page, not the index: the description almost
         # always needs changing immediately, and the point is to keep going.
         note = f"Copied from {name}. Change what differs, then save."
-        if not ok:
+        if not is_enabled(copy):
+            note += (" It is disabled, like the template it was copied from — "
+                     "enable it from the template list when you are ready.")
+        elif not ok:
             note += " (It is not live yet — save to register it.)"
         return views.edit_page(ctx, kind, new_name, copy,
                                ctx.analyze_asset(kind, copy),
@@ -720,7 +729,8 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             # failure to report, not an unhandled 500.
             return views.save_failed_page(ctx, str(e))
         ok = ctx.sync(kind, spec)
-        return views.saved_page(ctx, kind, spec["name"], ok)
+        return views.saved_page(ctx, kind, spec["name"], ok,
+                                enabled=is_enabled(spec))
 
     @rt("/{kind}/preview", methods=["post"])
     async def preview(req, sess, kind: str):

@@ -272,6 +272,27 @@ async def test_cloning_a_disabled_template_gives_a_disabled_clone(admin_client):
     assert "prague_letter" not in await _tool_names(mcp)
 
 
+def test_a_disabled_clone_says_so_rather_than_warning_about_registration(admin_client):
+    """It is off by design, and saving will not turn it on either.
+
+    `sync()` used to return `unregister()`'s own bool, which is False whenever
+    there was no live tool to remove — so a deliberately disabled clone was
+    reported as a registration that had failed, sending the admin to read logs
+    about something that was never going to happen.
+    """
+    client, _mcp, _custom = admin_client
+    _letter(client)
+    _post(client, "/admin/docx/formal_letter/enabled", data={"enabled": ""})
+
+    r = _post(client, "/admin/docx/formal_letter/clone",
+              data={"name": "prague_letter"})
+
+    assert "not live yet" not in r.text
+    # The exact sentence: the word "disabled" alone is always present, because
+    # the inlined theme CSS carries `--ctl-disabled-bg` and `input[disabled]`.
+    assert "It is disabled, like the template it was copied from" in r.text
+
+
 # ---------------------------------------------------------------------------
 # Refusals
 # ---------------------------------------------------------------------------

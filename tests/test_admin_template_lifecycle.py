@@ -664,3 +664,64 @@ def test_a_failed_rename_reports_instead_of_500ing(admin_client, monkeypatch):
     })
     assert r.status_code == 200
     assert "permission denied" in r.text
+
+
+def test_saving_a_disabled_template_is_not_reported_as_a_failure(admin_client):
+    """Staying off is the outcome asked for, not a registration that failed.
+
+    The save page has three states, not two: live, deliberately off, and
+    genuinely failed to register. Collapsing the middle one into the last
+    told the admin to check the logs about a tool that was never meant to be
+    registered.
+    """
+    client, _mcp, _cfg = admin_client
+    name = _saved(client, "quietly_off")
+    _post(client, f"/admin/docx/{name}/enabled", data={"enabled": ""})
+
+    r = _post(client, "/admin/docx/save", data={
+        "kind": "docx", "asset_filename": f"{name}.docx", "name": name,
+        "original_name": name, "title": "T", "description": "edited",
+        "arg_name": ["who"], "arg_type": ["string"], "arg_required": ["true"],
+        "arg_default": [""], "arg_desc": [""],
+    })
+
+    assert "could not be registered" not in r.text
+    assert "check the logs" not in r.text
+    assert "Saved with a warning" not in r.text
+    assert "stays disabled" in r.text
+
+
+def test_saving_an_enabled_template_still_says_it_is_live(admin_client):
+    """The fix must not make every save read as if it were disabled."""
+    client, _mcp, _cfg = admin_client
+    name = _saved(client, "still_live")
+
+    r = _post(client, "/admin/docx/save", data={
+        "kind": "docx", "asset_filename": f"{name}.docx", "name": name,
+        "original_name": name, "title": "T", "description": "edited",
+        "arg_name": ["who"], "arg_type": ["string"], "arg_required": ["true"],
+        "arg_default": [""], "arg_desc": [""],
+    })
+
+    assert "is now live" in r.text
+    assert "stays disabled" not in r.text
+
+
+def test_sync_reports_success_when_it_takes_a_template_off(admin_client):
+    """`sync()` answers "does the server match the spec now?", not "did I
+    remove a live tool?".
+
+    Returning `unregister()`'s own bool meant False whenever there was
+    nothing registered to remove — which is every save of a disabled
+    template — and callers read that as a failure.
+    """
+    from admin.app import AdminContext
+    from config import Config as Cfg
+    from fastmcp import FastMCP
+
+    ctx = AdminContext(FastMCP("sync-probe"), Cfg.from_env())
+    spec = {"name": "never_registered", "description": "d",
+            "docx_path": "x.docx", "args": [], "enabled": False}
+
+    assert ctx.sync("docx", spec) is True, \
+        "taking a template off is the outcome asked for, so it succeeded"

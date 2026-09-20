@@ -119,14 +119,24 @@ def save_failed_page(ctx, message: str):
     )
 
 
-def saved_page(ctx, kind: str, name: str, ok: bool):
-    """Confirmation after a save, worded for what the kind actually produces."""
+def saved_page(ctx, kind: str, name: str, ok: bool, enabled: bool = True):
+    """Confirmation after a save, worded for what the kind actually produces.
+
+    Three outcomes, not two. A template saved while disabled is not live, but
+    that is what was asked for — wording it as a failed registration sends the
+    admin to read logs about something that was never going to happen (#164).
+    """
     d = descriptor(kind)
-    msg = (d.save_ok if ok else d.save_warn).format(name=name)
+    if not enabled:
+        template, heading, tone = d.save_disabled, "✓ Saved", "ok"
+    elif ok:
+        template, heading, tone = d.save_ok, "✓ Saved", "ok"
+    else:
+        template, heading, tone = d.save_warn, "Saved with a warning", "warn"
     return page(
         ctx, "Saved",
-        H1("✓ Saved" if ok else "Saved with a warning"),
-        c.flash(msg, "ok" if ok else "warn"),
+        H1(heading),
+        c.flash(template.format(name=name), tone),
         c.action_bar(
             A("Back to all templates", href=ctx.u("/"), cls="btn btn-primary"),
             A("Keep editing", href=ctx.u(f"/{kind}/{name}/edit"), cls="btn btn-secondary"),
