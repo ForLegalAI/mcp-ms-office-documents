@@ -52,11 +52,22 @@ ROLE_COMPARISON = "comparison"
 ROLE_IMAGE_TEXT = "image_text"
 ROLE_TITLE_ONLY = "title_only"
 ROLE_BLANK = "blank"
+ROLE_CLOSING = "closing"
 
 ROLES = (
     ROLE_TITLE, ROLE_SECTION, ROLE_CONTENT, ROLE_TWO_COLUMN,
     ROLE_COMPARISON, ROLE_IMAGE_TEXT, ROLE_TITLE_ONLY, ROLE_BLANK,
+    ROLE_CLOSING,
 )
+
+# Roles no placeholder signature can detect. A contact or closing slide is a
+# designer's layout, not a shape — the template in #194 has a "kontakt" layout
+# with a QR code, a photo and the firm's details, which classifies as whatever
+# placeholders happen to be on it. Naming it a role is what lets a template map
+# it in the registry's `layouts:` block, or a slide name it directly; with
+# neither, the role standing in here is used, and that is the documented
+# default rather than a substitution, so it is not warned about.
+CONFIGURED_ROLE_DEFAULT = {ROLE_CLOSING: ROLE_TITLE}
 
 # Where to read a title's position and styling from when the layout a slide
 # landed on has no title placeholder of its own (#118). Ordinary body layouts
@@ -93,6 +104,7 @@ ROLE_ALTERNATIVES = {
     ROLE_IMAGE_TEXT: (ROLE_CONTENT, ROLE_TITLE_ONLY),
     ROLE_TITLE_ONLY: (ROLE_CONTENT, ROLE_BLANK),
     ROLE_BLANK: (ROLE_TITLE_ONLY,),
+    ROLE_CLOSING: (ROLE_TITLE, ROLE_SECTION, ROLE_TITLE_ONLY),
 }
 
 # Positional fallbacks, i.e. what the builder assumed before this module.
@@ -117,7 +129,7 @@ SLIDE_TYPE_ROLE = {
     "kpi": ROLE_TITLE_ONLY,
     "timeline": ROLE_TITLE_ONLY,
     "agenda": ROLE_CONTENT,
-    "closing": ROLE_TITLE,
+    "closing": ROLE_CLOSING,
     "section": ROLE_SECTION,
     "content": ROLE_CONTENT,
     "table": ROLE_CONTENT,
@@ -346,6 +358,11 @@ class LayoutResolver:
                 "which this file does not contain"
             ))
 
+        default = CONFIGURED_ROLE_DEFAULT.get(role)
+        if default is not None and role not in self._by_role:
+            # Its documented default, not a fallback: no warning.
+            return self._resolve_detected(default)
+
         return self._resolve_detected(role)
 
     def _resolve_detected(self, role: str, extra: Optional[str] = None):
@@ -467,6 +484,10 @@ class LayoutResolver:
     def missing_roles(self) -> List[str]:
         """Roles the slide types actually use that this template does not provide."""
         used = set(SLIDE_TYPE_ROLE.values()) | {ROLE_TWO_COLUMN, ROLE_COMPARISON}
+        # A configuration-only role is never detected, so it is never missing:
+        # reporting it would tell every template it lacks something it cannot
+        # have from its placeholders alone.
+        used -= set(CONFIGURED_ROLE_DEFAULT)
         return sorted(role for role in used if role not in self._by_role)
 
     def layouts_without_footer(self) -> List[str]:

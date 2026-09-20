@@ -83,13 +83,28 @@ German template classifies from the same rules as an English one. It recognises
 since they share a signature with their horizontal counterparts; name one
 explicitly if you want it.
 
-Only add a `layouts:` mapping when detection picks the wrong one:
+There is a ninth role, `closing`, that detection never assigns. A contact or
+thank-you slide is a designer's layout — a QR code, a photo, the firm's
+details — and no arrangement of placeholders identifies one, so map it by name
+if your template has one. Without a mapping, `closing` slides use the `title`
+layout, which is the documented default rather than a fallback, so nothing is
+reported about it.
+
+Only add a `layouts:` mapping when detection picks the wrong one, or for
+`closing`, which has no detection to get right:
 
 ```yaml
     layouts:
       content: "Brand Body"
       section: "Brand Divider"
+      closing: "kontakt"
 ```
+
+When a role you mapped is missing from the file, or detection finds none, the
+tool tries a near neighbour that your template does have before falling back by
+position — `comparison` becomes `two_column` and then `content`, for instance —
+so a slide degrades into a layout that can still hold its text instead of one
+that cannot. Anything approximate is returned in `warnings`.
 
 Every registered template is opened once at startup and its coverage logged, so
 a template missing a layout the tool needs shows up then rather than as a

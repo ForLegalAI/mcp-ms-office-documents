@@ -278,7 +278,7 @@ def analyze_pptx(data: bytes) -> PptxAnalysis:
     """
     from pptx.util import Emu
 
-    from pptx_tools.layouts import ROLES, classify_layout
+    from pptx_tools.layouts import CONFIGURED_ROLE_DEFAULT, ROLES, classify_layout
     from pptx_tools.templates import aspect_of, open_template
 
     analysis = PptxAnalysis()
@@ -317,7 +317,13 @@ def analyze_pptx(data: bytes) -> PptxAnalysis:
                 seen_roles[role] = layout.name
 
         analysis.role_map = seen_roles
-        analysis.missing_roles = [role for role in ROLES if role not in seen_roles]
+        # A configuration-only role has no signature to detect, so it is never
+        # "missing": the resolver falls back to its documented default without
+        # a warning, and reporting it would tell every template it lacks
+        # something no placeholder arrangement could supply.
+        analysis.missing_roles = [role for role in ROLES
+                                  if role not in seen_roles
+                                  and role not in CONFIGURED_ROLE_DEFAULT]
         analysis.theme_fonts, analysis.theme_colors = _read_theme(presentation)
         _read_content_area(analysis, presentation)
 

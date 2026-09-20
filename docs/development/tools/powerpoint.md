@@ -167,7 +167,7 @@ schema's range by `_coerce_font_size()` because it bypasses the schema.
 
 `LayoutResolver` never indexes `slide_layouts` by position. Each slide type
 asks for a **role** (`title`, `section`, `content`, `two_column`,
-`comparison`, `image_text`, `title_only`, `blank`); `role_for_slide()` picks
+`comparison`, `image_text`, `title_only`, `blank`, `closing`); `role_for_slide()` picks
 `comparison` over `two_column` when either column has a heading, `blank`
 for an untitled quote so no empty title placeholder is left behind, and
 `image_text` for an image slide when `resolver.provides()` says the template
@@ -195,6 +195,15 @@ layouts in one template may share a name. Together with `coverage()` and
 `missing_roles()` this is the answer to "why did my slide come out on that
 layout"
 ([#121](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/121)).
+
+`closing` is in `CONFIGURED_ROLE_DEFAULT`: no signature detects it, because a
+contact or thank-you slide is a designer's layout rather than a shape — the
+template in #194 has a "kontakt" layout carrying a QR code, a photo and the
+firm's details. Naming it a role is what lets a template map it in the
+registry's `layouts:` block; unmapped, it resolves to `title` **without** a
+warning, since that is its documented default and not a substitution.
+`missing_roles()` and the admin's analysis both exclude it, or every template
+would be reported as lacking something no placeholder arrangement can supply.
 
 `classify_layout()` reads placeholder *types*, ignoring date, footer and
 slide-number chrome, so it is language-independent. It is deliberately

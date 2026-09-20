@@ -294,3 +294,35 @@ def test_a_template_with_neither_column_layout_merges_rather_than_drops(tmp_path
     for word in ("Vy dodáváte", "Odbornost", "AI dodává", "Rychlost"):
         assert word in rendered
     assert W.COLUMN_DROPPED not in _codes(warnings)
+
+
+# ---------------------------------------------------------------------------
+# the closing role: a contact layout no signature can detect
+# ---------------------------------------------------------------------------
+
+def test_closing_defaults_to_the_title_layout_without_complaining():
+    slide, warnings = _build(
+        {"type": "closing", "title": "Thanks", "contact": ["a@b.c"]}, _plain())
+    assert slide.slide_layout.name == "Úvodní snímek"
+    assert _codes(warnings) == []
+
+
+def test_a_template_can_map_closing_to_its_own_contact_layout(tmp_path):
+    """The point of the role: no placeholder arrangement says "contact slide"."""
+    spec = TemplateSpec(name="t", path=BASE_16_9, description="", is_default=True,
+                        layouts={"closing": "Záhlaví oddílu"}, defaults={},
+                        strip_slides=True, aspect="16:9")
+    slide, warnings = _build(
+        {"type": "closing", "title": "Thanks", "contact": ["a@b.c"]}, spec)
+
+    assert slide.slide_layout.name == "Záhlaví oddílu"
+    assert _codes(warnings) == []
+    rendered = " ".join(s.text_frame.text for s in slide.shapes if s.has_text_frame)
+    assert "Thanks" in rendered and "a@b.c" in rendered
+
+
+def test_closing_is_not_reported_as_a_missing_role():
+    from pptx_tools.layouts import LayoutResolver
+
+    resolver = LayoutResolver(PptxReader(str(BASE_16_9)))
+    assert "closing" not in resolver.missing_roles()
