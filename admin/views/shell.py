@@ -59,16 +59,24 @@ def name_field(kind: str, value: str, is_new: bool):
     )
 
 
-def form_actions(ctx, kind: str):
-    """The Save / Preview / Cancel card that closes an edit form."""
+def form_actions(ctx, kind: str, name: str = ""):
+    """The Save / Preview / Cancel card that closes an edit form.
+
+    *name* is empty while creating: there is nothing saved to clone yet.
+    """
     d = descriptor(kind)
-    bar = c.action_bar(
+    controls = [
         Button("Save & make live", type="submit", cls="btn btn-primary"),
         Button(d.preview_label, type="submit",
                formaction=ctx.u(f"/{kind}/preview"),
                formtarget="_blank", cls="btn btn-secondary"),
-        A("Cancel", href=ctx.u("/"), cls="btn"),
-    )
+    ]
+    if name:
+        controls.append(A("Clone", href=ctx.u(f"/{kind}/{name}/clone"),
+                          cls="btn btn-secondary",
+                          title="Start a new template from this one"))
+    controls.append(A("Cancel", href=ctx.u("/"), cls="btn"))
+    bar = c.action_bar(*controls)
     body = [bar]
     if d.preview_hint:
         body.append(P(d.preview_hint, cls="muted"))

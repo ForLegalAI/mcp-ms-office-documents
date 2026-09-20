@@ -571,6 +571,45 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         return views.edit_page(ctx, kind, name, spec, ctx.analyze_asset(kind, spec),
                                csrf=auth.ensure_csrf(sess))
 
+    @rt("/{kind}/{name}/clone", methods=["get", "post"])
+    async def clone(req, sess, kind: str, name: str):
+        """Start a new template from an existing one (#164).
+
+        "Same as the formal letter, but for the Prague office" used to mean
+        creating one from scratch and re-typing every argument name, type,
+        default and description by hand.
+        """
+        if not is_kind(kind):
+            return _home()
+        spec = ctx.store.get_spec(kind, name)
+        if spec is None:
+            return views.not_found_page(ctx, name)
+        csrf = auth.ensure_csrf(sess)
+
+        if req.method != "POST":
+            return views.clone_page(ctx, kind, name, spec, csrf=csrf)
+
+        form = await req.form()
+        bad = _csrf_guard(sess, form)
+        if bad:
+            return bad
+        try:
+            copy = ctx.store.clone_spec(kind, name, (form.get("name") or "").strip())
+        except (TemplateStoreError, OSError) as e:
+            return views.clone_page(ctx, kind, name, spec, csrf=csrf, error=str(e))
+
+        ok = ctx.sync(kind, copy)
+        new_name = copy["name"]
+        logger.info("[admin] Cloned %s template %r -> %r", kind, name, new_name)
+        # Land on the copy's edit page, not the index: the description almost
+        # always needs changing immediately, and the point is to keep going.
+        note = f"Copied from {name}. Change what differs, then save."
+        if not ok:
+            note += " (It is not live yet — save to register it.)"
+        return views.edit_page(ctx, kind, new_name, copy,
+                               ctx.analyze_asset(kind, copy),
+                               csrf=csrf, message=note)
+
     @rt("/{kind}/{name}/download")
     def download(kind: str, name: str):
         """Serve the source file a template is actually using (#162).

@@ -24,7 +24,8 @@ from admin.views.status import (
     fmt_ts, fmt_uptime, refresh_seconds, status_page,
 )
 from admin.views.templates import (
-    analysis_report, arg_row, configure_page, delete_page, edit_form, edit_page,
+    analysis_report, arg_row, clone_page, configure_page, delete_page,
+    edit_form, edit_page,
     index_page,
     builtin_style_names, new_page, pptx_analysis_report, spec_yaml_block,
     style_mapping_block, template_table,
@@ -32,7 +33,8 @@ from admin.views.templates import (
 
 __all__ = [
     "BRAND", "assets_page", "base_templates_page", "analysis_report", "arg_row",
-    "configure_page", "delete_asset_page", "delete_page", "fmt_size",
+    "clone_page", "configure_page", "delete_asset_page", "delete_page",
+    "fmt_size",
     "edit_form",
     "edit_page", "fmt_ts", "fmt_uptime", "form_actions", "index_page",
     "login_page", "logout_page", "name_field", "new_page", "not_found_page",

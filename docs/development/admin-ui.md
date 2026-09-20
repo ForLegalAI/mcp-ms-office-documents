@@ -149,7 +149,8 @@ will be wrong in one of the two themes.
 Two tables, no new branches:
 
 1. `admin/store._KIND_META` — spec subdirectory, accepted extensions, the spec
-   key naming the asset.
+   key naming the asset, and `clone_drops`: the keys a clone must not inherit
+   (omit it when there are none).
 2. `admin/kinds.DESCRIPTORS` — label, icon, `has_args`, and the wording for the
    name field, the table's detail column, the post-upload flash and the save
    confirmation.
@@ -191,6 +192,21 @@ read as an ordinary edit: it overwrote the occupant in silence and inherited
 its `enabled` flag, so a brand-new template could arrive disabled. A create
 that lands on an occupied name is now refused with the same message a rename
 gets.
+
+**A clone copies the asset; it never shares it.** Two specs pointing at one
+file would make "Replace document" on either one silently change the other,
+and nothing in the UI would report it — the duplication is the cheaper
+mistake. `store.clone_spec()` owns that, along with the collision check and
+keeping the source's extension (a clone of a `.potx` stays a `.potx`). Keys a
+clone must not inherit are declared per kind as `clone_drops` in
+`store._KIND_META`, so a new kind states its own rather than a branch
+appearing in the route: PowerPoint drops `default`, because two defaults is a
+state the registry resolves silently by picking one.
+
+A clone of a disabled template is itself disabled. `AdminContext.sync()`
+decides that, the same call that decides it on save — landing a live tool
+from a template someone had deliberately taken out of service, with a
+description that has not been edited yet, is the wrong default.
 
 **An orphan is defined by what does *not* reference a file, so the reference
 map has to be complete.** `assets.reference_map()` counts three things, and
@@ -234,4 +250,5 @@ longer deletable.
 | `tests/test_admin_log_view.py` | the log view's level, source and search filters |
 | `tests/test_admin_template_lifecycle.py` | disabling, enabling and renaming a template |
 | `tests/test_admin_source_files.py` | the reference map, and that only an orphan can be deleted |
+| `tests/test_admin_clone.py` | what a clone carries, what it drops, and that the asset is copied |
 | `tests/test_admin_config.py` | `ADMIN_*` settings |
