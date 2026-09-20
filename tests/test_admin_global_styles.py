@@ -32,6 +32,10 @@ import admin.store as store_mod
 import metrics
 import template_utils as tu
 from admin.store import TemplateStoreError, validate_name
+from docx_tools.dynamic_docx_tools import (
+    register_docx_template_tools_from_yaml, registered_docx_template_names,
+    unregister_docx_template,
+)
 from admin.views.settings import UNSET
 from config import Config
 from template_registry import (
@@ -307,12 +311,16 @@ def admin_client(tmp_path, monkeypatch):
     from fastmcp import FastMCP
     from admin.app import build_combined_app
 
-    client = TestClient(build_combined_app(FastMCP("test-styles"), Config.from_env()))
+    mcp = FastMCP("test-styles")
+    client = TestClient(build_combined_app(mcp, Config.from_env()))
+    client.mcp = mcp          # the routes' AdminContext registers against this one
     metrics.reset()
     client.__enter__()
     client.post("/admin/login", data={"password": "pw"})
     yield client, custom, cfg
     client.__exit__(None, None, None)
+    for name in list(registered_docx_template_names()):
+        unregister_docx_template(mcp, name)
     metrics.reset()
 
 
@@ -582,6 +590,31 @@ def test_a_save_applies_even_when_the_files_look_unchanged(admin_client, monkeyp
     _post(client, "/admin/styles/save", {"style_heading_1": "Brandy"})
 
     assert sm.load_global_style_map().heading_style(1) == "Brandy"
+
+
+def test_a_template_lost_to_the_re_registration_is_reported(admin_client):
+    """Saving a style must not take a tool off the server in silence.
+
+    `register_docx_template()` removes the existing tool *before* rebuilding
+    it, and the loop logs a failure and moves on — so a template whose source
+    file went missing since startup is gone, and from the admin's side the
+    only thing that happened was saving a style mapping.
+    """
+    client, custom, cfg = admin_client
+    (custom / "letter.docx").write_bytes(_docx_bytes())
+    _write(cfg / SPEC_DIR / "letter.yaml",
+           {"name": "letter", "docx_path": "letter.docx", "args": []})
+    register_docx_template_tools_from_yaml(client.mcp, cfg / MASTER)
+    assert "letter" in registered_docx_template_names()
+
+    (custom / "letter.docx").unlink()   # deleted on the volume since startup
+
+    r = _post(client, "/admin/styles/save", {"style_heading_1": "Heading 2"})
+
+    assert "letter" not in registered_docx_template_names(), \
+        "it really is off the server, not merely stale"
+    assert "letter" in r.text and "no longer registered" in r.text
+    assert 'class="flash flash-warn"' in r.text, "a lost tool is not a success"
 
 
 def test_the_page_and_the_renderer_agree_on_what_is_in_force(admin_client):

@@ -35,7 +35,7 @@ import hashlib
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import metrics
 
@@ -111,8 +111,8 @@ class AdminContext:
         """
         return read_master_yaml(self.docx_master_yaml).get("style_mapping") or {}
 
-    def resync_docx_style_map(self) -> int:
-        """Re-register every live Word template tool; returns how many are live.
+    def resync_docx_style_map(self) -> Tuple[int, List[str]]:
+        """Re-register every live Word template tool for a changed global map.
 
         The global mapping is *baked into each tool at registration time* —
         ``_register_single_template`` resolves ``build_style_map(global,
@@ -121,6 +121,14 @@ class AdminContext:
         old one, and only the static Word tool (which resolves per document)
         would follow the change. That split is precisely the kind of thing an
         admin would never think to suspect.
+
+        Returns ``(live, lost)``. ``lost`` is why the before/after comparison
+        is here at all: ``register_docx_template()`` removes the existing tool
+        *before* rebuilding it, so a template whose source file has gone
+        missing since startup does not merely fail to re-register — it is
+        taken off the server, and the loop that registers them logs the
+        failure and moves on. The caller has to be able to say so, because
+        from the admin's side the only thing that happened was saving a style.
         """
         from docx_tools.dynamic_docx_tools import (
             register_docx_template_tools_from_yaml, registered_docx_template_names,
@@ -132,8 +140,14 @@ class AdminContext:
         # filesystem timestamp tick. A write we made ourselves we simply know
         # about, so say so rather than hope the fingerprint moved.
         invalidate_global_style_map()
+        before = set(registered_docx_template_names())
         register_docx_template_tools_from_yaml(self.mcp, self.docx_master_yaml)
-        return len(registered_docx_template_names())
+        after = registered_docx_template_names()
+        lost = sorted(before - set(after))
+        if lost:
+            logger.error("[admin] Re-registration dropped Word template(s): %s",
+                         ", ".join(lost))
+        return len(after), lost
 
     # -- live MCP tool registration ----------------------------------------
 
@@ -649,6 +663,22 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
     # is_kind() instead of reaching this handler. Starlette matches in
     # registration order; tests/test_admin_global_styles.py pins it.
 
+    def _resync_message(ok: str, lost):
+        """The flash for a save, worded for what the re-registration did.
+
+        A template that could not be rebuilt is *gone*, not merely stale, and
+        the admin was only saving a style — so that outcome must not arrive as
+        a success message with a smaller number in it.
+        """
+        if not lost:
+            return ok, "ok"
+        return (
+            ok + " But " + ", ".join(lost) + " could not be rebuilt and is no "
+            "longer registered — its source file is most likely missing. Check "
+            "Source files, then re-upload it on the template's page.",
+            "warn",
+        )
+
     def _styles_page(sess, message=None, message_kind="ok"):
         return views.global_styles_page(
             ctx, csrf=auth.ensure_csrf(sess),
@@ -694,12 +724,11 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         except (TemplateStoreError, OSError) as e:
             logger.exception("[admin] Could not save the global style mapping")
             return _styles_page(sess, f"Could not save: {e}", "err")
-        live = ctx.resync_docx_style_map()
+        live, lost = ctx.resync_docx_style_map()
         logger.info("[admin] Global style mapping set to %r", mapping)
-        return _styles_page(
-            sess,
+        return _styles_page(sess, *_resync_message(
             f"Saved. {len(mapping)} key(s) overridden; {live} Word template "
-            "tool(s) re-registered on the new mapping.")
+            "tool(s) re-registered on the new mapping.", lost))
 
     @rt("/styles/revert", methods=["post"])
     async def revert_global_styles(req, sess):
@@ -712,14 +741,13 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         except (TemplateStoreError, OSError) as e:
             logger.exception("[admin] Could not clear the global style mapping")
             return _styles_page(sess, f"Could not revert: {e}", "err")
-        live = ctx.resync_docx_style_map()
+        live, lost = ctx.resync_docx_style_map()
         if not removed:
             return _styles_page(sess, "There was nothing stored to revert.", "info")
         logger.info("[admin] Global style mapping reverted to the master YAML")
-        return _styles_page(
-            sess,
+        return _styles_page(sess, *_resync_message(
             "Reverted to config/docx_templates.yaml. "
-            f"{live} Word template tool(s) re-registered.")
+            f"{live} Word template tool(s) re-registered.", lost))
 
     @rt("/new/{kind}")
     def new(sess, kind: str):

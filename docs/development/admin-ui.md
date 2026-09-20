@@ -343,6 +343,15 @@ itself has to get right:
 - **Saving re-registers every Word template tool.** The mapping is baked into
   each tool at registration time, so a save would otherwise move the static
   tool and leave the template tools on the old mapping.
+- **A template lost to that re-registration is named, as a warning.**
+  `register_docx_template()` removes the existing tool *before* rebuilding it,
+  so a template whose source file has gone missing since startup is not merely
+  stale — it is off the server, and the registration loop logs it and moves
+  on. `resync_docx_style_map()` therefore returns `(live, lost)` from a
+  before/after comparison of the live names. From the admin's side the only
+  thing that happened was saving a style, so this must not arrive as a success
+  message with a smaller number in it. The remove-before-rebuild ordering
+  itself is [#192](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/192).
 
 Route ordering matters here as it does for `/base` and `/files`: `/styles/save`
 also fits `/{kind}/save`, so the three `/styles` routes are registered before
