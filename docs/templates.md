@@ -166,6 +166,7 @@ templates:
   - name: formal_letter
     description: Generate a formal business letter
     docx_path: letter_template.docx  # must be in custom_templates/ or default_templates/
+    # enabled: false                 # optional; turns the tool off without deleting it
     annotations:
       title: Formal Letter Generator
     args:

@@ -38,22 +38,25 @@ def not_found_page(ctx, name: str):
 
 
 def name_field(kind: str, value: str, is_new: bool):
-    """The template/tool name field.
+    """The template/tool name field, editable in both states.
 
-    Editable only while the template is being created: the name is the MCP tool
-    name and the spec's filename stem, so changing it later is a rename, which
-    the UI does not support yet (#165). When it is fixed the input is disabled
-    for display and the value travels in a hidden field instead.
+    The name is the MCP tool name and the spec's filename stem, so changing it
+    on an existing template is a rename: the save route writes the spec under
+    the new name, unregisters the old tool and registers the new one. It used
+    to be disabled here, which made a typo in a tool name permanent short of
+    deleting the template and re-entering everything (#165).
     """
     d = descriptor(kind)
-    if is_new:
-        return c.field(
-            d.name_label,
-            Input(name="name", value=value, required=True,
-                  placeholder=d.name_placeholder),
-            hint=d.name_hint,
-        )
-    return c.field(d.name_label, Input(value=value, disabled=True))
+    hint = d.name_hint if is_new else (
+        "Renaming changes the tool name the AI calls. The source file keeps "
+        "its own filename."
+    )
+    return c.field(
+        d.name_label,
+        Input(name="name", value=value, required=True,
+              placeholder=d.name_placeholder),
+        hint=hint,
+    )
 
 
 def form_actions(ctx, kind: str):

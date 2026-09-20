@@ -134,7 +134,13 @@ documented as a second spelling.
 `templates.load_specs()` merges `config/pptx_templates.yaml` with
 `config/pptx_templates.d/` through `template_registry.gather_specs()`. With
 no registry at all it synthesises two specs named `16_9` and `4_3` from the
-historical filename slots, so an existing deployment is unchanged. The cache
+historical filename slots, so an existing deployment is unchanged. That
+fallback covers "nothing readable is configured" — a missing config, or
+entries too malformed to build a spec from — but deliberately *not* every
+template being disabled (`enabled: false`), which is a choice someone made:
+falling back there would hand back the very templates the admin just took
+away, under the built-in names, and the deck would still build off the wrong
+design. The cache
 key is a fingerprint of every watched file's modification time, including
 each template file, so overwriting a template or dropping in a new one takes
 effect without a restart. The aspect ratio is read from the file, never from

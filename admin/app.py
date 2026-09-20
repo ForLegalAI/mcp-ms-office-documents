@@ -56,7 +56,7 @@ from admin.preview import (
 from admin.store import (
     FileTemplateStore, KIND_DOCX, KIND_PPTX, TemplateStoreError, validate_name,
 )
-from template_registry import gather_specs
+from template_registry import gather_specs, is_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +116,17 @@ class AdminContext:
             return unregister_docx_template(self.mcp, name)
         from email_tools.dynamic_email_tools import unregister_email_template
         return unregister_email_template(self.mcp, name)
+
+    def sync(self, kind: str, spec: Dict[str, Any]) -> bool:
+        """Bring the live server in line with *spec*'s ``enabled`` flag.
+
+        The one place that decides whether saving a template registers it or
+        takes it off: a disabled spec must not come back as a live tool just
+        because it was saved (#165).
+        """
+        if is_enabled(spec):
+            return self.register(kind, spec)
+        return self.unregister(kind, spec.get("name"))
 
     def live_names(self, kind: str) -> List[str]:
         if kind == KIND_PPTX:
@@ -189,7 +200,7 @@ class AdminContext:
         """
         master = self.store.config_dir / descriptor(kind).master_file
         try:
-            templates, _cfg = gather_specs(master, None)
+            templates, _cfg = gather_specs(master, None, include_disabled=True)
         except Exception:
             logger.exception("[admin] Could not read the %s master YAML", kind)
             return []
@@ -566,10 +577,31 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             return bad
         try:
             spec = build_spec(kind, form)
+            # The form carries no `enabled` control, so a save rebuilds the
+            # spec without it. Carry the stored flag forward or an edit would
+            # silently switch a disabled template back on (#165).
+            previous = (form.get("original_name") or "").strip() or spec["name"]
+            stored = ctx.store.get_spec(kind, previous)
+            if stored is not None and not is_enabled(stored):
+                spec["enabled"] = False
+
+            renamed = bool(stored) and previous != spec["name"]
+            if renamed and ctx.store.get_spec(kind, spec["name"]) is not None:
+                raise TemplateStoreError(
+                    f"A {kind} template named {spec['name']!r} already exists."
+                )
             ctx.store.save_spec(kind, spec)
+            if renamed:
+                # New spec first, then drop the old one — an interrupted
+                # rename leaves two templates rather than none. The asset stays
+                # put, and the new spec keeps pointing at it.
+                ctx.store.delete_spec(kind, previous, delete_asset=False)
+                ctx.unregister(kind, previous)
+                logger.info("[admin] Renamed %s template %r -> %r",
+                            kind, previous, spec["name"])
         except TemplateStoreError as e:
             return views.save_failed_page(ctx, str(e))
-        ok = ctx.register(kind, spec)
+        ok = ctx.sync(kind, spec)
         return views.saved_page(ctx, kind, spec["name"], ok)
 
     @rt("/{kind}/preview", methods=["post"])
@@ -620,6 +652,30 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             )
         html = render_email_preview(data, spec, values)
         return HTMLResponse(html)
+
+    @rt("/{kind}/{name}/enabled", methods=["post"])
+    async def set_enabled(req, sess, kind: str, name: str):
+        """Turn a template's tool on or off without touching its configuration.
+
+        Deleting used to be the only off switch, which meant destroying the
+        arguments and descriptions to stop the AI reaching for a seasonal or
+        under-review template (#165).
+        """
+        if not is_kind(kind):
+            return _home()
+        form = await req.form()
+        bad = _csrf_guard(sess, form)
+        if bad:
+            return bad
+        if ctx.store.get_spec(kind, name) is None:
+            return views.not_found_page(ctx, name)
+        want = checked(form, "enabled")
+        try:
+            spec = ctx.store.set_enabled(kind, name, want)
+        except TemplateStoreError as e:
+            return views.save_failed_page(ctx, str(e))
+        ctx.sync(kind, spec)
+        return _home()
 
     @rt("/{kind}/{name}/delete", methods=["get", "post"])
     async def delete(req, sess, kind: str, name: str):

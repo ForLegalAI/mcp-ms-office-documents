@@ -257,7 +257,8 @@ Never hard-code a template path; go through `template_utils`.
 Dynamic template specs are merged by `template_registry.gather_specs()`: the
 hand-written master `config/<kind>_templates.yaml` plus one file per template
 in `config/<kind>_templates.d/`. A `.d` entry wins on a name clash. Tooling
-never rewrites the master file.
+never rewrites the master file. A spec marked `enabled: false` is dropped
+there, so it is never registered by any path; absent means enabled.
 
 PowerPoint templates have their own registry (`pptx_tools/templates.py`) that
 maps names to files and layout roles. It is cached against a modification-time

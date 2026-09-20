@@ -4,7 +4,8 @@ Both the docx and email dynamic-tool modules use these to:
 
 * merge the heavily-documented master YAML (``config/<kind>_templates.yaml``)
   with the UI-managed per-template files in ``config/<kind>_templates.d/`` —
-  the per-template file wins when names collide; and
+  the per-template file wins when names collide, and a spec marked
+  ``enabled: false`` is dropped so no path registers it (#165); and
 * remove a live MCP tool by name (so a template can be re-registered after an
   edit, or unregistered on delete) tolerantly across FastMCP versions.
 
@@ -66,6 +67,28 @@ def read_spec_file(path: Path) -> Optional[Dict[str, Any]]:
     return data
 
 
+#: Spec values that mean "disabled". A spec file is hand-editable YAML, so
+#: ``enabled: false`` may arrive as a bool or as a string from a quoted value.
+#: Anything else — including a missing key — means enabled, because every spec
+#: written before #165 has no ``enabled`` key and must stay live.
+_DISABLED_WORDS = frozenset({"false", "no", "off", "0", ""})
+
+
+def is_enabled(spec: Any) -> bool:
+    """Whether *spec* should be registered as a live tool.
+
+    Disabling keeps the spec file and its asset but takes the tool off the
+    server, which is the only way to stop the AI reaching for a template
+    without destroying its configuration (#165).
+    """
+    if not isinstance(spec, dict) or "enabled" not in spec:
+        return True
+    value = spec["enabled"]
+    if isinstance(value, str):
+        return value.strip().lower() not in _DISABLED_WORDS
+    return bool(value)
+
+
 def read_spec_dir(spec_dir: Path) -> List[Dict[str, Any]]:
     """Return the specs in ``spec_dir`` (one per ``*.yaml``), sorted by filename."""
     if not spec_dir or not spec_dir.is_dir():
@@ -79,7 +102,8 @@ def read_spec_dir(spec_dir: Path) -> List[Dict[str, Any]]:
 
 
 def gather_specs(
-    master_yaml: Optional[Path], spec_dir: Optional[Path]
+    master_yaml: Optional[Path], spec_dir: Optional[Path],
+    include_disabled: bool = False,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Merge the master YAML's ``templates`` with the per-template ``spec_dir``.
 
@@ -90,6 +114,14 @@ def gather_specs(
       original master order preserved and dir-only templates appended after; and
     * ``master_cfg`` is the parsed master mapping (``{}`` if absent), so callers
       can still read top-level keys such as ``style_mapping``.
+
+    Specs marked ``enabled: false`` are dropped unless *include_disabled*. This
+    is the one merge point every registration path goes through — the docx and
+    email loaders, the PowerPoint registry — so filtering here is what makes a
+    disabled template stay disabled across a restart, and what stops a future
+    consumer from registering one by forgetting to check. Only the admin UI,
+    which has to list a disabled template in order to offer Enable, passes
+    *include_disabled*.
     """
     master_cfg: Dict[str, Any] = {}
     master_templates: List[Dict[str, Any]] = []
@@ -122,5 +154,8 @@ def gather_specs(
     for name in sorted(overrides):
         if name not in seen:
             merged.append(overrides[name])
+
+    if not include_disabled:
+        merged = [spec for spec in merged if is_enabled(spec)]
 
     return merged, master_cfg

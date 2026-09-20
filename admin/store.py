@@ -186,6 +186,14 @@ class TemplateStore(ABC):
         """Delete the managed spec (and optionally its asset). Returns True if removed."""
 
     @abstractmethod
+    def set_enabled(self, kind: str, name: str, enabled: bool) -> Dict[str, Any]:
+        """Turn the managed spec's tool on or off, returning the stored spec."""
+
+    @abstractmethod
+    def rename_spec(self, kind: str, name: str, new_name: str) -> Dict[str, Any]:
+        """Rename the managed spec, returning the stored spec under its new name."""
+
+    @abstractmethod
     def read_asset(self, kind: str, filename: str) -> bytes:
         """Return the bytes of an asset file (raises if not found)."""
 
@@ -337,6 +345,55 @@ class FileTemplateStore(TemplateStore):
                     except TemplateStoreError:
                         pass
         return existed
+
+    def set_enabled(self, kind: str, name: str, enabled: bool) -> Dict[str, Any]:
+        """Write ``enabled`` into the managed spec, leaving everything else alone.
+
+        Disabling keeps the spec file and the asset; it is the registration
+        layer that reads the key and leaves the tool off (#165). Written even
+        when ``True`` so the file states its own status rather than relying on
+        the absent-means-enabled default.
+        """
+        spec = self.get_spec(kind, name)
+        if spec is None:
+            raise TemplateStoreError(f"No managed {kind} template named {name!r}.")
+        spec = dict(spec)
+        spec["enabled"] = bool(enabled)
+        self._spec_path(kind, name).write_text(self.dump_spec(spec), encoding="utf-8")
+        logger.info("[template-store] %s %s template %r",
+                    "Enabled" if enabled else "Disabled", kind, name)
+        return spec
+
+    def rename_spec(self, kind: str, name: str, new_name: str) -> Dict[str, Any]:
+        """Move the managed spec to *new_name*, keeping its asset filename.
+
+        The asset is deliberately left where it is: renaming it would break any
+        master-YAML entry pointing at the same file, and the spec keeps naming
+        it explicitly, so only the tool name changes (#165).
+
+        Writes the new file before removing the old one, so an interrupted
+        rename leaves two specs rather than none.
+        """
+        new_name = validate_name(new_name)
+        old_name = validate_name(name)
+        spec = self.get_spec(kind, old_name)
+        if spec is None:
+            raise TemplateStoreError(f"No managed {kind} template named {old_name!r}.")
+        if new_name == old_name:
+            return spec
+        if self.get_spec(kind, new_name) is not None:
+            raise TemplateStoreError(
+                f"A {kind} template named {new_name!r} already exists."
+            )
+
+        spec = dict(spec)
+        spec["name"] = new_name
+        new_path = self._spec_path(kind, new_name)
+        new_path.parent.mkdir(parents=True, exist_ok=True)
+        new_path.write_text(self.dump_spec(spec), encoding="utf-8")
+        self._spec_path(kind, old_name).unlink(missing_ok=True)
+        logger.info("[template-store] Renamed %s template %r -> %r", kind, old_name, new_name)
+        return spec
 
     @staticmethod
     def dump_spec(spec: Dict[str, Any]) -> str:
