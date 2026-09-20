@@ -1,19 +1,23 @@
-"""The Base templates page: the five files that style every generated document.
+"""The Base template tab: the files that style every generated document.
 
 Deliberately not the dynamic-template editor. There is nothing to name, no
 arguments to declare and no spec to write — each slot holds exactly one file,
 replaced in place, with the bundled default underneath it.
+
+Rendered as a *panel* inside whichever section owns the slot
+(:attr:`admin.sections.Section.slot_keys`), not as a page of its own: Word's
+base document belongs beside Word's templates, and the Excel style workbook
+has nothing to do with either.
 """
 from __future__ import annotations
 
 from typing import Any, List, Optional
 
-from fasthtml.common import A, Button, Div, H1, Input, P, Span
+from fasthtml.common import A, Button, Div, Input, P, Span
 
 from admin import components as c
 from admin.analysis import PptxAnalysis
 from admin.base_templates import BaseSlot
-from admin.views.shell import page
 from admin.views.templates import pptx_analysis_report
 
 
@@ -102,22 +106,21 @@ def _slot_card(ctx, s: BaseSlot, csrf: str, active, source, analysis,
     return c.card(*body, title=f"{s.icon} {s.label}", level=2)
 
 
-def base_templates_page(ctx, csrf: str = "", states=(),
-                        focus: Optional[str] = None,
-                        message: Optional[str] = None,
-                        message_kind: str = "ok"):
-    """*states* is one ``(slot, active_path, source, analysis)`` per slot."""
-    cards = [
+def base_panel(ctx, csrf: str = "", states=(),
+               focus: Optional[str] = None,
+               message: Optional[str] = None,
+               message_kind: str = "ok"):
+    """One card per base slot. *states* is ``(slot, active_path, source, analysis)``.
+
+    A panel rather than a page: the five slots used to be stacked on one
+    screen, which meant replacing the Word document and replacing the Excel
+    style workbook — two unrelated jobs with very different blast radii — were
+    the same page. Each section now shows only its own, and a section route
+    passes only the states it asked for.
+    """
+    return [
         _slot_card(ctx, s, csrf, active, source, analysis,
                    message=message if focus == s.key else None,
                    message_kind=message_kind)
         for s, active, source, analysis in states
     ]
-    return page(
-        ctx, "Base templates",
-        H1("Base templates"),
-        P("These five files style every document the server generates. Each one "
-          "falls back to a bundled default, so replacing one is reversible — "
-          "except Excel, which ships no default.", cls="muted"),
-        *cards,
-    )

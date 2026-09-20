@@ -112,7 +112,7 @@ def test_a_managed_templates_file_is_referenced(admin_client):
     client, _custom, _cfg = admin_client
     _saved(client, "letter")
 
-    row = _row(client.get("/admin/files").text, "letter.docx")
+    row = _row(client.get("/admin/server/files").text, "letter.docx")
     assert "Word template 'letter'" in row
     assert "Unreferenced" not in row
 
@@ -130,7 +130,7 @@ def test_a_master_yaml_templates_file_is_not_an_orphan(admin_client):
         {"name": "legacy", "docx_path": "handwritten.docx", "args": []},
     ]}), encoding="utf-8")
 
-    row = _row(client.get("/admin/files").text, "handwritten.docx")
+    row = _row(client.get("/admin/server/files").text, "handwritten.docx")
     assert "master YAML" in row
     assert "Unreferenced" not in row, "a hand-written template's file is in use"
 
@@ -141,7 +141,7 @@ def test_a_disabled_templates_file_is_not_an_orphan(admin_client):
     name = _saved(client, "seasonal")
     _post(client, f"/admin/docx/{name}/enabled", data={"enabled": ""})
 
-    row = _row(client.get("/admin/files").text, f"{name}.docx")
+    row = _row(client.get("/admin/server/files").text, f"{name}.docx")
     assert "Unreferenced" not in row, "a disabled template still owns its file"
 
 
@@ -150,7 +150,7 @@ def test_a_base_template_is_not_an_orphan(admin_client):
     client, custom, _cfg = admin_client
     (custom / "custom_docx_template.docx").write_bytes(_docx_bytes())
 
-    row = _row(client.get("/admin/files").text, "custom_docx_template.docx")
+    row = _row(client.get("/admin/server/files").text, "custom_docx_template.docx")
     assert "Base template" in row
     assert "Unreferenced" not in row
 
@@ -162,7 +162,7 @@ def test_a_file_two_templates_share_lists_both(admin_client):
     store.save_spec("docx", {"name": "second", "description": "d",
                              "docx_path": "first.docx", "args": []})
 
-    row = _row(client.get("/admin/files").text, "first.docx")
+    row = _row(client.get("/admin/server/files").text, "first.docx")
     assert "'first'" in row and "'second'" in row
 
 
@@ -170,7 +170,7 @@ def test_a_leftover_file_is_an_orphan(admin_client):
     client, custom, _cfg = admin_client
     (custom / "leftover.docx").write_bytes(_docx_bytes())
 
-    row = _row(client.get("/admin/files").text, "leftover.docx")
+    row = _row(client.get("/admin/server/files").text, "leftover.docx")
     assert "Unreferenced" in row
 
 
@@ -178,11 +178,11 @@ def test_deleting_a_template_and_keeping_its_file_surfaces_it(admin_client):
     """The story the page exists for, end to end."""
     client, _custom, _cfg = admin_client
     name = _saved(client, "retired")
-    assert "Unreferenced" not in _row(client.get("/admin/files").text, f"{name}.docx")
+    assert "Unreferenced" not in _row(client.get("/admin/server/files").text, f"{name}.docx")
 
     _post(client, f"/admin/docx/{name}/delete", data={})  # keep the file
 
-    row = _row(client.get("/admin/files").text, f"{name}.docx")
+    row = _row(client.get("/admin/server/files").text, f"{name}.docx")
     assert "Unreferenced" in row, "the kept file must now be findable"
 
 
@@ -191,7 +191,7 @@ def test_orphans_are_listed_first(admin_client):
     _saved(client, "aaa_referenced")
     (custom / "zzz_orphan.docx").write_bytes(_docx_bytes())
 
-    html = client.get("/admin/files").text
+    html = client.get("/admin/server/files").text
     assert html.index("zzz_orphan.docx") < html.index("aaa_referenced.docx"), \
         "orphans lead: they are the only rows with anything to do"
 
@@ -206,7 +206,7 @@ def test_only_an_orphan_offers_delete(admin_client):
     _saved(client, "kept")
     (custom / "gone.docx").write_bytes(_docx_bytes())
 
-    html = client.get("/admin/files").text
+    html = client.get("/admin/server/files").text
     assert "/files/gone.docx/delete" in html
     assert "/files/kept.docx/delete" not in html
 
@@ -260,7 +260,7 @@ def test_a_file_that_gained_a_reference_is_no_longer_deletable(admin_client):
     """The orphan check runs at the moment of the request, not at render."""
     client, custom, _cfg = admin_client
     (custom / "claimed.docx").write_bytes(_docx_bytes())
-    assert "Unreferenced" in _row(client.get("/admin/files").text, "claimed.docx")
+    assert "Unreferenced" in _row(client.get("/admin/server/files").text, "claimed.docx")
 
     # A template starts pointing at it after the page was rendered.
     store = store_mod.FileTemplateStore.from_config()
@@ -345,7 +345,7 @@ def test_an_awkward_filename_still_deletes(admin_client, filename):
     client, custom, _cfg = admin_client
     (custom / filename).write_bytes(_docx_bytes())
 
-    html = client.get("/admin/files").text
+    html = client.get("/admin/server/files").text
     href = re.search(r'href="([^"]*/files/[^"]*/delete)"', html)
     assert href, "the orphan must offer a delete link"
     assert "#" not in href.group(1).split("/files/")[1].split("/delete")[0], \
@@ -386,4 +386,4 @@ def test_a_broken_symlink_is_not_listed(admin_client, tmp_path):
     client, custom, _cfg = admin_client
     (custom / "dangling.docx").symlink_to(tmp_path / "never_existed.docx")
 
-    assert "dangling.docx" not in client.get("/admin/files").text
+    assert "dangling.docx" not in client.get("/admin/server/files").text

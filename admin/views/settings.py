@@ -1,4 +1,4 @@
-"""The Global styles page: the ``style_mapping`` that applies to every Word document.
+"""The Word Style mapping tab: the ``style_mapping`` every Word document uses.
 
 Deliberately not a template editor. There is nothing to name, no arguments and
 no source file — one mapping, applying to the static ``markdown_to_word`` tool
@@ -19,11 +19,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Sequence
 
-from fasthtml.common import A, Button, Div, H1, Option, P, Select
+from fasthtml.common import Button, Div, Option, P, Select
 
 from admin import components as c
 from admin.kinds import STYLE_GROUPS
-from admin.views.shell import page
 from admin.views.templates import builtin_style_names
 
 #: The select value meaning "do not set this key", shared with the per-template
@@ -160,16 +159,20 @@ def _unrecognised(mapping: Dict[str, str], master: Dict[str, str],
         "set them and the mapping it manages does not carry them.", "warn")
 
 
-def global_styles_page(ctx, *, csrf: str, mapping: Dict[str, Any],
-                       master: Dict[str, Any], stored: bool,
-                       offered: Sequence[str] = (),
-                       message: Optional[str] = None,
-                       message_kind: str = "ok"):
+def style_mapping_panel(ctx, *, csrf: str, mapping: Dict[str, Any],
+                        master: Dict[str, Any], stored: bool,
+                        offered: Sequence[str] = (),
+                        message: Optional[str] = None,
+                        message_kind: str = "ok"):
     """The editor for the Word ``style_mapping`` that applies to everything.
 
     *mapping* is what is in force, *master* what the master YAML alone says,
     *stored* whether this UI has an override on file, and *offered* the styles
     the base Word template defines.
+
+    A panel on the Word section's Style mapping tab. It was a top-level page
+    called "Global styles", which said nothing about the mapping being Word's
+    alone — there is no such thing as a global style for a spreadsheet.
     """
     builtin = builtin_style_names()
     keys = [key for _group, ks in STYLE_GROUPS for key in ks]
@@ -195,23 +198,18 @@ def global_styles_page(ctx, *, csrf: str, mapping: Dict[str, Any],
             "Revert to docx_templates.yaml", type="submit",
             formaction=ctx.u("/styles/revert"), cls="btn btn-secondary",
             title="Discard the mapping managed here and use the master file's"))
-    controls.append(A("Cancel", href=ctx.u("/"), cls="btn"))
+    controls.append(Button("Reset", type="reset", cls="btn",
+                           title="Undo unsaved changes on this page"))
 
     warn = _unrecognised(mapping, master, keys)
-    return page(
-        ctx, "Global styles",
-        H1("Global style mapping"),
-        P("Applies to every Word document this server produces — the "
-          "markdown_to_word tool and every Word template that does not set "
-          "the same key itself. A template's own mapping still wins.",
-          cls="muted"),
+    return [
         c.flash(message, message_kind),
         warn,
         _provenance(stored, mapping, master, keys, offered),
         c.post_form(
             ctx.u("/styles/save"),
-            c.card(*groups, title="Style names"),
+            c.card(*groups, title="Style names", level=2),
             c.card(c.action_bar(*controls)),
             csrf=csrf,
         ),
-    )
+    ]

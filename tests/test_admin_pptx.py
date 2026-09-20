@@ -428,10 +428,12 @@ def _post(client, url, data=None, files=None):
 
 class TestAdminRoutes:
 
-    def test_the_index_lists_a_powerpoint_section(self, admin_client):
+    def test_the_powerpoint_section_lists_its_templates(self, admin_client):
         client, _cfg, _custom, _mcp = admin_client
-        html = client.get("/admin/").text
+        html = client.get("/admin/powerpoint/templates").text
         assert "PowerPoint templates" in html
+        # And the section is on the dashboard, so the tab is reachable.
+        assert 'href="/admin/powerpoint"' in client.get("/admin/").text
 
     def test_the_new_page_explains_it_is_a_design_not_a_tool(self, admin_client):
         """The distinction the whole phase turns on; say it where it matters."""

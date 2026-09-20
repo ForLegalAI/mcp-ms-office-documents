@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Any, List
 from urllib.parse import quote
 
-from fasthtml.common import A, Button, Code, H1, Li, P, Td, Tr, Ul
+from fasthtml.common import A, Button, Code, Li, P, Td, Tr, Ul
 
 from admin import components as c
 from admin.assets import AssetFile
@@ -43,7 +43,7 @@ def fmt_size(size: int) -> str:
 
 def _references_cell(f: AssetFile):
     if f.orphaned:
-        return c.badge("Unreferenced", "ro")
+        return c.badge("Unreferenced", "ro", plain=True)
     if len(f.references) == 1:
         return f.references[0]
     return Ul(*[Li(r) for r in f.references])
@@ -60,18 +60,16 @@ def _row(ctx, f: AssetFile):
     )
 
 
-def assets_page(ctx, files: List[AssetFile], csrf: str = "",
-                message: str = "", message_kind: str = "ok"):
+def source_files_panel(ctx, files: List[AssetFile], csrf: str = "",
+                       message: str = "", message_kind: str = "ok"):
+    """The Server section's Source files tab."""
     orphans = [f for f in files if f.orphaned]
     body: List[Any] = []
     if message:
         body.append(c.flash(message, message_kind))
 
     if not files:
-        body.append(c.empty_state(
-            "Nothing has been uploaded yet.",
-            A("← Back to all templates", href=ctx.u("/"), cls="btn"),
-        ))
+        body.append(c.empty_state("Nothing has been uploaded yet.", icon="📂"))
     else:
         body.append(P(
             f"{len(files)} file{'s' if len(files) != 1 else ''} here, "
@@ -84,20 +82,14 @@ def assets_page(ctx, files: List[AssetFile], csrf: str = "",
             [_row(ctx, f) for f in files],
         ))
 
-    return page(
-        ctx, "Source files",
-        H1("Source files"),
-        P("Every file in the uploads directory, and what still points at it. "
-          "Only a file nothing references can be deleted here.", cls="muted"),
-        c.card(*body),
-    )
+    return [c.card(*body)]
 
 
 def delete_asset_page(ctx, filename: str, csrf: str = ""):
     """Confirm removing one orphan, naming the file that goes."""
     return page(
         ctx, f"Delete {filename}",
-        H1("Delete this file?"),
+        c.page_header("Delete this file?"),
         c.card(
             P("This removes the uploaded file:", cls="muted"),
             Ul(Li(Code(filename))),
@@ -108,9 +100,10 @@ def delete_asset_page(ctx, filename: str, csrf: str = ""):
                 c.action_bar(
                     Button("Delete this file", type="submit",
                            cls="btn btn-danger"),
-                    A("Cancel", href=ctx.u("/files"), cls="btn"),
+                    A("Cancel", href=ctx.u("/server/files"), cls="btn"),
                 ),
                 csrf=csrf,
             ),
         ),
+        active="server",
     )

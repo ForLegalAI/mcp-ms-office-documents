@@ -12,15 +12,16 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from fasthtml.common import (
-    A, Button, Code, Div, Form, H1, Input, Li, Option, P, Pre, Select, Span,
+    A, Button, Code, Div, Form, Input, Li, Option, P, Pre, Select, Span,
     Textarea, Th, Tr, Td, Ul,
 )
 
 from admin import components as c
 from admin.analysis import Analysis, PptxAnalysis, reconcile
-from admin.kinds import ARG_TYPES, KINDS, STYLE_GROUPS, descriptor
+from admin.kinds import ARG_TYPES, STYLE_GROUPS, descriptor
+from admin.sections import section_for_kind
 from admin.store import KIND_DOCX, KIND_PPTX
-from admin.views.shell import form_actions, name_field, page
+from admin.views.shell import back_link, form_actions, kind_page, name_field
 from template_registry import is_enabled
 
 # ---------------------------------------------------------------------------
@@ -82,41 +83,50 @@ def template_table(ctx, kind: str, csrf: str = ""):
             Td(c.action_bar(
                 A("Inspect", href=ctx.u(f"/{kind}/{name}/master"),
                   cls="btn btn-secondary btn-sm"),
-                c.badge("master YAML", "ro"),
+                c.badge("master YAML", "ro", plain=True),
             )),
         ))
 
     # Every kind keeps a create link in both states. When the empty state was
     # the only one that had one, adding a template removed the only route to
     # the page that made it — invisible for Word and Email, which the top bar
-    # also covers, but a dead end for PowerPoint, which it did not (#157).
+    # also covered, but a dead end for PowerPoint, which it did not (#157).
+    # The top bar no longer carries "New …" at all, so the button on this tab
+    # is now the only one and must be present whether or not the list is.
     if not rows:
         return c.empty_state(
             f"No {d.label} templates yet.",
-            A(f"{d.icon} Create your first {d.label} template",
+            A(f"Create your first {d.label} template",
               href=ctx.u(f"/new/{kind}"), cls="btn btn-primary"),
+            icon=d.icon,
         )
-    return Div(
-        c.data_table(["Name", d.detail_header, "Status", "Actions"], rows),
-        Div(A(f"+ New {d.label} template", href=ctx.u(f"/new/{kind}"),
-              cls="btn btn-secondary btn-sm"), cls="table-actions"),
-    )
+    return c.data_table(["Name", d.detail_header, "Status", "Actions"], rows)
 
 
-def index_page(ctx, csrf: str = ""):
-    sections = []
-    for kind in KINDS:
-        d = descriptor(kind)
-        body = [P(d.section_blurb, cls="muted")] if d.section_blurb else []
-        body.append(template_table(ctx, kind, csrf))
-        sections.append(c.card(*body, title=f"{d.icon} {d.label} templates", level=2))
-    return page(
-        ctx, "Templates",
-        H1("Templates"),
-        P("Create reusable Word and email templates — each becomes a tool the AI can "
-          "call — and register PowerPoint templates for it to build decks on.",
-          cls="muted"),
-        *sections,
+def new_template_button(ctx, kind: str, cls: str = "btn btn-primary"):
+    """The create action for *kind*, for the Templates tab's header."""
+    d = descriptor(kind)
+    return A(f"+ New {d.label} template", href=ctx.u(f"/new/{kind}"), cls=cls)
+
+
+def templates_panel(ctx, kind: str, csrf: str = ""):
+    """The Templates tab: just the list.
+
+    The create action lives in the page header (the section route adds it) and,
+    when the list is empty, in the empty state. It is deliberately not on this
+    card as well: three copies of one button on one screen reads as a mistake,
+    and two is already what #157 needs — one that is there whatever the list
+    is doing, and one where a first-time admin is looking.
+
+    Returns the panel only — :func:`admin.views.sections.section_page` wraps
+    it — so the same body can be rendered under any section without this
+    module knowing which one it belongs to.
+    """
+    d = descriptor(kind)
+    return c.card(
+        template_table(ctx, kind, csrf),
+        title=f"{d.label} templates", level=2,
+        subtitle=d.section_blurb or None,
     )
 
 
@@ -560,9 +570,12 @@ def _pptx_help():
 
 def new_page(ctx, kind: str, csrf: str = "", error: Optional[str] = None):
     d = descriptor(kind)
-    return page(
-        ctx, f"New {d.label} template",
-        H1(f"{d.icon} New {d.label} template"),
+    return kind_page(
+        ctx, kind, f"New {d.label} template",
+        c.page_header(f"New {d.label} template",
+                      f"Upload the {d.file_help} file this template builds on. "
+                      "Nothing goes live until you save.",
+                      crumb=back_link(ctx, kind)),
         c.flash(error, "err"),
         c.card(c.post_form(
             ctx.u(f"/{kind}/draft"),
@@ -630,13 +643,14 @@ def preview_values_page(ctx, kind: str, spec: Dict[str, Any],
     if not controls:
         controls = [P("This template declares no arguments.", cls="muted")]
 
-    return page(
-        ctx, f"Preview {spec.get('name', '')}",
-        H1(f"Preview {spec.get('name', '')}"),
-        P("Pre-filled with the same samples the one-click preview uses — "
-          "change what you want to try. Markdown works in any text value, "
-          "which is the thing a generated sample can never show you.",
-          cls="muted"),
+    return kind_page(
+        ctx, kind, f"Preview {spec.get('name', '')}",
+        c.page_header(
+            f"Preview {spec.get('name', '')}",
+            "Pre-filled with the same samples the one-click preview uses — "
+            "change what you want to try. Markdown works in any text value, "
+            "which is the thing a generated sample can never show you.",
+            crumb=back_link(ctx, kind)),
         c.card(
             c.post_form(
                 ctx.u(f"/{kind}/preview"),
@@ -732,17 +746,19 @@ def master_page(ctx, kind: str, name: str, spec: Dict[str, Any], analysis,
           "turning it off, no longer have any effect.", cls="muted"),
         c.action_bar(
             Button("Adopt for editing", type="submit", cls="btn btn-primary"),
-            A("Back to all templates", href=ctx.u("/"), cls="btn"),
+            A("Cancel", href=section_for_kind(kind).href(ctx.u, "templates"),
+              cls="btn"),
         ),
         csrf=csrf,
     )
     cards.append(c.card(adopt, title="Bring it under UI management"))
 
-    return page(
-        ctx, name,
-        H1(name),
-        P("Defined in your hand-written master YAML, so it is shown read-only "
-          "here.", cls="muted"),
+    return kind_page(
+        ctx, kind, name,
+        c.page_header(name,
+                      "Defined in your hand-written master YAML, so it is "
+                      "shown read-only here.",
+                      crumb=back_link(ctx, kind)),
         *[card for card in cards if card is not None],
     )
 
@@ -762,9 +778,9 @@ def clone_page(ctx, kind: str, name: str, spec: Dict[str, Any],
         carried.append("Not the default-template flag: only one template can "
                        "be the default.")
 
-    return page(
-        ctx, f"Clone {name}",
-        H1(f"Clone {name}"),
+    return kind_page(
+        ctx, kind, f"Clone {name}",
+        c.page_header(f"Clone {name}", crumb=back_link(ctx, kind)),
         c.flash(error, "err"),
         c.card(
             P("The copy starts with everything the original has:", cls="muted"),
@@ -777,7 +793,8 @@ def clone_page(ctx, kind: str, name: str, spec: Dict[str, Any],
                         hint=d.name_hint),
                 c.action_bar(
                     Button("Create the copy", type="submit", cls="btn btn-primary"),
-                    A("Cancel", href=ctx.u("/"), cls="btn"),
+                    A("Cancel", href=section_for_kind(kind).href(ctx.u, "templates"),
+                      cls="btn"),
                 ),
                 csrf=csrf,
             ),
@@ -789,9 +806,9 @@ def configure_page(ctx, kind: str, name: str, filename: str,
                    analysis, spec: Dict[str, Any], csrf: str = ""):
     """Shown straight after a successful upload, with the form pre-filled."""
     d = descriptor(kind)
-    return page(
-        ctx, f"Configure {name}",
-        H1(f"Configure {name}"),
+    return kind_page(
+        ctx, kind, f"Configure {name}",
+        c.page_header(f"Configure {name}", crumb=back_link(ctx, kind)),
         c.flash(d.draft_hint.format(filename=filename), "ok"),
         analysis_report(analysis, spec),
         # A create, not an edit: this is the form you land on straight after
@@ -829,9 +846,9 @@ def delete_page(ctx, kind: str, name: str, asset: Optional[str],
             hint="Off by default. A kept file stays in custom_templates/ and "
                  "shows up under Source files, where it can be removed later.")
 
-    return page(
-        ctx, f"Delete {name}",
-        H1(f"Delete {name}?"),
+    return kind_page(
+        ctx, kind, f"Delete {name}",
+        c.page_header(f"Delete {name}?", crumb=back_link(ctx, kind)),
         c.card(
             P("This removes:", cls="muted"),
             Ul(*[Li(item) for item in removed]),
@@ -840,7 +857,8 @@ def delete_page(ctx, kind: str, name: str, asset: Optional[str],
                 asset_choice,
                 c.action_bar(
                     Button(f"Delete {name}", type="submit", cls="btn btn-danger"),
-                    A("Cancel", href=ctx.u("/"), cls="btn"),
+                    A("Cancel", href=section_for_kind(kind).href(ctx.u, "templates"),
+                      cls="btn"),
                 ),
                 csrf=csrf,
             ),
@@ -863,7 +881,8 @@ def edit_page(ctx, kind: str, name: str, spec: Dict[str, Any], analysis,
     """
     from admin.views.shell import replace_card
 
-    body: List[Any] = [H1(f"Edit {name}")]
+    body: List[Any] = [c.page_header(f"Edit {name}",
+                                     crumb=back_link(ctx, kind))]
     if message:
         body.append(c.flash(message, message_kind))
     if report:
@@ -878,4 +897,4 @@ def edit_page(ctx, kind: str, name: str, spec: Dict[str, Any], analysis,
     yaml_block = spec_yaml_block(spec)
     if yaml_block is not None:
         body.append(c.card(yaml_block))
-    return page(ctx, f"Edit {name}", *body)
+    return kind_page(ctx, kind, f"Edit {name}", *body)

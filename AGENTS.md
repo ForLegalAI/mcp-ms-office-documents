@@ -38,10 +38,12 @@ image_utils.py      image download/decode with the SSRF guard
 metrics.py          in-process counters for the admin Status page
 docx_tools/ xlsx_tools/ pptx_tools/ email_tools/ xml_tools/   one package per type
 admin/              optional FastHTML admin UI (ADMIN_ENABLED); app.py holds
-                    routes only — components.py (markup + theme), kinds.py
+                    routes only — components.py (markup + theme),
+                    sections.py (the product areas and their tabs), kinds.py
                     (dynamic kinds), base_templates.py (static base
-                    templates), forms.py, views/ (views/settings.py = the
-                    server-wide style mapping)
+                    templates), forms.py, views/ (views/sections.py = the
+                    tabbed shell, Overview and the dashboard;
+                    views/settings.py = the Word style mapping)
 docs/               user reference (docs/*.md) and development docs (docs/development/)
 ```
 
@@ -129,6 +131,23 @@ backend → URL string or LibreChat artifact dict. Details:
 - Per-kind wording and flags live in `admin/kinds.py`, storage metadata in
   `admin/store.py`. Add a kind by editing those two tables, not by adding a
   branch to a view.
+- The top-level navigation lives in `admin/sections.py`: one `Section` per
+  product area (Word, PowerPoint, Excel, Email, XML, Server) and its tabs.
+  The nav, the tab bars, the routes and the dashboard are all derived from
+  that table — add a section by adding a row, never by adding a route.
+- A tab renderer is a **panel**: a list of cards with no shell, wrapped by
+  `views.sections.section_page()`. `app.py`'s `_panel()` is the one
+  (section, tab) → renderer map, and every route that re-renders a tab after
+  a POST goes back through it. A page reached *from* a tab (an editor, a
+  confirmation) is a full page and names its section with
+  `views.shell.kind_page()`, so the nav keeps the right item lit.
+- Section routes are registered **before** the `/{kind}/…` ones and are
+  **GET-only**; every two-segment `/{kind}/…` route is a POST. That is what
+  lets the Email section live at `/email` beside the `email` kind. Slugs are
+  literal, never a `/{slug}` pattern — a catch-all would swallow `/new/docx`.
+  `sections.assert_slugs_free()` fails at startup on a slug that shadows a
+  page, and `tests/test_admin_sections.py` walks the route table for the
+  actual invariant.
 - `admin/kinds.py`'s `STYLE_KEYS` must match the keys `docx_tools/style_map.py`
   recognises; `tests/test_admin_style_keys.py` enforces it. Style-name labels
   come from `DEFAULT_STYLE_MAP`, never a second copy.
@@ -137,7 +156,15 @@ backend → URL string or LibreChat artifact dict. Details:
   `tests/test_admin_assets.py` enforces it on every rendered page.
 - Colours are CSS custom properties on `:root`, redefined under
   `prefers-color-scheme: dark`. A new rule takes a token, never a literal, or
-  it will be wrong in one of the two themes.
+  it will be wrong in one of the two themes. Spacing, type sizes, radii and
+  shadows are tokens too (`--sp-*`, `--fs-*`, `--r-*`); use the nearest one
+  rather than a value between two.
+- Navigation is links, not script: `tab_bar()` renders anchors to real URLs so
+  a tab is bookmarkable and works with JavaScript off. The only script on any
+  page is the argument-row cloner.
+- A card's own buttons go in `card(..., actions=[...])`, a page's primary
+  action in `page_header()`. Never append them to a card's body, where they
+  read as part of the content above them.
 
 **Dynamic tools and schemas**
 - Never `Optional[...]` on a dynamic-tool argument; optionality is the

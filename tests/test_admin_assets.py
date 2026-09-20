@@ -120,9 +120,9 @@ def _all_pages(client):
         ("new-docx", "/admin/new/docx"),
         ("new-email", "/admin/new/email"),
         ("new-pptx", "/admin/new/pptx"),
-        ("base-templates", "/admin/base"),
-        ("source-files", "/admin/files"),
-        ("global-styles", "/admin/styles"),
+        ("base-templates", "/admin/word/base"),
+        ("source-files", "/admin/server/files"),
+        ("global-styles", "/admin/word/styles"),
     ]:
         pages.append((label, client.get(url).text))
 
