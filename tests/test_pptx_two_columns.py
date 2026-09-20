@@ -200,3 +200,97 @@ def test_nothing_is_lost_without_a_warning_saying_so():
         missing = [word for word in words if word not in rendered]
         if missing:
             assert warnings, f"{layout}: lost {missing} and said nothing"
+
+
+# ---------------------------------------------------------------------------
+# classification: four placeholders are not enough to mean "Comparison"
+# ---------------------------------------------------------------------------
+
+def _reshape(layout, boxes):
+    """Give *layout*'s content placeholders these (left, top, w, h) inches."""
+    from pptx.util import Inches
+    for placeholder, box in zip(content_placeholders(layout), boxes):
+        placeholder.left, placeholder.top = Inches(box[0]), Inches(box[1])
+        placeholder.width, placeholder.height = Inches(box[2]), Inches(box[3])
+
+
+def test_three_cards_and_a_bar_is_not_a_comparison(tmp_path):
+    """The layout from #194: three cards side by side plus a caption bar.
+
+    It has four content placeholders, so the old count-only rule called it
+    Comparison and every two-column slide in the deck landed on it.
+    """
+    from pptx_tools.layouts import classify_layout
+
+    prs = PptxReader(str(BASE_16_9))
+    layout = next(one for one in prs.slide_layouts if one.name == COMPARISON)
+    _reshape(layout, [(1.11, 2.58, 3.29, 2.77),    # card 1
+                      (5.12, 2.58, 3.29, 2.77),    # card 2
+                      (9.14, 2.58, 3.29, 2.77),    # card 3
+                      (3.97, 6.02, 5.59, 0.47)])   # caption bar
+    assert classify_layout(layout) is None
+
+
+def test_a_real_comparison_is_still_recognised():
+    from pptx_tools.layouts import ROLE_COMPARISON, classify_layout
+
+    prs = PptxReader(str(BASE_16_9))
+    layout = next(one for one in prs.slide_layouts if one.name == COMPARISON)
+    assert classify_layout(layout) == ROLE_COMPARISON
+
+
+def test_four_stacked_bodies_are_not_a_comparison(tmp_path):
+    """One column of four boxes is not two columns, whatever the count says."""
+    from pptx_tools.layouts import classify_layout
+
+    prs = PptxReader(str(BASE_16_9))
+    layout = next(one for one in prs.slide_layouts if one.name == COMPARISON)
+    _reshape(layout, [(0.9, 1.6, 11.5, 1.2), (0.9, 2.9, 11.5, 1.2),
+                      (0.9, 4.2, 11.5, 1.2), (0.9, 5.5, 11.5, 1.2)])
+    assert classify_layout(layout) is None
+
+
+def _without_layout(tmp_path, name) -> TemplateSpec:
+    prs = PptxReader(str(BASE_16_9))
+    ids = prs.slide_masters[0]._element.sldLayoutIdLst
+    target = next(i for i, one in enumerate(prs.slide_layouts) if one.name == name)
+    ids.remove(list(ids)[target])
+    path = tmp_path / "trimmed.pptx"
+    prs.save(str(path))
+    return TemplateSpec(name="t", path=path, description="", is_default=True,
+                        layouts={}, defaults={}, strip_slides=True, aspect="16:9")
+
+
+def test_a_template_with_no_comparison_layout_degrades_into_two_content(tmp_path):
+    """Without this the positional fallback picked a layout with no body at all.
+
+    On the #194 template `comparison` is unprovided and position 4 is Title
+    Only, so a two-column slide landed there and lost both columns. A role the
+    template really has is tried first.
+    """
+    spec = _without_layout(tmp_path, COMPARISON)
+    slide, warnings = _build(SLIDE, spec)
+
+    assert slide.slide_layout.name == TWO_CONTENT
+    left, right = _columns_text(slide)
+    assert "Odbornost" in left and "Rychlost" in right
+    assert W.COLUMN_DROPPED not in _codes(warnings)
+    assert W.LAYOUT_SUBSTITUTED in _codes(warnings)
+
+
+def test_a_template_with_neither_column_layout_merges_rather_than_drops(tmp_path):
+    prs = PptxReader(str(BASE_16_9))
+    ids = prs.slide_masters[0]._element.sldLayoutIdLst
+    for name in (COMPARISON, TWO_CONTENT):
+        target = next(i for i, one in enumerate(prs.slide_layouts) if one.name == name)
+        ids.remove(list(ids)[target])
+    path = tmp_path / "no_columns.pptx"
+    prs.save(str(path))
+    spec = TemplateSpec(name="t", path=path, description="", is_default=True,
+                        layouts={}, defaults={}, strip_slides=True, aspect="16:9")
+
+    slide, warnings = _build(SLIDE, spec)
+    rendered = " ".join(s.text_frame.text for s in slide.shapes if s.has_text_frame)
+    for word in ("Vy dodáváte", "Odbornost", "AI dodává", "Rychlost"):
+        assert word in rendered
+    assert W.COLUMN_DROPPED not in _codes(warnings)

@@ -174,9 +174,18 @@ for an untitled quote so no empty title placeholder is left behind, and
 has such a layout — the one role that depends on the template rather than on
 the slide alone.
 Resolution order is the slide's own `layout` name, then the registry's
-`layouts:` mapping, then detection, then the positional index with a warning,
-and finally the last layout rather than an `IndexError` on a trimmed
-template.
+`layouts:` mapping, then detection, then a **near-neighbour role** from
+`ROLE_ALTERNATIVES` with a warning, then the positional index with a warning,
+and finally the last layout rather than an `IndexError` on a trimmed template.
+
+The neighbour step exists because the positional index is a guess about a
+template that has already proved unusual. On the template in
+[#194](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/194) the
+`comparison` role was unprovided and position 4 was Title Only, so a
+two-column slide landed on a layout with no body placeholder and lost both
+columns. Every alternative listed can still hold the content: `comparison`
+falls to `two_column` (headings inline) and then `content` (columns merge), so
+the deck degrades instead of dropping text.
 
 `LayoutResolver.describe()` is what `validate_templates()` reports and
 `list_presentation_templates` returns: each layout with its index, placeholder
@@ -191,9 +200,17 @@ layout"
 slide-number chrome, so it is language-independent. It is deliberately
 conservative: vertical-text layouts and "Content with Caption" return `None`
 and are left for an explicit name. The distinguishing tests are a picture
-placeholder (image_text), a subtitle (title), no content (title_only), four
-content placeholders (comparison), two (two_column), and for one, `BODY`
-means section and `OBJECT` means content.
+placeholder (image_text), a subtitle (title), no content (title_only), two
+content placeholders (two_column), and for one, `BODY` means section and
+`OBJECT` means content.
+
+`comparison` is the one role that is **not** decided by counting. Four content
+placeholders were enough to claim it, and the template in #194 spent them on
+three cards side by side plus a caption bar — so every two-column slide in the
+deck was laid out on a three-card layout. A layout now has to resolve, through
+`content_columns()`, to exactly two columns *each with a heading strip*.
+Anything else is a shape this vocabulary has no name for and returns `None`,
+which is what leaves a three-card layout selectable by name and nothing else.
 
 ### Titles on a layout that has none
 

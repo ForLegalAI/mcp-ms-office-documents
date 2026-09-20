@@ -32,7 +32,9 @@ from .constants import (
     TITLE_LAYOUT, SECTION_LAYOUT, CONTENT_LAYOUT,
     TWO_COLUMN_LAYOUT, TWO_COLUMN_TEXT_LAYOUT, TITLE_ONLY_LAYOUT, BLANK_LAYOUT,
 )
-from .placeholder_style import Rect, TitleStyle, read_content_rect, read_title_style
+from .placeholder_style import (
+    Rect, TitleStyle, content_columns, read_content_rect, read_title_style,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +75,25 @@ TITLE_REFERENCE_ROLES = (
 CONTENT_REFERENCE_ROLES = (
     ROLE_CONTENT, ROLE_SECTION, ROLE_TWO_COLUMN, ROLE_COMPARISON, ROLE_IMAGE_TEXT,
 )
+
+# Roles to try, in order, when a template provides none for the one asked for.
+# A near neighbour that this template really has beats the positional index,
+# which is a guess about a template that has already proved unusual: on the
+# template in #194 the comparison role went unfilled and position 4 was Title
+# Only, so a two-column slide landed somewhere with no body placeholder at all
+# and lost both columns. Each alternative here can still hold the content, and
+# the builder degrades into it — merging columns, inlining a heading — rather
+# than dropping it.
+ROLE_ALTERNATIVES = {
+    ROLE_TITLE: (ROLE_SECTION, ROLE_TITLE_ONLY, ROLE_CONTENT),
+    ROLE_SECTION: (ROLE_TITLE_ONLY, ROLE_CONTENT, ROLE_TITLE),
+    ROLE_CONTENT: (ROLE_TWO_COLUMN, ROLE_SECTION, ROLE_TITLE_ONLY),
+    ROLE_TWO_COLUMN: (ROLE_COMPARISON, ROLE_CONTENT),
+    ROLE_COMPARISON: (ROLE_TWO_COLUMN, ROLE_CONTENT),
+    ROLE_IMAGE_TEXT: (ROLE_CONTENT, ROLE_TITLE_ONLY),
+    ROLE_TITLE_ONLY: (ROLE_CONTENT, ROLE_BLANK),
+    ROLE_BLANK: (ROLE_TITLE_ONLY,),
+}
 
 # Positional fallbacks, i.e. what the builder assumed before this module.
 ROLE_FALLBACK_INDEX = {
@@ -193,7 +214,17 @@ def classify_layout(layout) -> Optional[str]:
     # Comparison is title + heading/content twice over; Two Content is title
     # plus two content placeholders and no headings.
     if len(contents) == 4:
-        return ROLE_COMPARISON
+        # Four content placeholders are not enough to say "Comparison". The
+        # template in #194 had four on a layout that is three cards side by
+        # side plus a caption bar, and every two-column slide in the deck was
+        # laid out on it. A real Comparison resolves to exactly two columns,
+        # each with a heading strip above its body; anything else is a shape
+        # this vocabulary has no name for, and an unnamed layout is left for
+        # an explicit name to select rather than guessed at.
+        columns = content_columns(layout)
+        if len(columns) == 2 and all(heading is not None for heading, _ in columns):
+            return ROLE_COMPARISON
+        return None
     if len(contents) == 2:
         body_count = sum(1 for t in contents if t == PP_PLACEHOLDER.BODY)
         object_count = sum(1 for t in contents if t == PP_PLACEHOLDER.OBJECT)
@@ -321,6 +352,15 @@ class LayoutResolver:
         layout = self._by_role.get(role)
         if layout is not None:
             return layout, (f"{extra}; fell back to detected layout {layout.name!r}." if extra else None)
+
+        for alternative in ROLE_ALTERNATIVES.get(role, ()):
+            layout = self._by_role.get(alternative)
+            if layout is not None:
+                note = (
+                    f"no layout in this template matches the {role!r} role; "
+                    f"used its {alternative!r} layout {layout.name!r}."
+                )
+                return layout, (f"{extra}; {note}" if extra else note)
 
         index = ROLE_FALLBACK_INDEX.get(role, CONTENT_LAYOUT)
         if index < len(self._layouts):
