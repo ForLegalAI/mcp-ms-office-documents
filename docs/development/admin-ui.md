@@ -42,6 +42,17 @@ type, was the one URL that did not work. The redirect is built from
 `config.admin.path`, so a custom `ADMIN_PATH` gets it too;
 `tests/test_admin_app.py` pins both the ordering and that it follows config.
 
+**`ADMIN_PATH` cannot be a path the server already serves.** Because the admin
+routes are registered first, `ADMIN_PATH=/healthz` would answer the startup
+probe out of the admin app — and the redirect above made that worse than it
+found it, since `Route("/healthz")` matches the bare path the `Mount` alone
+would have let through to the health route. `config.RESERVED_PATHS` lists
+`/mcp` and the three probes; a colliding value logs an error and falls back to
+`/admin`, rather than refusing to boot: the admin UI is optional and the MCP
+server is not, so a misconfiguration of the former must not take the latter
+down. `tests/test_admin_reserved_paths.py` also compares the list against the
+routes `main.py` actually registers, so the copy cannot drift.
+
 **The target is derived from the request, not from `config.admin.path`.**
 Starlette's `redirect_slashes` builds its `Location` from the request scope, so
 it folds in `root_path` and keeps the query string. A `Location` built from the

@@ -44,7 +44,7 @@ The health-probe routes (`/healthz`, `/readyz`, `/livez`) are the one exception 
 |----------|-------------|---------|
 | `ADMIN_ENABLED` | Mount the template-admin UI (`1`, `true`, `yes`, `on`) | _(off)_ |
 | `ADMIN_PASSWORD` | Password for the admin UI. Falls back to `API_KEY` when unset | _(falls back)_ |
-| `ADMIN_PATH` | URL prefix the admin UI is mounted under | `/admin` |
+| `ADMIN_PATH` | URL prefix the admin UI is mounted under. Cannot be `/mcp`, `/healthz`, `/readyz` or `/livez` — the server already serves those, and the admin routes are registered first, so it would shadow them. A colliding value logs an error and falls back to `/admin`. | `/admin` |
 | `ADMIN_MAX_UPLOAD_MB` | Largest template file the admin UI accepts, in MB. An oversized upload is refused before it is read, so this bounds what an *accepted* one costs in memory | `25` |
 
 See [Template Admin UI](admin-ui.md).
