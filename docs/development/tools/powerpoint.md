@@ -88,11 +88,11 @@ problems go to the warnings list instead.
 | `slide_builder.py` | `PowerpointPresentation`: template selection, one `_build_*` method per slide type, sections, footer and slide numbers, language, the warnings list |
 | `helpers.py` | `SlideHelpers` mixin (titles, placeholders, bullets, tables, images, notes) and free functions: `body_to_bullets()`, `parse_table_data()`, `estimate_text_fill()`, `apply_autofit()`, `fit_table_font_size()`, `set_runs_language()`, `resolve_fill()` |
 | `layouts.py` | Layout roles, `classify_layout()`, `role_for_slide()`, `LayoutResolver` |
-| `placeholder_style.py` | Reading placeholder geometry, character style and list style from a template, and replaying them on plain text boxes (`read_title_style()`, `read_content_rect()`, `draw_title_box()`, `apply_list_style()`) |
+| `placeholder_style.py` | Reading placeholder geometry, character style, size and list style from a template, and replaying them on plain text boxes (`read_title_style()`, `read_content_rect()`, `content_columns()`, `read_body_font_size()`, `draw_title_box()`, `apply_list_style()`) |
 | `templates.py` | `TemplateSpec`, the registry loaded from YAML with an mtime-fingerprint cache, `.potx` handling, `select_template()`, `validate_templates()` |
 | `chart_utils.py` | Category charts from `CategoryChartData`, scatter from `XyChartData`, legend, title, data labels, axis titles |
 | `inline_formatting.py` | Renders the shared inline grammar into python-pptx runs |
-| `constants.py` | Aspect ratios, positional layout fallbacks, typography, autofit ratios, table colours |
+| `constants.py` | Aspect ratios, positional layout fallbacks, typography, autofit ratios, table colours (theme names, not literals) |
 | `warnings.py` | The warnings channel as data: `SlideWarning`, the codes, and the one severity per code (severities from the shared `warning_channel.py`) |
 | `text_metrics.py` | Font resolution (metric-compatible substitutes, generic fallback) and wrapped line counting through Pillow |
 
@@ -188,16 +188,25 @@ schema's range by `_coerce_font_size()` because it bypasses the schema.
 
 `LayoutResolver` never indexes `slide_layouts` by position. Each slide type
 asks for a **role** (`title`, `section`, `content`, `two_column`,
-`comparison`, `image_text`, `title_only`, `blank`); `role_for_slide()` picks
+`comparison`, `image_text`, `title_only`, `blank`, `closing`); `role_for_slide()` picks
 `comparison` over `two_column` when either column has a heading, `blank`
 for an untitled quote so no empty title placeholder is left behind, and
 `image_text` for an image slide when `resolver.provides()` says the template
 has such a layout — the one role that depends on the template rather than on
 the slide alone.
 Resolution order is the slide's own `layout` name, then the registry's
-`layouts:` mapping, then detection, then the positional index with a warning,
-and finally the last layout rather than an `IndexError` on a trimmed
-template.
+`layouts:` mapping, then detection, then a **near-neighbour role** from
+`ROLE_ALTERNATIVES` with a warning, then the positional index with a warning,
+and finally the last layout rather than an `IndexError` on a trimmed template.
+
+The neighbour step exists because the positional index is a guess about a
+template that has already proved unusual. On the template in
+[#195](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/194) the
+`comparison` role was unprovided and position 4 was Title Only, so a
+two-column slide landed on a layout with no body placeholder and lost both
+columns. Every alternative listed can still hold the content: `comparison`
+falls to `two_column` (headings inline) and then `content` (columns merge), so
+the deck degrades instead of dropping text.
 
 `LayoutResolver.describe()` is what `validate_templates()` reports and
 `list_presentation_templates` returns: each layout with its index, placeholder
@@ -208,13 +217,30 @@ layouts in one template may share a name. Together with `coverage()` and
 layout"
 ([#121](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/121)).
 
+`closing` is in `CONFIGURED_ROLE_DEFAULT`: no signature detects it, because a
+contact or thank-you slide is a designer's layout rather than a shape — the
+template in #195 has a "kontakt" layout carrying a QR code, a photo and the
+firm's details. Naming it a role is what lets a template map it in the
+registry's `layouts:` block; unmapped, it resolves to `title` **without** a
+warning, since that is its documented default and not a substitution.
+`missing_roles()` and the admin's analysis both exclude it, or every template
+would be reported as lacking something no placeholder arrangement can supply.
+
 `classify_layout()` reads placeholder *types*, ignoring date, footer and
 slide-number chrome, so it is language-independent. It is deliberately
 conservative: vertical-text layouts and "Content with Caption" return `None`
 and are left for an explicit name. The distinguishing tests are a picture
-placeholder (image_text), a subtitle (title), no content (title_only), four
-content placeholders (comparison), two (two_column), and for one, `BODY`
-means section and `OBJECT` means content.
+placeholder (image_text), a subtitle (title), no content (title_only), two
+content placeholders (two_column), and for one, `BODY` means section and
+`OBJECT` means content.
+
+`comparison` is the one role that is **not** decided by counting. Four content
+placeholders were enough to claim it, and the template in #195 spent them on
+three cards side by side plus a caption bar — so every two-column slide in the
+deck was laid out on a three-card layout. A layout now has to resolve, through
+`content_columns()`, to exactly two columns *each with a heading strip*.
+Anything else is a shape this vocabulary has no name for and returns `None`,
+which is what leaves a three-card layout selectable by name and nothing else.
 
 ### Titles on a layout that has none
 
@@ -261,6 +287,93 @@ percentages, which `list_presentation_templates` passes through. That is the
 answer for a caller positioning a `blank` slide's elements: those coordinates
 stay absolute on the slide — changing them would silently move every existing
 deck — so the safe band is published instead.
+
+### Colour follows the template
+
+Anything the builder *draws* rather than places in a placeholder is a plain
+text box, so it inherits the presentation's `<p:defaultTextStyle>` — `tx1`,
+black — not the body style a placeholder gets. On the dark template in #195
+the KPI figures and the timeline detail lines were black on near-black.
+
+`read_body_color()` reads the master's `<p:bodyStyle>` colour and returns a
+**`MSO_THEME_COLOR`** for a scheme colour, so it keeps tracking the theme
+instead of being flattened to whatever it resolves to today; an `srgbClr`
+comes back as an `RGBColor`. `_paint()` applies it to the KPI cells, the
+timeline detail captions, the quote, blank-slide text elements and the
+bulleted box drawn beside a picture or chart. `_paint_chart()` does the same
+through `chart.font`, which chart text needs because it lives in its own part
+and inherits nothing from the slide.
+
+Two things are deliberately left alone: a timeline chevron's label, which
+takes its colour from the autoshape's `<p:style>` against the accent fill it
+sits on, and a drawn title, which `draw_title_box()` styles from the
+template's *title* style. A template stating no body colour paints nothing.
+
+Table fills were literals — Office's old default blue and a grey beside it —
+so a table came out that blue on every template. `TABLE_HEADER_FILL` and
+`TABLE_ALT_ROW_FILL` are now the theme names `accent1` and `bg2`;
+`_set_cell_fill()` already wrote a theme name as `schemeClr`, only the default
+was not one. `TABLE_HEADER_TEXT` stays an explicit white: it is paired with
+`accent1`, and choosing it from the theme would need a luminance decision this
+tool has no safe way to make. Both remain overridable per slide through
+`header_color` and `fills`, and per template through the registry's `table`
+defaults.
+
+### Unused placeholders are removed
+
+`add_slide()` copies every placeholder its layout defines, so a layout that
+offers more than the slide filled left empty prompt boxes in the deck: the
+third card of a three-card layout, the heading strip of a Comparison column
+given no heading, the body of a Section Header (a `section` slide carries only
+a title), the subtitle of a title slide without one. They neither print nor
+appear in a slideshow, but they are the first thing anyone opening the file to
+edit it sees, and on the template in #195 there were three on a single slide.
+
+`_drop_unused_placeholders()` runs once after every slide is built and removes
+any non-chrome placeholder still holding an empty text frame. A placeholder
+that took a picture, table or chart is no longer an `<p:sp>` with a text
+frame, so filling one keeps it; date, footer and slide-number placeholders are
+skipped because `_apply_footer_and_slide_numbers()` runs after this pass.
+Removing a placeholder changes nothing a reader sees, and PowerPoint's Reset
+Slide restores it from the layout.
+
+### Two columns, matched by geometry
+
+`two_column` slides do **not** address placeholders by `idx`. The indices
+PowerPoint's own Two Content (1, 2) and Comparison (1-4) layouts use are a
+convention, not a rule, and a corporate template routinely breaks it: the one
+in [#195](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/194)
+numbered its two cards 4 and 2 — left and right *in that order* — and its
+comparison layout 4, 13, 14, 15. Addressing by number wrote the right column
+into the left card, dropped the left column and both headings, left three
+placeholders empty, and reported none of it.
+
+`content_columns()` in `placeholder_style.py` reads the shape of the layout
+instead:
+
+1. content placeholders that overlap horizontally by more than half the
+   narrower one are **one column** — measured against the column's full
+   extent so far, not against whichever box joined it first, so a column
+   headed by a narrow strip still claims the boxes inside its wider body;
+2. the **tallest** placeholder of a column is its body;
+3. a **shorter** placeholder above that body is the column's heading strip —
+   at most 60% of the body's height, so a second body is never mistaken for a
+   heading;
+4. columns are returned left to right, as `(heading, body)` pairs, with
+   `heading` None for a layout that reserves no strip (Two Content).
+
+The builder then fills column by column, and every shortfall is a warning
+rather than a silent loss:
+
+| Template offers | What happens | Code | Severity |
+|---|---|---|---|
+| Two columns with heading strips | Each heading and body written as asked | — | — |
+| Two columns, no heading strips | Heading becomes a bold first line of its column | `heading_inlined` | info |
+| One content area | Both columns merged into it, in order, headings bolded | `columns_merged` | warning |
+| No content placeholder | Nothing to write into | `column_dropped` | error |
+
+A layout with *more* columns than the slide has leaves the extra ones as the
+template drew them.
 
 ### Pictures in a picture placeholder
 
@@ -357,6 +470,26 @@ The result drives two things: `apply_autofit()` writes
 shrink the text, and a warning is returned when the estimate passes the
 shrink floor.
 
+**Which size gets measured** matters as much as which face. The estimate used
+to assume `DEFAULT_BODY_FONT_SIZE` (18pt) for every template, and both
+templates this server ships set **28pt** in the master's `<p:bodyStyle>` — so
+every estimate was low by the square of the ratio, about 2.4x. Text needing
+1.9x its placeholder measured as 0.86x: `apply_autofit()` was handed no scale,
+wrote a bare `<a:normAutofit/>`, and PowerPoint rendered the text at full size
+straight off the bottom of the slide, because it only recomputes autofit when
+someone clicks into the box. The overflow warning is derived from the same
+number, so the caller was not told either
+([#195](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/194)).
+
+`read_body_font_size()` resolves the real size the way PowerPoint inherits it,
+nearest first: the shape's own `<a:lstStyle>`, the layout placeholder it came
+from, the master's body placeholder, the master's `<p:bodyStyle>`, then the
+presentation's `<p:defaultTextStyle>`. `_fit_text()` uses it per placeholder;
+the boxes the builder draws itself use `read_master_body_font_size()` through
+`_fit_scale()`, because `apply_list_style()` gives them the master's body
+style. `DEFAULT_BODY_FONT_SIZE` remains only as the last resort for a template
+that states no size anywhere.
+
 Which face gets measured, best first: the deck's own typeface
 (`theme_body_typeface()` reads the theme's minor latin font), then a
 **metric-compatible** substitute — Carlito for Calibri, Liberation Sans or
@@ -433,9 +566,16 @@ Both are reported.
   image that fails becomes a placeholder box **and** a warning.
 - **A builder exception fails the deck.** This is intentional: a half-built
   deck with a success response is worse than an error naming the slide.
-- **Two-column slides depend on placeholder `idx` values 1–4** matching
-  PowerPoint's Two Content and Comparison conventions, and footers on `idx`
-  11 and 12. A custom template that renumbers them silently drops content.
+- **Never measure text against a hardcoded point size.** Ask
+  `read_body_font_size()` what the template actually renders at; the estimate
+  is wrong by the *square* of any error, and it is the same number the
+  overflow warning is derived from.
+- **Never match a content placeholder by `idx`.** Use `content_columns()`
+  (columns) or `_content_placeholders()` (single body). `idx` numbering is a
+  PowerPoint convention a customer template need not follow, and assuming it
+  silently dropped content ([#195](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/194)).
+  Footers and slide numbers are the remaining exception: they are still read
+  from `idx` 11 and 12.
 - **Template defaults bypass the schema.** Coerce and clamp them in the
   builder, as `_coerce_bool()` and `_coerce_font_size()` do.
 - **The registry cache is keyed by file mtimes.** A test that writes a
@@ -459,6 +599,10 @@ Both are reported.
 | `tests/test_pptx_bullet_glyphs.py` | Bullets in a text box: the master's glyphs and indents, and the order of `<a:pPr>` |
 | `tests/test_pptx_table_formatting.py` | Column widths, cell and row fills, merged blocks, and what happens when they do not fit the table |
 | `tests/test_pptx_text_metrics.py` | Measured line counts, wrapping, face selection, the arithmetic fallback, and that the image's font packages exist and match the table |
+| `tests/test_pptx_theme_colors.py` | Drawn text, chart text and table fills taking the template's colours rather than literals |
+| `tests/test_pptx_unused_placeholders.py` | That no generated slide keeps an empty "Click to add text" box, and that filled ones survive |
+| `tests/test_pptx_body_font_size.py` | Reading the template's real body size, and the shrink factor and overflow warning that follow from it |
+| `tests/test_pptx_two_columns.py` | Columns matched by geometry on renumbered templates, and the warning each degraded path owes |
 | `tests/test_pptx_sections.py` | Outline-pane sections |
 | `tests/test_pptx_templates.py` | Registry loading, `.potx`, layout classification and resolution, defaults |
 | `tests/test_admin_pptx.py` | Admin UI support for PowerPoint templates |
@@ -471,12 +615,13 @@ assert on shapes and XML. See [`../testing.md`](../testing.md).
 ## Known limitations
 
 - **Fit estimation measures the shapes, not the layout.** Text is measured
-  against a real font file, but PowerPoint's own line breaking, kerning and
-  autofit are not reproduced, and the deck's face may only be approximated by
-  a substitute. The shrink factor remains a hint PowerPoint recomputes on
-  first edit.
-- **Placeholder `idx` conventions are assumed** for two-column bodies and for
-  footers and slide numbers. See the invariants above.
+  against a real font file at the size the template states, but PowerPoint's
+  own line breaking, kerning and autofit are not reproduced, and the deck's
+  face may only be approximated by a substitute. The shrink factor remains a
+  hint PowerPoint recomputes on first edit. Every bullet is measured at the
+  level-1 size, so a slide of deeply indented bullets is estimated high.
+- **Placeholder `idx` conventions are assumed for footers and slide numbers**
+  (`idx` 11 and 12). Bodies and columns are matched by geometry instead.
 - **No SmartArt.** KPI and timeline slides are built from autoshapes.
 - **Category charts only in `chart`.** Scatter is its own slide type because
   it needs a different data object; bubble and combo charts are not offered.

@@ -42,8 +42,10 @@ from __future__ import annotations
 import copy
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
+from pptx.dml.color import RGBColor
+from pptx.enum.dml import MSO_THEME_COLOR
 from pptx.enum.shapes import PP_PLACEHOLDER
 from pptx.oxml.ns import qn
 
@@ -117,6 +119,77 @@ def content_placeholders(container):
             if placeholder.placeholder_format.type in CONTENT_PLACEHOLDER_TYPES]
 
 
+# A heading strip is much shorter than the body beneath it. Anything taller
+# than this share of the body is a second body, not a heading for the first.
+_HEADING_MAX_HEIGHT_RATIO = 0.6
+# Two placeholders share a column when they overlap horizontally by more than
+# this share of the narrower one.
+_COLUMN_OVERLAP_RATIO = 0.5
+
+
+def _placed(placeholder) -> bool:
+    return not any(value is None for value in
+                   (placeholder.left, placeholder.top,
+                    placeholder.width, placeholder.height))
+
+
+def content_columns(container):
+    """``(heading, body)`` per content column of *container*, left to right.
+
+    Addressing a two-column layout by placeholder ``idx`` only works on a
+    template numbered the way PowerPoint's built-in layouts are. A corporate
+    template routinely is not — the one in #195 numbered its two cards 4 and
+    2, left and right in that order, and its Comparison layout used 4, 13, 14
+    and 15 — so the builder wrote one column into the other's box and dropped
+    the rest without a word.
+
+    Geometry says what ``idx`` cannot: placeholders that overlap horizontally
+    are one column, the tallest of a column is its body, and a shorter
+    placeholder above that body is the heading for it. ``heading`` is None for
+    a layout that reserves no heading strip, which is what Two Content is.
+
+    A heading is only ever looked for **above** its body, which is where every
+    Comparison-shaped layout puts one. A layout captioning each column from
+    below reads as headingless here, and its captions become part of the body
+    text — visible, and reported as ``heading_inlined`` if the slide supplied
+    headings of its own.
+    """
+    placeholders = [ph for ph in content_placeholders(container) if _placed(ph)]
+    if not placeholders:
+        return []
+
+    # A column is matched on the full extent of what is already in it, not on
+    # whichever box happened to sort first: a column whose first member is a
+    # narrow heading would otherwise measure every later box against the
+    # heading's width, and a box sitting inside the wider body below it would
+    # start a spurious third column.
+    columns: List[List[Any]] = []
+    spans: List[Tuple[int, int]] = []
+    for placeholder in sorted(placeholders, key=lambda ph: (ph.left, ph.top)):
+        left, right = placeholder.left, placeholder.left + placeholder.width
+        for index, (span_left, span_right) in enumerate(spans):
+            overlap = min(right, span_right) - max(left, span_left)
+            narrower = min(placeholder.width, span_right - span_left)
+            if overlap > _COLUMN_OVERLAP_RATIO * narrower:
+                columns[index].append(placeholder)
+                spans[index] = (min(left, span_left), max(right, span_right))
+                break
+        else:
+            columns.append([placeholder])
+            spans.append((left, right))
+
+    resolved = []
+    for column in columns:
+        column.sort(key=lambda ph: ph.top)
+        body = max(column, key=lambda ph: ph.height)
+        above = [ph for ph in column if ph.top < body.top
+                 and ph.height <= _HEADING_MAX_HEIGHT_RATIO * body.height]
+        resolved.append((above[0] if above else None, body))
+
+    resolved.sort(key=lambda pair: pair[1].left)
+    return resolved
+
+
 def read_content_rect(layout) -> Optional[Rect]:
     """The rectangle *layout* reserves for content, or None if it reserves none.
 
@@ -187,6 +260,175 @@ def _body_properties(placeholder, master) -> Iterator[object]:
         bodyPr = txBody.find(qn('a:bodyPr'))
         if bodyPr is not None:
             yield bodyPr
+
+
+def _level_properties(element, level: int):
+    """``<a:lvlNpPr>`` of a ``lstStyle``/``bodyStyle`` element, or None."""
+    if element is None:
+        return None
+    return element.find(qn(f'a:lvl{level + 1}pPr'))
+
+
+def _size_of(properties) -> Optional[float]:
+    """The ``sz`` on a paragraph-properties element, in points."""
+    if properties is None:
+        return None
+    defRPr = properties.find(qn('a:defRPr'))
+    if defRPr is None:
+        return None
+    sz = defRPr.get('sz')
+    return int(sz) / 100.0 if sz else None
+
+
+def _matching_layout_placeholder(placeholder):
+    """The layout placeholder a slide placeholder inherits from, or None."""
+    part = getattr(placeholder, "part", None)
+    layout = getattr(part, "slide_layout", None)
+    if layout is None:
+        return None
+    idx = placeholder.placeholder_format.idx
+    for candidate in layout.placeholders:
+        if candidate.placeholder_format.idx == idx:
+            return candidate
+    return None
+
+
+# DrawingML colour names to the enum python-pptx writes them back as, so a
+# colour read from the template keeps following the theme instead of being
+# flattened to whatever it resolves to today.
+_SCHEME_COLORS = {
+    'tx1': MSO_THEME_COLOR.TEXT_1, 'tx2': MSO_THEME_COLOR.TEXT_2,
+    'bg1': MSO_THEME_COLOR.BACKGROUND_1, 'bg2': MSO_THEME_COLOR.BACKGROUND_2,
+    'dk1': MSO_THEME_COLOR.DARK_1, 'dk2': MSO_THEME_COLOR.DARK_2,
+    'lt1': MSO_THEME_COLOR.LIGHT_1, 'lt2': MSO_THEME_COLOR.LIGHT_2,
+    'accent1': MSO_THEME_COLOR.ACCENT_1, 'accent2': MSO_THEME_COLOR.ACCENT_2,
+    'accent3': MSO_THEME_COLOR.ACCENT_3, 'accent4': MSO_THEME_COLOR.ACCENT_4,
+    'accent5': MSO_THEME_COLOR.ACCENT_5, 'accent6': MSO_THEME_COLOR.ACCENT_6,
+    'hlink': MSO_THEME_COLOR.HYPERLINK,
+    'folHlink': MSO_THEME_COLOR.FOLLOWED_HYPERLINK,
+}
+
+
+def read_body_color(master):
+    """The colour *master* gives body text, or None if it states none.
+
+    What the builder's own text boxes should be. They are plain text boxes, so
+    they inherit the presentation's default text style rather than the body
+    style a placeholder would — `tx1`, black, whatever the deck looks like.
+    On a dark template that is black on near-black: the KPI figures in #195
+    were unreadable, and so were the timeline detail lines.
+
+    A scheme colour comes back as its ``MSO_THEME_COLOR`` so it keeps tracking
+    the theme; anything else comes back as an ``RGBColor``.
+    """
+    if master is None:
+        return None
+    txStyles = master._element.find(qn('p:txStyles'))
+    if txStyles is None:
+        return None
+    properties = _level_properties(txStyles.find(qn('p:bodyStyle')), 0)
+    if properties is None:
+        return None
+    defRPr = properties.find(qn('a:defRPr'))
+    if defRPr is None:
+        return None
+    solidFill = defRPr.find(qn('a:solidFill'))
+    if solidFill is None:
+        return None
+
+    schemeClr = solidFill.find(qn('a:schemeClr'))
+    if schemeClr is not None:
+        return _SCHEME_COLORS.get(schemeClr.get('val'))
+    srgbClr = solidFill.find(qn('a:srgbClr'))
+    if srgbClr is not None and srgbClr.get('val'):
+        return RGBColor.from_string(srgbClr.get('val'))
+    return None
+
+
+def apply_text_color(target, color) -> None:
+    """Paint every run of a text frame or paragraph in *color*.
+
+    A no-op when *color* is None, so a template that states no body colour
+    keeps whatever it was inheriting.
+    """
+    if color is None:
+        return
+    paragraphs = getattr(target, "paragraphs", None) or [target]
+    for paragraph in paragraphs:
+        for run in paragraph.runs:
+            if isinstance(color, RGBColor):
+                run.font.color.rgb = color
+            else:
+                run.font.color.theme_color = color
+
+
+def read_master_body_font_size(master, level: int = 0) -> Optional[float]:
+    """The size *master* gives body text at *level*, or None.
+
+    What a plain text box laid out by :func:`apply_list_style` renders at, so
+    the builder's own bullet boxes are measured against the same number a
+    placeholder would be.
+    """
+    if master is None:
+        return None
+    for shape in content_placeholders(master):
+        txBody = shape._element.find(qn('p:txBody'))
+        if txBody is None:
+            continue
+        size = _size_of(_level_properties(txBody.find(qn('a:lstStyle')), level))
+        if size is not None:
+            return size
+    txStyles = master._element.find(qn('p:txStyles'))
+    if txStyles is None:
+        return None
+    return _size_of(_level_properties(txStyles.find(qn('p:bodyStyle')), level))
+
+
+def read_body_font_size(placeholder, level: int = 0) -> Optional[float]:
+    """The point size text in *placeholder* actually renders at, or None.
+
+    The fit estimate used to assume ``DEFAULT_BODY_FONT_SIZE`` — 18pt — for
+    every template. A template whose master sets a different body size was
+    then measured against a font it does not use: the one in
+    [#195] sets 28pt, so a body needing 1.9x its box measured as 0.86x, no
+    shrink factor was written, and PowerPoint rendered the text at full size
+    straight off the bottom of the slide. Being wrong in this direction is
+    silent, because the overflow warning is computed from the same number.
+
+    Resolution follows what PowerPoint inherits, nearest first: the shape's
+    own list style, the layout placeholder it came from, the master's body
+    placeholder, the master's ``<p:bodyStyle>``, then the presentation's
+    default text style. None when nothing in the chain states a size.
+    """
+    def own_style(shape):
+        if shape is None:
+            return None
+        txBody = shape._element.find(qn('p:txBody'))
+        if txBody is None:
+            return None
+        return _size_of(_level_properties(txBody.find(qn('a:lstStyle')), level))
+
+    layout_placeholder = _matching_layout_placeholder(placeholder)
+    for shape in (placeholder, layout_placeholder):
+        size = own_style(shape)
+        if size is not None:
+            return size
+
+    layout = getattr(getattr(placeholder, "part", None), "slide_layout", None)
+    master = _master_of(layout) if layout is not None else None
+    size = read_master_body_font_size(master, level)
+    if size is not None:
+        return size
+
+    presentation = getattr(getattr(placeholder, "part", None), "package", None)
+    presentation_part = getattr(presentation, "presentation_part", None)
+    element = getattr(getattr(presentation_part, "presentation", None), "_element", None)
+    if element is not None:
+        size = _size_of(_level_properties(
+            element.find(qn('p:defaultTextStyle')), level))
+        if size is not None:
+            return size
+    return None
 
 
 def read_title_style(layout) -> Optional[TitleStyle]:

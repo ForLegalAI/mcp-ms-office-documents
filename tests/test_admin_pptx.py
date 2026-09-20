@@ -206,7 +206,9 @@ class TestAnalyzePptx:
         tool does not honour — worse than reporting nothing, because it looks
         authoritative.
         """
-        from pptx_tools.layouts import ROLES, LayoutResolver
+        from pptx_tools.layouts import (
+            CONFIGURED_ROLE_DEFAULT, ROLES, LayoutResolver,
+        )
         from pptx_tools.templates import open_template
 
         reported = analyze_pptx(path.read_bytes()).role_map
@@ -217,6 +219,13 @@ class TestAnalyzePptx:
             if role in reported:
                 assert reported[role] == layout.name, f"{role} disagrees"
                 assert warning is None, f"{role} resolved with a warning: {warning}"
+            elif role in CONFIGURED_ROLE_DEFAULT:
+                # No signature detects it, so the UI cannot report one and the
+                # resolver does not warn: it uses the role's documented default,
+                # which the template does provide.
+                default, _ = resolver.resolve(CONFIGURED_ROLE_DEFAULT[role])
+                assert layout.name == default.name, f"{role} is not its default"
+                assert warning is None, f"{role} warned about its own default"
             else:
                 # A role the UI reports as missing must be one the resolver
                 # cannot satisfy either — it falls back by position and says so.
