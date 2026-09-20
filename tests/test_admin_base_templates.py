@@ -55,7 +55,7 @@ def admin_client(tmp_path, monkeypatch):
 
 
 def _csrf(client) -> str:
-    html = client.get("/admin/base").text
+    html = client.get("/admin/word/base").text
     tag = re.search(r'<input[^>]*name="csrf"[^>]*>', html)
     return re.search(r'value="([^"]*)"', tag.group(0)).group(1)
 
@@ -86,19 +86,40 @@ def _xlsx_bytes(*style_names):
 
 
 def test_every_slot_is_listed(admin_client):
+    """Each slot appears on the Base tab of the section that owns it.
+
+    The five used to share one page, which put the Word document and the
+    Excel style workbook — unrelated jobs with very different blast radii —
+    side by side. Now a slot is shown where its documents are managed, and
+    `admin.sections.slot_section` is the single place that decides where.
+    """
     from admin.base_templates import SLOTS
+    from admin.sections import slot_section
 
     client, _ = admin_client
-    html = client.get("/admin/base").text
     for s in SLOTS:
-        assert s.label in html, f"{s.key} missing from the page"
+        sec = slot_section(s.key)
+        html = client.get(f"/admin/{sec.slug}/base").text
+        assert s.label in html, f"{s.key} missing from the {sec.slug} section"
         assert f"/admin/base/{s.key}/upload" in html
 
 
-def test_page_is_reachable_from_the_nav(admin_client):
+def test_every_slot_belongs_to_exactly_one_section():
+    """A slot shown twice, or nowhere, is a table that has drifted."""
+    from admin.base_templates import SLOTS
+    from admin.sections import SECTIONS
+
+    owners = {s.key: [sec.slug for sec in SECTIONS if s.key in sec.slot_keys]
+              for s in SLOTS}
+    assert all(len(v) == 1 for v in owners.values()), owners
+
+
+def test_the_base_tab_is_reachable_from_the_nav(admin_client):
+    """Two clicks: the section is in the top bar, the tab is in its tab bar."""
     client, _ = admin_client
     nav = re.search(r"<nav>(.*?)</nav>", client.get("/admin/").text, re.S)
-    assert nav and "/admin/base" in nav.group(1)
+    assert nav and "/admin/word" in nav.group(1)
+    assert "/admin/word/base" in client.get("/admin/word").text
 
 
 def test_download_route_is_not_swallowed_by_the_generic_pattern(admin_client):
@@ -116,7 +137,7 @@ def test_download_route_is_not_swallowed_by_the_generic_pattern(admin_client):
 def test_bundled_default_is_served_when_nothing_is_installed(admin_client):
     client, custom = admin_client
     assert not (custom / "custom_docx_template.docx").exists()
-    html = client.get("/admin/base").text
+    html = client.get("/admin/word/base").text
     assert "Bundled default" in html
     r = client.get("/admin/base/docx/download")
     assert r.content == (project_root / "default_templates"
@@ -140,10 +161,10 @@ def test_upload_installs_and_takes_effect_immediately(admin_client):
 
 def test_revert_is_offered_only_once_something_is_installed(admin_client):
     client, _ = admin_client
-    assert "/revert" not in client.get("/admin/base").text
+    assert "/revert" not in client.get("/admin/word/base").text
     _post(client, "/admin/base/docx/upload",
           files={"file": ("m.docx", _docx_bytes(), "application/octet-stream")})
-    assert "/admin/base/docx/revert" in client.get("/admin/base").text
+    assert "/admin/base/docx/revert" in client.get("/admin/word/base").text
 
 
 def test_revert_restores_the_bundled_default(admin_client):
@@ -336,7 +357,7 @@ def test_base_page_requires_authentication(tmp_path, monkeypatch):
     from fastmcp import FastMCP
     from admin.app import build_combined_app
     with TestClient(build_combined_app(FastMCP("t"), Config.from_env())) as c:
-        for path in ("/admin/base", "/admin/base/docx/download"):
+        for path in ("/admin/word/base", "/admin/base/docx/download"):
             r = c.get(path, follow_redirects=False)
             assert r.status_code == 303
             assert r.headers["location"].endswith("/admin/login")

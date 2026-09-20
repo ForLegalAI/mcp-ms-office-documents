@@ -358,7 +358,8 @@ def test_clone_is_offered_on_the_row_and_the_edit_page(admin_client):
     client, _mcp, _custom = admin_client
     _letter(client)
 
-    assert "/admin/docx/formal_letter/clone" in client.get("/admin/").text
+    assert ("/admin/docx/formal_letter/clone"
+            in client.get("/admin/word/templates").text)
     assert "/admin/docx/formal_letter/clone" in \
         client.get("/admin/docx/formal_letter/edit").text
 
@@ -409,7 +410,7 @@ def test_a_failed_clone_leaves_a_removable_file_not_a_broken_template(admin_clie
     assert _store().get_spec("docx", "half") is None, "no broken template"
     assert (custom / "half.docx").exists(), "the copied file is what is left"
 
-    row = client.get("/admin/files").text
+    row = client.get("/admin/server/files").text
     assert "half.docx" in row and "Unreferenced" in row, \
         "and it is findable and removable on the Source files page"
 

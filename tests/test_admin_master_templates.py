@@ -119,7 +119,7 @@ def test_a_master_template_links_to_its_detail_page(admin_client):
     _write_master(cfg, MASTER_SPEC)
     (custom / "legacy_letter.docx").write_bytes(_docx_bytes())
 
-    html = client.get("/admin/").text
+    html = client.get("/admin/word/templates").text
     assert "/admin/docx/legacy_letter/master" in html
     assert "Inspect" in _row(html, "legacy_letter")
 
@@ -183,7 +183,7 @@ def test_a_disabled_master_template_is_still_listed(admin_client):
     _write_master(cfg, dict(MASTER_SPEC, enabled=False))
     (custom / "legacy_letter.docx").write_bytes(_docx_bytes())
 
-    row = _row(client.get("/admin/").text, "legacy_letter")
+    row = _row(client.get("/admin/word/templates").text, "legacy_letter")
     assert row, "a disabled master template must still appear"
     assert "Disabled" in row
     assert client.get("/admin/docx/legacy_letter/master").status_code == 200
@@ -202,7 +202,7 @@ def test_a_managed_template_is_not_listed_twice(admin_client):
     (custom / "legacy_letter.docx").write_bytes(_docx_bytes())
     _post(client, "/admin/docx/legacy_letter/adopt", data={})
 
-    html = client.get("/admin/").text
+    html = client.get("/admin/word/templates").text
     assert html.count("/admin/docx/legacy_letter/master") == 0, \
         "the master row must go once the managed spec overrides it"
     assert "/admin/docx/legacy_letter/edit" in html

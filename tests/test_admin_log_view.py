@@ -71,7 +71,7 @@ def _log_rows(html):
 
 def test_level_filter_is_exact_not_a_two_state_toggle(admin_client):
     """`error` used to mean "warnings and errors"; it now means errors."""
-    rows = _log_rows(admin_client.get("/admin/status?level=error").text)
+    rows = _log_rows(admin_client.get("/admin/server/log?level=error").text)
     assert any("Unknown style_mapping key" in r for r in rows)
     assert not any("CSRF" in r for r in rows), (
         "a WARNING must not appear under an error-only filter"
@@ -79,25 +79,25 @@ def test_level_filter_is_exact_not_a_two_state_toggle(admin_client):
 
 
 def test_warning_level_includes_errors(admin_client):
-    rows = _log_rows(admin_client.get("/admin/status?level=warning").text)
+    rows = _log_rows(admin_client.get("/admin/server/log?level=warning").text)
     assert any("CSRF" in r for r in rows)
     assert any("Unknown style_mapping key" in r for r in rows)
 
 
 def test_source_filter_keeps_one_package(admin_client):
-    rows = _log_rows(admin_client.get("/admin/status?logger=admin").text)
+    rows = _log_rows(admin_client.get("/admin/server/log?logger=admin").text)
     assert any("Wrote docx asset" in r for r in rows)
     assert not any("style_map" in r for r in rows)
 
 
 def test_search_matches_the_message(admin_client):
-    rows = _log_rows(admin_client.get("/admin/status?q=letter.docx").text)
+    rows = _log_rows(admin_client.get("/admin/server/log?q=letter.docx").text)
     assert len(rows) == 1 and "Wrote docx asset" in rows[0]
 
 
 def test_search_also_matches_the_logger_name(admin_client):
     """"Which module logged this" is as useful a question as the text."""
-    rows = _log_rows(admin_client.get("/admin/status?q=style_map").text)
+    rows = _log_rows(admin_client.get("/admin/server/log?q=style_map").text)
     assert rows and all("style_map" in r for r in rows)
 
 
@@ -109,32 +109,32 @@ def test_search_is_case_insensitive(admin_client, needle):
     needle lands in the very buffer the next query searches — comparing two
     responses compares polluted sets.
     """
-    rows = _log_rows(admin_client.get(f"/admin/status?q={needle}").text)
+    rows = _log_rows(admin_client.get(f"/admin/server/log?q={needle}").text)
     assert any("Rejected POST with invalid CSRF token" in r for r in rows)
 
 
 def test_filters_combine(admin_client):
     rows = _log_rows(
-        admin_client.get("/admin/status?level=warning&logger=admin&q=csrf").text)
+        admin_client.get("/admin/server/log?level=warning&logger=admin&q=csrf").text)
     assert len(rows) == 1 and "CSRF" in rows[0]
 
 
 def test_no_match_is_distinguished_from_nothing_captured(admin_client):
-    html = admin_client.get("/admin/status?q=nothing-matches-this").text
+    html = admin_client.get("/admin/server/log?q=nothing-matches-this").text
     assert "No records match these filters" in html
     assert "No log records captured yet" not in html
 
 
 def test_filter_state_survives_in_the_form(admin_client):
     """A filtered view has to be a URL you can bookmark or paste."""
-    html = admin_client.get("/admin/status?level=warning&logger=admin&q=token").text
+    html = admin_client.get("/admin/server/log?level=warning&logger=admin&q=token").text
     assert 'value="token"' in html
     assert 'value="warning" selected' in html
     assert 'value="admin" selected' in html
 
 
 def test_sources_are_offered_as_packages(admin_client):
-    html = admin_client.get("/admin/status").text
+    html = admin_client.get("/admin/server/log").text
     options = re.findall(r'<option value="([^"]+)"[^>]*>\1</option>', html)
     assert "admin" in options and "docx_tools" in options
     assert "admin.store" not in options, "grouped by package, not every module"
@@ -146,7 +146,7 @@ def test_a_level_that_could_never_match_is_not_offered(admin_client):
     Offering `debug` on an INFO server is a filter that always comes back
     empty and reads as broken, so it is withheld and explained instead.
     """
-    html = admin_client.get("/admin/status").text
+    html = admin_client.get("/admin/server/log").text
     assert metrics.capture_level() == logging.INFO
     assert 'value="debug"' not in html
     assert "Set DEBUG=true" in html
@@ -155,11 +155,13 @@ def test_a_level_that_could_never_match_is_not_offered(admin_client):
 
 
 def test_auto_refresh_is_off_by_default(admin_client):
-    assert "location.reload" not in admin_client.get("/admin/status").text
+    # On the tab that offers it: auto-refresh belongs to the log view, so
+    # asserting its absence anywhere else would pass for the wrong reason.
+    assert "location.reload" not in admin_client.get("/admin/server/log").text
 
 
 def test_auto_refresh_emits_an_inline_timer(admin_client):
-    html = admin_client.get("/admin/status?refresh=30").text
+    html = admin_client.get("/admin/server/log?refresh=30").text
     assert "location.reload" in html
     assert "30000" in html, "seconds must reach the timer as milliseconds"
     assert 'value="30" selected' in html
@@ -174,7 +176,7 @@ def test_an_unusable_refresh_value_turns_it_off(admin_client, raw):
     a timer no option in the <select> shows as chosen, so the control would
     read "off" while the page reloaded under you.
     """
-    r = admin_client.get(f"/admin/status?refresh={raw}")
+    r = admin_client.get(f"/admin/server/log?refresh={raw}")
     assert r.status_code == 200
     assert "location.reload" not in r.text
     assert 'value="0" selected' in r.text, "the control must show it is off"
@@ -185,7 +187,7 @@ def test_the_limit_is_reported_when_it_bites(admin_client):
 
     for i in range(LOG_LIMIT + 20):
         logging.getLogger("admin.flood").info("record %d", i)
-    html = admin_client.get("/admin/status?logger=admin").text
+    html = admin_client.get("/admin/server/log?logger=admin").text
     assert f"newest {LOG_LIMIT}" in html, (
         "a truncated view must say so, or it reads as the whole story"
     )
@@ -206,7 +208,7 @@ def test_the_limit_applies_after_filtering(admin_client):
     for i in range(LOG_LIMIT * 2):
         logging.getLogger("admin.flood").info("noise %d", i)
 
-    rows = _log_rows(admin_client.get("/admin/status?q=the one record").text)
+    rows = _log_rows(admin_client.get("/admin/server/log?q=the one record").text)
     assert any("the one record that matters" in r for r in rows), (
         "a match older than the newest LOG_LIMIT records must still be found"
     )

@@ -267,11 +267,11 @@ def test_the_row_shows_disabled_and_offers_enable(admin_client):
     client, _mcp, _cfg = admin_client
     name = _saved(client)
 
-    html = client.get("/admin/").text
+    html = client.get("/admin/word/templates").text
     assert "Disable" in html, "a live template offers Disable"
 
     _post(client, f"/admin/docx/{name}/enabled", data={"enabled": ""})
-    html = client.get("/admin/").text
+    html = client.get("/admin/word/templates").text
     assert "Disabled" in html, "the status column must say so"
     assert f"/admin/docx/{name}/enabled" in html
     assert ">Enable<" in html, "a disabled template offers Enable"

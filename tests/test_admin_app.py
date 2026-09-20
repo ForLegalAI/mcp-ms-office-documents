@@ -110,11 +110,22 @@ def test_login_required(tmp_path, monkeypatch):
 
 
 def test_index_lists_sections(admin_client):
+    """The landing page is a tile per section, not three stacked tables."""
+    from admin.sections import SECTIONS
+
     client, _ = admin_client
     r = client.get("/admin/")
     assert r.status_code == 200
-    assert "Word templates" in r.text
-    assert "Email templates" in r.text
+    for s in SECTIONS:
+        assert s.label in r.text, f"{s.slug} missing from the dashboard"
+        assert f'href="/admin/{s.slug}"' in r.text
+
+
+def test_each_section_lists_its_own_templates(admin_client):
+    """The template lists moved from the index onto each section's tab."""
+    client, _ = admin_client
+    assert "Word templates" in client.get("/admin/word/templates").text
+    assert "Email templates" in client.get("/admin/email/templates").text
 
 
 def test_draft_detects_placeholders(admin_client):
@@ -230,13 +241,13 @@ def test_ui_theme_and_controls_present(admin_client):
 
 def test_status_page_renders(admin_client):
     client, _ = admin_client
-    r = client.get("/admin/status")
+    r = client.get("/admin/server/status")
     assert r.status_code == 200
     assert "Uptime" in r.text
     assert "Upload backend" in r.text
     assert "Tool usage" in r.text
     # The errors-only filter is a valid view too.
-    assert client.get("/admin/status?level=error").status_code == 200
+    assert client.get("/admin/server/log?level=error").status_code == 200
 
 
 @pytest.mark.asyncio
@@ -254,7 +265,7 @@ async def test_status_reflects_tool_calls(admin_client):
     # Recorded regardless of whether the LOCAL upload succeeds in this env.
     st = metrics.get_tool_stat("metric_tpl")
     assert st is not None and (st.calls + st.errors) >= 1
-    r = client.get("/admin/status")
+    r = client.get("/admin/server/status")
     assert "metric_tpl" in r.text
 
 
@@ -273,7 +284,7 @@ def test_status_shows_what_a_build_worked_around(admin_client):
     metrics.record_call("docx", "create_word_document")
     metrics.record_warnings("docx", "create_word_document", channel)
 
-    html = client.get("/admin/status").text
+    html = client.get("/admin/server/status").text
     assert "1 error" in html and "1 info" in html, "severities must be split"
     assert "Warnings reported" in html
     assert "line 12: a table row was dropped" in html
@@ -282,7 +293,7 @@ def test_status_shows_what_a_build_worked_around(admin_client):
 
 def test_status_says_nothing_when_no_build_has_warned(admin_client):
     client, _ = admin_client
-    html = client.get("/admin/status").text
+    html = client.get("/admin/server/status").text
     assert "No build has reported a warning this session." in html
 
 
@@ -290,7 +301,7 @@ def test_status_lists_static_tools_not_only_template_tools(admin_client):
     """The usage table was template-only; a degrading Word build is the same question."""
     client, _ = admin_client
     metrics.record_call("docx", "create_word_document")
-    html = client.get("/admin/status").text
+    html = client.get("/admin/server/status").text
     assert "create_word_document" in html
 
 
@@ -417,11 +428,17 @@ def test_every_kind_has_a_reachable_create_link(admin_client):
     PowerPoint template removed the only route to the page that made it.
     """
     from admin.kinds import KINDS
+    from admin.sections import section_for_kind
+
+    def templates_tab(kind):
+        return client.get(
+            section_for_kind(kind).href(lambda p="": f"/admin{p}",
+                                        "templates")).text
 
     client, _ = admin_client
-    empty = client.get("/admin/").text
     for kind in KINDS:
-        assert f"/admin/new/{kind}" in empty, f"{kind}: no create link when empty"
+        assert f"/admin/new/{kind}" in templates_tab(kind), (
+            f"{kind}: no create link when empty")
 
     # Give every kind a template, so no section is in its empty state.
     _post(client, "/admin/docx/draft", data={"name": "reach_docx"},
@@ -434,18 +451,29 @@ def test_every_kind_has_a_reachable_create_link(admin_client):
           files={"file": ("reach_deck.pptx", pptx.read_bytes(),
                           "application/octet-stream")})
 
-    populated = client.get("/admin/").text
     for kind in KINDS:
-        assert f"/admin/new/{kind}" in populated, (
+        assert f"/admin/new/{kind}" in templates_tab(kind), (
             f"{kind}: create page unreachable once a template exists")
 
-    # Belt and braces: the top bar lists every kind too, so the table is not
-    # the only way in. Checked separately because either one alone would
-    # satisfy the reachability assertion above.
+    # Belt and braces: the create link is in the tab's page header as well as
+    # in its card, so neither one alone is what satisfies the assertion above.
+    # The top bar no longer carries "New …" links at all — creating lives
+    # beside the list it adds to — which is exactly why the redundancy moved
+    # here. PowerPoint is the case that matters: it is the kind the old top
+    # bar did not cover.
+    # Two places, so neither one alone is what satisfies the assertions above:
+    # the page header carries it whatever the list is doing, and the empty
+    # state carries it where a first-time admin is looking. PowerPoint is the
+    # case that matters — the kind the old top bar did not cover.
+    populated = templates_tab("pptx")
+    header = re.search(r'<div class="head-actions">(.*?)</div>', populated, re.S)
+    assert header and "/admin/new/pptx" in header.group(1), (
+        "the page header must carry the create link")
     nav = re.search(r"<nav>(.*?)</nav>", populated, re.S)
     assert nav, "no nav rendered"
     for kind in KINDS:
-        assert f"/admin/new/{kind}" in nav.group(1), f"{kind}: missing from the top bar"
+        assert f"/admin/new/{kind}" not in nav.group(1), (
+            f"{kind}: the top bar is for sections, not create links")
 
 
 class _FakeRequest:
@@ -473,7 +501,7 @@ def test_auth_gate_has_no_static_file_exemption():
     assert before(_FakeRequest("/admin/login/"), signed_out) is None
 
     # Everything else redirects — including what used to be exempt.
-    for path in ("/admin/", "/admin/status", "/admin/theme.css",
+    for path in ("/admin/", "/admin/server/status", "/admin/theme.css",
                  "/admin/favicon.ico", "/admin/nested/thing.css"):
         result = before(_FakeRequest(path), signed_out)
         assert getattr(result, "status_code", None) == 303, f"{path} was not gated"
@@ -903,7 +931,7 @@ def test_the_bare_mount_path_reaches_the_admin_ui(admin_client):
     # session and all, not just a redirect into open air.
     r = client.get("/admin")
     assert r.status_code == 200
-    assert "Template Admin" in r.text and 'href="/admin/styles"' in r.text
+    assert "Template Admin" in r.text and 'href="/admin/word"' in r.text
 
 
 def test_the_redirect_follows_a_custom_mount_path(monkeypatch, tmp_path):

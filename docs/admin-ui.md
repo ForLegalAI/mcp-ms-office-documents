@@ -21,7 +21,43 @@ as the MCP endpoint:
 http://localhost:8958/admin
 ```
 
-**3.** Log in with your `ADMIN_PASSWORD`, then:
+**3.** Log in with your `ADMIN_PASSWORD`.
+
+## How it is organised
+
+The UI is arranged by **what you are working on**. Six areas sit in the top
+bar, and each one holds everything about that kind of document on tabs:
+
+| Area | Tabs |
+|------|------|
+| **Word** | Overview · Templates · Base template · Style mapping |
+| **PowerPoint** | Overview · Templates · Base designs |
+| **Excel** | Overview · Named styles |
+| **Email** | Overview · Templates · Base wrapper |
+| **XML** | Overview |
+| **Server** | Status · Source files · Activity log |
+
+The landing page is a tile per area with the numbers that matter — how many
+templates are live, how many calls this session, and any errors — so "is
+anything wrong?" is answered before you click anything.
+
+**Overview** is the first tab of every document area. It lists the MCP tools
+that area exposes (the built-in one, plus every template that became a tool of
+its own), whether each is live, and what it has done this session: calls,
+errors, and warnings meaning a build worked around something. It also shows
+which base file is installed. This is where Excel and XML live — neither has
+templates to manage, but both have a tool worth checking on.
+
+Every tab is its own URL, so any view can be bookmarked or pasted to a
+colleague. The pages that used to be top-level — `/status`, `/files`,
+`/styles`, `/base` — still work and redirect to the tab that replaced them.
+(`/base` showed all five base templates at once; it now lands on **Word ▸ Base
+template**, and the other four are on their own areas' Base tabs.)
+
+## What you can do
+
+Creating a template lives on its area's **Templates** tab, beside the list it
+adds to:
 
 - **Upload** a Word `.docx` (or email `.html`) that contains `{{placeholders}}`
   (and optionally `{{#if flag}} … {{/if}}` conditionals). Author it in real Word
@@ -56,7 +92,7 @@ http://localhost:8958/admin
   heading levels, three numbered and three bulleted list levels, quote, table,
   normal and code), and each dropdown's default option names what that key
   resolves to today — including when a global `style_mapping` sets it.
-- **Global styles** — the same mapping, but for **every** Word document the
+- **Style mapping** (Word ▸ Style mapping) — the same mapping, but for **every** Word document the
   server produces: the `markdown_to_word` tool and every Word template that
   does not set the same key itself. The page opens on the mapping in force, so
   saving without changing anything changes nothing. Your hand-written
@@ -102,24 +138,30 @@ http://localhost:8958/admin
   tick the box, and it is never removed while another template still uses it.
   If you only want the AI to stop calling it, Disable instead — Delete
   destroys the arguments and descriptions with it.
-- **Source files** page — every file in the uploads directory, with what
+- **Source files** (Server ▸ Source files) — every file in the uploads directory, with what
   still points at it: a template, a hand-written master-YAML entry, or a base
   template. Anything nothing references is marked **Unreferenced** and listed
   first, and only those can be deleted — one at a time, with the filename on
   the confirmation. This is where a source file kept by a delete, or stranded
   by a rename or a replacement, turns up.
-- **Status** page — filter the activity log by level, by which part of the
-  server logged it, or by a search over the message and logger name, and
-  optionally have the page refresh itself. Every filter is in the URL, so a
-  filtered view can be bookmarked or pasted to someone else. Also see live
-  tool counts and per-template usage (calls/errors/last used this session).
+- **Status** (Server ▸ Status) — live tool counts, uptime, the upload backend,
+  and per-tool usage for the session: calls, errors, and what builds worked
+  around. **Activity log** (Server ▸ Activity log) is the next tab: filter by
+  level, by which part of the server logged it, or by a search over the
+  message and logger name, and optionally have the page refresh itself. Every
+  filter is in the URL, so a filtered view can be bookmarked or pasted to
+  someone else.
 
 ## Base templates
 
-The **Base templates** page manages the five files that style *every* document
-the server generates — the Word template, the email wrapper, both PowerPoint
-designs and the Excel named-styles workbook. Previously these could only be
-changed by copying files onto the volume by hand.
+Five files style *every* document the server generates — the Word template, the
+email wrapper, both PowerPoint designs and the Excel named-styles workbook.
+Each one is managed on the **Base** tab of the area it belongs to: Word ▸ Base
+template, PowerPoint ▸ Base designs, Email ▸ Base wrapper, Excel ▸ Named
+styles. (They used to share one page, which put the Word document and the Excel
+style workbook side by side — two unrelated jobs, one of them with a much
+larger blast radius.) Previously these could only be changed by copying files
+onto the volume by hand.
 
 Each slot shows which file is in use (yours, or the bundled default), lets you
 **download** it, **replace** it, and **revert** to the bundled default. A
@@ -157,9 +199,10 @@ tool; it becomes one more value you can pass as the `template` argument of
   the layout choices on screen *including ones you have not saved yet*.
 - **Save** — the presentation tool can build on it immediately, no restart.
 
-The UI follows your system's **light or dark appearance** automatically, and
-loads nothing from the internet — no CDN, no web font — so it looks right on an
-air-gapped host.
+The UI follows your system's **light or dark appearance** automatically, works
+down to phone width, and loads nothing from the internet — no CDN, no web font
+— so it looks right on an air-gapped host. Tabs are ordinary links, so they
+work with JavaScript turned off and a reload keeps you where you were.
 
 **How it's stored:** the UI writes one file per template into
 `config/docx_templates.d/`, `config/email_templates.d/` or

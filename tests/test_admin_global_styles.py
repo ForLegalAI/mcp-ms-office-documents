@@ -325,7 +325,7 @@ def admin_client(tmp_path, monkeypatch):
 
 
 def _csrf(client) -> str:
-    html = client.get("/admin/styles").text
+    html = client.get("/admin/word/styles").text
     tag = re.search(r'<input[^>]*name="csrf"[^>]*>', html)
     return re.search(r'value="([^"]*)"', tag.group(0)).group(1)
 
@@ -342,9 +342,20 @@ def _stored(cfg: Path):
 
 
 def test_the_page_is_reachable_and_linked(admin_client):
+    """A tab of the Word section now, not a top-level page.
+
+    Reached in two clicks — the section is in the top bar, the tab is in the
+    section's tab bar — and the old top-level URL still redirects to it, so
+    a bookmark from before the move keeps working.
+    """
     client, _custom, _cfg = admin_client
-    assert 'href="/admin/styles"' in client.get("/admin/").text, "linked from the nav"
-    assert client.get("/admin/styles").status_code == 200
+    assert 'href="/admin/word"' in client.get("/admin/").text, "linked from the nav"
+    assert 'href="/admin/word/styles"' in client.get("/admin/word").text, \
+        "linked from the Word section's tab bar"
+    assert client.get("/admin/word/styles").status_code == 200
+    moved = client.get("/admin/styles", follow_redirects=False)
+    assert moved.status_code == 303
+    assert moved.headers["location"] == "/admin/word/styles"
 
 
 def test_saving_writes_the_managed_file_and_leaves_the_master_alone(admin_client):
@@ -426,7 +437,7 @@ def test_the_page_shows_what_is_in_force_not_an_empty_form(admin_client):
     _write(cfg / MASTER, {"style_mapping": {"heading_1": "Master H1",
                                             "quote": "Master Q"}})
 
-    html = client.get("/admin/styles").text
+    html = client.get("/admin/word/styles").text
 
     assert _selected(html, "heading_1") == "Master H1"
     assert _selected(html, "quote") == "Master Q"
@@ -442,7 +453,7 @@ def test_a_master_key_the_override_drops_is_named_on_the_page(admin_client):
            {"style_mapping": {"heading_1": "Master H1", "quote": "Master Q"}})
 
     _post(client, "/admin/styles/save", {"style_heading_1": "Master H1"})
-    html = client.get("/admin/styles").text
+    html = client.get("/admin/word/styles").text
 
     assert "Not in force" in html
     assert "Master Q" in html, "the dropped key is named"
@@ -455,7 +466,7 @@ def test_a_configured_style_missing_from_the_base_template_is_kept_and_flagged(a
     _install_base_docx(custom, styles=[])
     _write(cfg / MASTER, {"style_mapping": {"heading_1": "Ghost Style"}})
 
-    html = client.get("/admin/styles").text
+    html = client.get("/admin/word/styles").text
 
     assert 'value="Ghost Style"' in html
     assert _selected(html, "heading_1") == "Ghost Style", "and still selected"
@@ -472,7 +483,7 @@ def test_the_marker_does_not_claim_more_than_it_knows(admin_client):
     _install_base_docx(custom, styles=[])
     _write(cfg / MASTER, {"style_mapping": {"heading_1": "Ghost Style"}})
 
-    html = client.get("/admin/styles").text
+    html = client.get("/admin/word/styles").text
 
     assert "still uses it" in html, "a marked style is not necessarily wrong"
     assert "Ghost Style" in re.search(r"Marked styles.*?</p>", html, re.S).group(0)
@@ -484,7 +495,7 @@ def test_no_note_about_marked_styles_when_nothing_is_marked(admin_client):
     _install_base_docx(custom, styles=[])
     _write(cfg / MASTER, {"style_mapping": {"heading_1": "Heading 2"}})
 
-    assert "Marked styles" not in client.get("/admin/styles").text
+    assert "Marked styles" not in client.get("/admin/word/styles").text
 
 
 def test_a_key_the_renderer_ignores_is_flagged_and_stays_flagged(admin_client):
@@ -498,10 +509,10 @@ def test_a_key_the_renderer_ignores_is_flagged_and_stays_flagged(admin_client):
     client, _custom, cfg = admin_client
     _write(cfg / MASTER, {"style_mapping": {"heading_1": "H1", "sidebar": "Nope"}})
 
-    assert "sidebar" in client.get("/admin/styles").text
+    assert "sidebar" in client.get("/admin/word/styles").text
 
     _post(client, "/admin/styles/save", {"style_heading_1": "H1"})
-    assert "sidebar" in client.get("/admin/styles").text, \
+    assert "sidebar" in client.get("/admin/word/styles").text, \
         "it is still sitting in docx_templates.yaml looking like a setting"
 
 
@@ -513,7 +524,7 @@ def test_a_key_the_renderer_ignores_is_not_called_switched_off(admin_client):
     _write(cfg / MASTER, {"style_mapping": {"heading_1": "Master H1", "sidebar": "Nope"}})
 
     _post(client, "/admin/styles/save", {"style_heading_1": "__default__"})
-    html = client.get("/admin/styles").text
+    html = client.get("/admin/word/styles").text
 
     row = re.search(r"Not in force.*?</div>", html, re.S)
     assert row and "Master H1" in row.group(0), "the real one is named"

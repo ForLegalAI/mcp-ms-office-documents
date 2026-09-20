@@ -13,27 +13,56 @@ from __future__ import annotations
 from typing import Optional
 
 
-from fasthtml.common import A, Button, Div, H1, Input, P
+from fasthtml.common import A, Button, Div, Input, P
 
 from admin import components as c
-from admin.kinds import descriptor, nav_links
+from admin.kinds import descriptor
+from admin.sections import nav_items, section_for_kind
 
 BRAND = "📄 Template Admin"
 
 
-def page(ctx, title: str, *content, authed: bool = True):
-    """Wrap page *content* in the themed shell."""
-    header = c.topbar(BRAND, nav_links(ctx.u, authed=authed))
+def page(ctx, title: str, *content, authed: bool = True, active: str = ""):
+    """Wrap page *content* in the themed shell.
+
+    *active* is the slug of the section the page belongs to, so the top bar
+    can mark where you are. A page outside every section — a login screen, a
+    delete confirmation reached from two places — passes nothing and simply
+    has no item lit, which is honest rather than arbitrarily highlighting one.
+    """
+    end = [("Log out", ctx.u("/logout"))] if authed else []
+    header = c.topbar(BRAND, nav_items(ctx.u, active=active, authed=authed),
+                      end_links=end, home=ctx.u("/") if authed else "")
     return c.page(title, header, *content)
 
 
-def not_found_page(ctx, name: str):
+def kind_page(ctx, kind: str, title: str, *content, **kwargs):
+    """A page belonging to a template *kind*, with its section lit in the nav.
+
+    Every editor, confirmation and report for a template is reached from one
+    section's Templates tab, so it keeps that section's nav item active rather
+    than dropping the highlight the moment you click into a template.
+    """
+    kwargs.setdefault("active", section_for_kind(kind).slug)
+    return page(ctx, title, *content, **kwargs)
+
+
+def back_link(ctx, kind: str):
+    """The "back to the list" link out of a template page, naming its section."""
+    s = section_for_kind(kind)
+    return A(f"← Back to {s.label} templates", href=s.href(ctx.u, "templates"))
+
+
+def not_found_page(ctx, name: str, kind: str = ""):
     """Shown when an edit/reupload route names a template the store does not have."""
+    back = (back_link(ctx, kind) if kind
+            else A("← Back to the dashboard", href=ctx.u("/")))
     return page(
         ctx, "Not found",
-        H1("Not found"),
+        c.page_header("Not found"),
         c.flash(f"No managed template named '{name}'.", "err"),
-        A("← Back to all templates", href=ctx.u("/")),
+        back,
+        active=section_for_kind(kind).slug if kind else "",
     )
 
 
@@ -80,7 +109,8 @@ def form_actions(ctx, kind: str, name: str = ""):
         controls.append(A("Clone", href=ctx.u(f"/{kind}/{name}/clone"),
                           cls="btn btn-secondary",
                           title="Start a new template from this one"))
-    controls.append(A("Cancel", href=ctx.u("/"), cls="btn"))
+    controls.append(A("Cancel", href=section_for_kind(kind).href(ctx.u, "templates"),
+                      cls="btn"))
     bar = c.action_bar(*controls)
     body = [bar]
     if d.preview_hint:
@@ -114,13 +144,16 @@ def replace_card(ctx, kind: str, name: str, csrf: str = "",
     return c.card(*body, title="Source file")
 
 
-def save_failed_page(ctx, message: str):
+def save_failed_page(ctx, message: str, kind: str = ""):
     """Shown when a spec could not be persisted at all."""
+    back = (back_link(ctx, kind) if kind
+            else A("← Back to the dashboard", href=ctx.u("/")))
     return page(
         ctx, "Save failed",
-        H1("Save failed"),
+        c.page_header("Save failed"),
         c.flash(message, "err"),
-        A("← Back to all templates", href=ctx.u("/")),
+        back,
+        active=section_for_kind(kind).slug if kind else "",
     )
 
 
@@ -132,18 +165,20 @@ def saved_page(ctx, kind: str, name: str, ok: bool, enabled: bool = True):
     admin to read logs about something that was never going to happen (#164).
     """
     d = descriptor(kind)
+    s = section_for_kind(kind)
     if not enabled:
         template, heading, tone = d.save_disabled, "✓ Saved", "ok"
     elif ok:
         template, heading, tone = d.save_ok, "✓ Saved", "ok"
     else:
         template, heading, tone = d.save_warn, "Saved with a warning", "warn"
-    return page(
-        ctx, "Saved",
-        H1(heading),
+    return kind_page(
+        ctx, kind, "Saved",
+        c.page_header(heading),
         c.flash(template.format(name=name), tone),
         c.action_bar(
-            A("Back to all templates", href=ctx.u("/"), cls="btn btn-primary"),
+            A(f"Back to {s.label} templates", href=s.href(ctx.u, "templates"),
+              cls="btn btn-primary"),
             A("Keep editing", href=ctx.u(f"/{kind}/{name}/edit"), cls="btn btn-secondary"),
         ),
     )

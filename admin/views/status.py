@@ -1,4 +1,10 @@
-"""The Status page: live counts, per-template usage, and a tail of the log."""
+"""The Server section: live counts, per-tool usage, and a tail of the log.
+
+Two panels, not one page. The counts and the usage table answer "is anything
+wrong"; the log answers "what exactly happened". They were stacked on one
+page, which meant every look at the numbers also rendered two hundred log
+rows, and a filtered log URL carried the whole page with it.
+"""
 from __future__ import annotations
 
 import logging
@@ -6,14 +12,13 @@ import time
 from typing import Optional
 
 from fasthtml.common import (
-    A, Button, Div, Form, H1, Input, Option, P, Select, Span, Table, Tbody,
+    A, Button, Div, Form, Input, Option, P, Select, Span, Table, Tbody,
     Td, Tr,
 )
 
 import metrics
 from admin import components as c
 from admin.store import KIND_DOCX, KIND_EMAIL
-from admin.views.shell import page
 
 
 def fmt_ts(ts: Optional[float]) -> str:
@@ -108,6 +113,10 @@ REFRESH_CHOICES = ((0, "off"), (10, "10s"), (30, "30s"), (60, "60s"))
 
 LOG_LIMIT = 200
 
+#: Where the log filter form submits. The Server section's Activity log
+#: tab, so a filtered view is still a URL that can be pasted to a colleague.
+LOG_PATH = "/server/log"
+
 
 def level_no(level: str) -> int:
     """The numeric level for a query-string value, defaulting to INFO."""
@@ -161,12 +170,12 @@ def _log_filters(ctx, level: str, source: str, search: str, refresh: int):
                     cls="field grow"),
             c.field("Auto-refresh", Select(*refresh_opts, name="refresh")),
             Div(Button("Apply", type="submit", cls="btn btn-primary"),
-                A("Reset", href=ctx.u("/status"), cls="btn"),
+                A("Reset", href=ctx.u(LOG_PATH), cls="btn"),
                 cls="actions"),
             cls="filters",
         ),
         _capture_note(levels),
-        action=ctx.u("/status"), method="get",
+        action=ctx.u(LOG_PATH), method="get",
     )
 
 
@@ -201,8 +210,8 @@ def _log_block(level: str, source: str, search: str):
     return Div(shown, Div(Table(Tbody(*rows)), cls="logs"))
 
 
-def status_page(ctx, level: str = "info", source: str = "",
-                search: str = "", refresh: int = 0):
+def status_panel(ctx):
+    """The Status tab: the counts, the per-tool table, and what was worked around."""
     live_docx = ctx.live_names(KIND_DOCX)
     live_email = ctx.live_names(KIND_EMAIL)
     lvl_counts = metrics.counts_by_level()
@@ -211,24 +220,28 @@ def status_page(ctx, level: str = "info", source: str = "",
     # nobody needs to chase, and metrics decides which is which.
     degraded = metrics.degraded_total()
 
-    stats = c.stats_row(
-        c.stat("Uptime", fmt_uptime(time.time() - metrics.START_TIME)),
-        c.stat("Upload backend", ctx.config.storage.strategy.value),
-        c.stat("Live Word tools", len(live_docx)),
-        c.stat("Live Email tools", len(live_email)),
-        c.stat("Errors logged", err_count, num_cls="num-err" if err_count else ""),
-        c.stat("Warnings reported", degraded,
-               num_cls="warn-text" if degraded else ""),
-    )
-
-    return page(
-        ctx, "Status",
-        H1("Status"),
-        stats,
+    return [
+        c.stats_row(
+            c.stat("Uptime", fmt_uptime(time.time() - metrics.START_TIME)),
+            c.stat("Upload backend", ctx.config.storage.strategy.value),
+            c.stat("Live Word tools", len(live_docx)),
+            c.stat("Live Email tools", len(live_email)),
+            c.stat("Errors logged", err_count,
+                   num_cls="num-err" if err_count else ""),
+            c.stat("Warnings reported", degraded,
+                   num_cls="warn-text" if degraded else ""),
+        ),
         c.card(_usage_table(), title="Tool usage (this session)", level=2),
         c.card(_warnings_card(), title="What builds worked around", level=2),
+    ]
+
+
+def log_panel(ctx, level: str = "info", source: str = "",
+              search: str = "", refresh: int = 0):
+    """The Activity log tab: the filter bar, the records, and auto-refresh."""
+    return [
         c.card(_log_filters(ctx, level, source, search, refresh),
                _log_block(level, source, search),
                title="Recent activity", level=2),
         c.auto_refresh(refresh),
-    )
+    ]
