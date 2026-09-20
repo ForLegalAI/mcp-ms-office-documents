@@ -58,6 +58,7 @@ from admin.store import (
     FileTemplateStore, KIND_DOCX, KIND_PPTX, TemplateStoreError, validate_name,
 )
 from template_registry import gather_specs, is_enabled
+from template_utils import find_file_in_template_dirs
 
 logger = logging.getLogger(__name__)
 
@@ -232,6 +233,82 @@ class AdminContext:
             if f.name == filename and f.orphaned:
                 return f
         return None
+
+    def master_spec(self, kind: str, name: str) -> Optional[Dict[str, Any]]:
+        """One hand-written master-YAML entry by name, or ``None`` (#167)."""
+        for spec in self._master_specs(kind):
+            if spec.get("name") == name:
+                return spec
+        return None
+
+    def unmanaged_master_specs(self, kind: str) -> List[Dict[str, Any]]:
+        """Master entries no managed spec overrides.
+
+        Listed from the master YAML rather than from the live tool names, so a
+        master template that is disabled — or that failed to register — is
+        still shown and can still be inspected and adopted (#167).
+        """
+        managed = {s.get("name") for s in self.store.list_specs(kind)}
+        return [s for s in self._master_specs(kind)
+                if s.get("name") and s.get("name") not in managed]
+
+    def master_asset_path(self, kind: str, spec: Dict[str, Any]):
+        """Where a master entry's source file actually resolves.
+
+        Through ``template_utils``, the way the loaders resolve it, so a file
+        that ships in ``default_templates/`` is found as readily as one in
+        ``custom_templates/``.
+        """
+        filename = spec.get(descriptor(kind).path_key)
+        if not filename:
+            return None
+        return find_file_in_template_dirs(filename)
+
+    def adopt(self, kind: str, name: str) -> Dict[str, Any]:
+        """Copy a master-YAML entry into the managed ``*.d`` layer (#167).
+
+        The master file is never touched: the merge in `gather_specs()` lets a
+        `.d` entry of the same name win, so adopting is purely additive and
+        the admin's hand-written YAML stays as they left it.
+
+        The asset is copied into the writable directory when it is not already
+        there — a master template usually points at a file in
+        ``default_templates/``, and a template you can edit but whose document
+        you cannot replace is a confusing half-state.
+        """
+        spec = self.master_spec(kind, name)
+        if spec is None:
+            raise TemplateStoreError(f"No master-YAML {kind} template named {name!r}.")
+        if self.store.get_spec(kind, name) is not None:
+            raise TemplateStoreError(
+                f"{name!r} is already managed here — edit it directly."
+            )
+
+        filename = spec.get(descriptor(kind).path_key)
+        if not filename:
+            raise TemplateStoreError(
+                f"{name!r} records no source file, so there is nothing to adopt."
+            )
+        reserved = filename in base_templates.RESERVED_FILENAMES
+        data = None
+        if reserved or not self.store.asset_exists(kind, filename):
+            found = find_file_in_template_dirs(filename)
+            if found is None:
+                raise TemplateStoreError(
+                    f"Cannot find {filename!r} in the template directories."
+                )
+            data = found.read_bytes()
+        if reserved:
+            # Never let an adopted template own a base-template filename.
+            # template_utils searches custom_templates/ first, so a copy under
+            # this name would shadow the base template for its kind — and
+            # replacing this one template's document would then restyle every
+            # document the server generates. Give it a private copy instead.
+            filename = f"{name}{Path(filename).suffix}"
+            logger.info("[admin] Adopting %r under %r: the master entry named a "
+                        "base-template file", name, filename)
+        return self.store.save_spec(kind, dict(spec), asset_bytes=data,
+                                    asset_filename=filename)
 
     def analyze_asset(self, kind: str, spec: Dict[str, Any]):
         """Analyse a spec's installed source file, or ``None`` when it is gone."""
@@ -576,6 +653,56 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             return views.not_found_page(ctx, name)
         return views.edit_page(ctx, kind, name, spec, ctx.analyze_asset(kind, spec),
                                csrf=auth.ensure_csrf(sess))
+
+    @rt("/{kind}/{name}/master")
+    def master_detail(sess, kind: str, name: str):
+        """A hand-written master-YAML template, read only (#167)."""
+        if not is_kind(kind):
+            return _home()
+        spec = ctx.master_spec(kind, name)
+        if spec is None:
+            return views.not_found_page(ctx, name)
+        return _master_detail_page(sess, kind, name, spec)
+
+    def _master_detail_page(sess, kind, name, spec, error=None):
+        asset = ctx.master_asset_path(kind, spec)
+        analysis = None
+        if asset is not None:
+            try:
+                analysis = analyze(kind, asset.read_bytes())
+            except Exception:
+                logger.exception("[admin] Could not analyse master template %s", name)
+        return views.master_page(
+            ctx, kind, name, spec, analysis, asset,
+            live=name in ctx.live_names(kind),
+            csrf=auth.ensure_csrf(sess), error=error,
+        )
+
+    @rt("/{kind}/{name}/adopt", methods=["post"])
+    async def adopt(req, sess, kind: str, name: str):
+        """Copy a master-YAML entry into the managed layer, then edit it."""
+        if not is_kind(kind):
+            return _home()
+        spec = ctx.master_spec(kind, name)
+        if spec is None:
+            return views.not_found_page(ctx, name)
+        form = await req.form()
+        bad = _csrf_guard(sess, form)
+        if bad:
+            return bad
+        try:
+            adopted = ctx.adopt(kind, name)
+        except (TemplateStoreError, OSError) as e:
+            return _master_detail_page(sess, kind, name, spec, error=str(e))
+
+        ctx.sync(kind, adopted)
+        logger.info("[admin] Adopted %s template %r from the master YAML", kind, name)
+        return views.edit_page(
+            ctx, kind, name, adopted, ctx.analyze_asset(kind, adopted),
+            csrf=auth.ensure_csrf(sess),
+            message=("Adopted from your master YAML. Edits here take "
+                     "precedence; the YAML file itself is untouched."),
+        )
 
     @rt("/{kind}/{name}/clone", methods=["get", "post"])
     async def clone(req, sess, kind: str, name: str):

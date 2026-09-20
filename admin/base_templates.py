@@ -112,6 +112,17 @@ SLOTS: Tuple[BaseSlot, ...] = (
 
 _BY_KEY: Dict[str, BaseSlot] = {s.key: s for s in SLOTS}
 
+#: Filenames that mean "base template" to :mod:`template_utils`, whichever
+#: directory they sit in. A dynamic template must never point at one of these
+#: inside ``custom_templates/``: resolution searches the custom directory
+#: first, so the file would shadow the base template for its kind, and
+#: replacing that one template's document would restyle every document the
+#: server generates (#167).
+RESERVED_FILENAMES: frozenset = frozenset(
+    [s.custom_name for s in SLOTS]
+    + [s.default_name for s in SLOTS if s.default_name]
+)
+
 
 def slot(key: str) -> BaseSlot:
     return _BY_KEY[key]

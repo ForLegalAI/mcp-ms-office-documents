@@ -193,6 +193,39 @@ its `enabled` flag, so a brand-new template could arrive disabled. A create
 that lands on an occupied name is now refused with the same message a rename
 gets.
 
+**Adopting is additive: the master YAML is never rewritten.** `gather_specs()`
+lets a `.d` entry win over a master entry of the same name, so `AdminContext.
+adopt()` only has to write the copy — the hand-written, commented config the
+admin owns stays byte-identical, which a test asserts directly. The asset is
+copied into `custom_templates/` when it is not already there, because a master
+entry usually points at a file shipped in `default_templates/`, and a template
+you can edit but whose document you cannot replace is a confusing half-state.
+
+**An adopted template never owns a base-template filename.** `template_utils`
+searches `custom_templates/` before `default_templates/`, so copying a file
+named `default_docx_template.docx` into the uploads directory shadows the base
+Word template — and replacing that one template's document would then restyle
+every Word document the server generates. `base_templates.RESERVED_FILENAMES`
+names every such file (both the `custom_` and the `default_` spelling of all
+five slots); adopting a master entry that points at one gives the template a
+private copy under its own name instead.
+
+**Adoption records no provenance, so the copy is keyed by name and nothing
+else.** Two consequences follow from `gather_specs()` replacing the whole spec
+rather than merging fields, and both are pinned by tests so a change to either
+is deliberate: editing the master entry after adoption — including disabling
+it — has no effect, because the override replaces it entirely; and renaming
+the master entry by hand leaves *two* templates, the renamed master entry
+(no longer overridden) and the adopted copy (now standing alone). Following a
+rename would mean recording where a copy came from, which is a bigger feature
+than adopting; the adopt card says plainly that the copy stops following the
+entry instead.
+
+The master rows are listed from `_master_specs()` rather than from the live
+tool names: keyed off what is registered, a master template that is disabled
+or that failed to load vanished from the page entirely, with no way to inspect
+it and no way to adopt it.
+
 **A clone copies the asset; it never shares it.** Two specs pointing at one
 file would make "Replace document" on either one silently change the other,
 and nothing in the UI would report it — the duplication is the cheaper
@@ -260,4 +293,5 @@ longer deletable.
 | `tests/test_admin_template_lifecycle.py` | disabling, enabling and renaming a template |
 | `tests/test_admin_source_files.py` | the reference map, and that only an orphan can be deleted |
 | `tests/test_admin_clone.py` | what a clone carries, what it drops, and that the asset is copied |
+| `tests/test_admin_master_templates.py` | inspecting a master-YAML entry, and adopting it without touching the file |
 | `tests/test_admin_config.py` | `ADMIN_*` settings |
