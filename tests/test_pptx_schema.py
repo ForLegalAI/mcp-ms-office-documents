@@ -101,6 +101,59 @@ class TestSchemaShape:
         assert "slide 1" in message
         assert "series.0.values.0" in message
 
+    def test_a_field_from_another_type_says_what_this_type_takes(self):
+        """The production failure: every slide assumed to take title/subtitle/body.
+
+        A real call lost a whole seven-slide deck to this — 'body' on a title
+        slide, 'subtitle' on the content slides — and the only feedback was
+        "Extra inputs are not permitted", which names the mistake and not the
+        fix. The schema does say which types take which field, but the caller
+        has already read it once and drawn the wrong conclusion; saying it
+        again at the point of failure is what makes the retry a correction.
+        """
+        with pytest.raises(ValueError) as excinfo:
+            coerce_slides([
+                {"type": "title", "title": "T", "subtitle": "S", "body": "- x"},
+                {"type": "section", "title": "S", "subtitle": "sub"},
+                {"type": "content", "title": "C", "subtitle": "s", "body": "- a"},
+            ])
+        message = str(excinfo.value)
+        # Which slide, which field — as before.
+        assert "slide 0 -> body" in message
+        assert "slide 1 -> subtitle" in message
+        # ...and now what that type does take, and where the field belongs.
+        assert "not a field of a 'title' slide" in message
+        assert "it takes: title, notes, layout, subtitle" in message
+        assert "'body' belongs to: content, chart, image" in message
+        assert "'subtitle' belongs to: title, closing" in message
+        assert "Extra inputs are not permitted" not in message, (
+            "the pydantic wording says nothing actionable and is replaced")
+
+    def test_a_field_no_type_has_says_so(self):
+        """A typo has no owner to point at, and must not claim one."""
+        with pytest.raises(ValueError) as excinfo:
+            coerce_slides([{"type": "content", "title": "C", "bullets": ["a"]}])
+        message = str(excinfo.value)
+        assert "no slide type has that field" in message
+        assert "it takes: title, notes, layout, body" in message
+
+    def test_every_type_can_describe_its_own_fields(self):
+        """The guidance is generated, so a new slide type is covered for free."""
+        from pptx_tools.schema import _fields_by_type
+
+        fields = _fields_by_type()
+        assert set(fields) == set(SLIDE_TYPES)
+        for slide_type, names in fields.items():
+            assert names[:3] == ("title", "notes", "layout"), slide_type
+            assert "type" not in names
+
+    def test_other_errors_keep_their_own_wording(self):
+        """Only extra_forbidden is rewritten; a bad value still says why."""
+        with pytest.raises(ValueError) as excinfo:
+            coerce_slides([{"type": "table", "rows": [["a"]],
+                            "header_color": "cornflower"}])
+        assert "not a field of" not in str(excinfo.value)
+
     def test_bad_colour_is_rejected_with_guidance(self):
         with pytest.raises(ValueError) as excinfo:
             coerce_slides([{"type": "table", "rows": [["a"]], "header_color": "cornflower"}])
