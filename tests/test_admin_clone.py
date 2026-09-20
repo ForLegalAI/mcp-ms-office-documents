@@ -358,3 +358,54 @@ def test_the_clone_form_says_what_comes_across(admin_client):
     html = client.get("/admin/docx/formal_letter/clone").text
     assert "formal_letter.docx" in html, "it should name the file being copied"
     assert "copy" in html.lower()
+
+
+def test_a_failed_clone_leaves_a_removable_file_not_a_broken_template(admin_client,
+                                                                      monkeypatch):
+    """The right way round for this to fail.
+
+    `save_spec()` writes the asset before the spec, so a spec never points at
+    a missing file. If the spec write fails, what is left is a file with no
+    spec — an orphan, which the Source files page (#166) lists and offers to
+    delete. The other order would leave a template whose document is gone.
+    """
+    client, _mcp, custom = admin_client
+    _letter(client)
+
+    real = Path.write_text
+
+    def explode(self, *a, **kw):
+        if self.name == "half.yaml":
+            raise OSError("disk full")
+        return real(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "write_text", explode)
+    r = _post(client, "/admin/docx/formal_letter/clone", data={"name": "half"})
+    monkeypatch.undo()
+
+    assert r.status_code == 200, "an OSError must be reported, not a 500"
+    assert "disk full" in r.text
+    assert _store().get_spec("docx", "half") is None, "no broken template"
+    assert (custom / "half.docx").exists(), "the copied file is what is left"
+
+    row = client.get("/admin/files").text
+    assert "half.docx" in row and "Unreferenced" in row, \
+        "and it is findable and removable on the Source files page"
+
+
+def test_a_spec_pointing_at_a_foreign_extension_is_refused(admin_client):
+    """A hand-edited `.d` file can name anything; save_spec still gates it."""
+    client, _mcp, custom = admin_client
+    _letter(client, "handedited")
+
+    store = _store()
+    spec = store.get_spec("docx", "handedited")
+    spec["docx_path"] = "odd.txt"
+    (custom / "odd.txt").write_bytes(b"not a docx")
+    (Path(store.config_dir) / "docx_templates.d" / "handedited.yaml").write_text(
+        store.dump_spec(spec), encoding="utf-8")
+
+    r = _post(client, "/admin/docx/handedited/clone", data={"name": "odd_copy"})
+
+    assert "must end with .docx" in r.text
+    assert _store().get_spec("docx", "odd_copy") is None
