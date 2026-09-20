@@ -137,6 +137,29 @@ class TestSchemaShape:
         assert "no slide type has that field" in message
         assert "it takes: title, notes, layout, body" in message
 
+    def test_an_error_on_a_field_named_like_a_slide_type_keeps_its_name(self):
+        """'title' is both a field on every slide and a slide type.
+
+        The path used to be built by dropping every segment that matched a
+        slide-type name, which ate the one field whose name collides — an
+        error about the title rendered as "slide 0: Input should be a valid
+        string", naming no field at all, on the field every single slide has.
+        The discriminator tag is always at position 1 of a tagged union's
+        path, so position identifies it and a collision cannot recur.
+        """
+        with pytest.raises(ValueError) as excinfo:
+            coerce_slides([{"type": "content", "title": {"bad": 1},
+                            "body": "- a"}])
+        assert "slide 0 -> title" in str(excinfo.value)
+
+    def test_a_nested_path_survives_the_tag_being_dropped(self):
+        """Only the tag goes; everything under it is the path worth printing."""
+        with pytest.raises(ValueError) as excinfo:
+            coerce_slides([{"type": "chart", "title": "c", "chart_type": "pie",
+                            "categories": ["a"],
+                            "series": [{"name": "s", "values": ["nope"]}]}])
+        assert "slide 0 -> series.0.values.0" in str(excinfo.value)
+
     def test_every_type_can_describe_its_own_fields(self):
         """The guidance is generated, so a new slide type is covered for free."""
         from pptx_tools.schema import _fields_by_type

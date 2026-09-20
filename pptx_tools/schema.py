@@ -953,12 +953,19 @@ def _describe_error(error: Dict[str, Any]) -> str:
     # JSON) carry no path and already name the slide they are about.
     if not loc:
         return message.removeprefix("Value error, ")
-    # Drop the union-member tag pydantic injects so the path reads naturally —
-    # but keep it, because it is the slide's own type and the only thing that
+    # Drop the union-member tag pydantic injects so the path reads naturally,
+    # but keep hold of it: it is the slide's own type, and the only thing that
     # says which field set applied.
+    #
+    # Exactly one leading segment, never "every segment that looks like a type
+    # name". `title` is both a field on every slide and a slide type, so
+    # filtering by membership silently ate it: an error about the title field
+    # rendered as "slide 0: Input should be a valid string", naming no field
+    # at all. The tag is always at position 1 of a tagged union's path, so
+    # position is what identifies it.
     index = loc[0]
-    slide_type = next((part for part in loc[1:] if part in SLIDE_TYPES), None)
-    rest = [part for part in loc[1:] if part not in SLIDE_TYPES]
+    rest = list(loc[1:])
+    slide_type = rest.pop(0) if rest and rest[0] in SLIDE_TYPES else None
     where = f"slide {index}"
     if rest:
         where += " -> " + ".".join(rest)
