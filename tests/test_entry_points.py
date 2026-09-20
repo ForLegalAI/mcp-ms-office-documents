@@ -19,6 +19,7 @@ because what went wrong was never about the body.
 import os
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -104,6 +105,59 @@ def test_the_admin_url_leads_all_the_way_to_the_ui(combined):
     assert r.url.path.startswith("/admin/"), "it should end up inside the mount"
 
 
+@pytest.mark.parametrize("root_path", ["", "/office", "/a/b"])
+def test_the_root_redirect_keeps_a_proxy_prefix(root_path):
+    """Behind `uvicorn --root-path` or a path-rewriting proxy.
+
+    The first version of this redirect built its `Location` from
+    `config.admin.path`, which looks identical in development and is wrong the
+    moment a prefix is stripped in front of the app: `GET /office/admin`
+    answered `/admin/`, sending the browser somewhere that does not exist on
+    that deployment. Starlette's own `redirect_slashes` avoids this by building
+    the target from the request scope, and so must this.
+
+    Asserted against Starlette's *own* output rather than a literal, so the two
+    cannot drift: the point is not "this string" but "whatever the framework
+    would have done if the catch-all were not suppressing it".
+    """
+    from starlette.applications import Starlette
+    from starlette.routing import Mount
+    from starlette.testclient import TestClient as TC
+
+    from admin.app import build_admin_app
+
+    cfg = Config.from_env()
+    import main
+    only_admin = Starlette(routes=[Mount(cfg.admin.path,
+                                         app=build_admin_app(main.mcp, cfg))])
+    with TC(only_admin, root_path=root_path) as c:
+        native = c.get(root_path + "/admin", follow_redirects=False)
+
+    # A combined app of its own rather than the module fixture's: entering a
+    # TestClient runs the app's lifespan, and re-running it on the shared
+    # instance restarts the MCP session manager underneath every later test in
+    # this file. (Found by this test failing only in file order.)
+    from admin.app import build_combined_app
+
+    with TC(build_combined_app(main.mcp, cfg), root_path=root_path) as c:
+        ours = c.get(root_path + "/admin", follow_redirects=False)
+
+    assert native.status_code == 307, "the control itself must redirect"
+    assert urlparse(ours.headers["location"]).path == \
+        urlparse(native.headers["location"]).path, (
+            f"root_path={root_path!r}: we answer "
+            f"{ours.headers['location']!r}, Starlette would answer "
+            f"{native.headers['location']!r}")
+
+
+def test_the_root_redirect_keeps_the_query_string(combined):
+    """Falls out of deriving the target from the request, and is worth keeping:
+    a bookmarked `/admin?...` should not silently lose its parameters."""
+    r = combined.get("/admin?next=status", follow_redirects=False)
+
+    assert urlparse(r.headers["location"]).query == "next=status"
+
+
 def test_the_mcp_endpoint_survives_an_admin_path_collision(tmp_path, monkeypatch):
     """Why the root redirect is GET/HEAD only, and must stay that way.
 
@@ -158,7 +212,13 @@ def test_the_mcp_endpoint_is_not_shadowed_by_the_admin_mount(combined):
         "params": {"protocolVersion": "2025-06-18", "capabilities": {},
                    "clientInfo": {"name": "t", "version": "1"}},
     }, headers={"Accept": "application/json, text/event-stream",
-                "Content-Type": "application/json"})
+                "Content-Type": "application/json"},
+       follow_redirects=False)
 
-    assert r.status_code == 200
+    # follow_redirects=False on purpose: TestClient follows by default, so a
+    # bare 200 cannot tell "matched directly" from "307'd somewhere and the
+    # client quietly went there". That distinction is the entire subject of
+    # this file, and this assertion was blind to it.
+    assert r.status_code == 200, \
+        f"got {r.status_code} {r.headers.get('location', '')}"
     assert "mcp-session-id" in r.headers

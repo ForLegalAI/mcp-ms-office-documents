@@ -1172,13 +1172,24 @@ def build_combined_app(mcp, config: Config):
 
     mcp_app = mcp.http_app(path="/mcp", stateless_http=config.stateless_http)
     admin_app = build_admin_app(mcp, config)
-    admin_root = config.admin.path + "/"
-
     async def _admin_root_redirect(request):
-        # 307, as Starlette's own redirect_slashes uses: it preserves the
-        # method, and nothing here should be cached by a browser the way a
-        # permanent redirect would be.
-        return RedirectResponse(admin_root, status_code=307)
+        """Send the bare mount path to the mount root, as Starlette would.
+
+        The target is derived from the **request**, not from
+        ``config.admin.path``, and that is the whole subtlety. Starlette's own
+        ``redirect_slashes`` builds its ``Location`` from the request scope, so
+        it folds in ``root_path`` and keeps the query string. A ``Location``
+        built from the configured path instead looks identical in development
+        and is wrong behind a path-rewriting proxy or ``uvicorn --root-path``:
+        ``GET /office/admin`` would answer ``/admin/``, sending the browser to
+        a path that does not exist on that deployment.
+
+        307, also as ``redirect_slashes`` uses: it preserves the method, and
+        nothing here wants the caching a permanent redirect invites.
+        """
+        url = request.url
+        return RedirectResponse(str(url.replace(path=url.path + "/")),
+                                status_code=307)
 
     routes = [
         # Before the mounts: a Route for the exact path, so it is matched

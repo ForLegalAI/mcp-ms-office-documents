@@ -7,6 +7,7 @@ import io
 import re
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -869,8 +870,11 @@ def test_mcp_endpoint_still_works(admin_client):
         "jsonrpc": "2.0", "id": 1, "method": "initialize",
         "params": {"protocolVersion": "2025-06-18", "capabilities": {},
                    "clientInfo": {"name": "t", "version": "1"}},
-    }, headers=headers)
-    assert r.status_code == 200
+    }, headers=headers, follow_redirects=False)
+    # Not following: a 200 after a silent redirect would look identical to a
+    # direct match, and every other redirect-sensitive test in this file opts
+    # out the same way (#193).
+    assert r.status_code == 200, f"got {r.status_code} {r.headers.get('location', '')}"
     assert "mcp-session-id" in r.headers
 
 
@@ -887,7 +891,11 @@ def test_the_bare_mount_path_reaches_the_admin_ui(admin_client):
 
     r = client.get("/admin", follow_redirects=False)
     assert r.status_code == 307, "no redirect — /admin fell through to the MCP mount"
-    assert r.headers["location"] == "/admin/"
+    # Absolute, because the target is derived from the request the way
+    # Starlette's own redirect_slashes derives it — that is what keeps it
+    # correct behind a proxy. Compared by path so the host stays the
+    # TestClient's business.
+    assert urlparse(r.headers["location"]).path == "/admin/"
 
     # And the whole way through, as a browser does it. The fixture is already
     # signed in, so this lands on the templates index rather than the login
@@ -918,6 +926,6 @@ def test_the_redirect_follows_a_custom_mount_path(monkeypatch, tmp_path):
     with client:
         r = client.get("/manage", follow_redirects=False)
         assert r.status_code == 307
-        assert r.headers["location"] == "/manage/"
+        assert urlparse(r.headers["location"]).path == "/manage/"
         assert client.get("/admin", follow_redirects=False).status_code == 404, \
             "and only the configured path redirects"

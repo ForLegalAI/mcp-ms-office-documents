@@ -42,6 +42,17 @@ type, was the one URL that did not work. The redirect is built from
 `config.admin.path`, so a custom `ADMIN_PATH` gets it too;
 `tests/test_admin_app.py` pins both the ordering and that it follows config.
 
+**The target is derived from the request, not from `config.admin.path`.**
+Starlette's `redirect_slashes` builds its `Location` from the request scope, so
+it folds in `root_path` and keeps the query string. A `Location` built from the
+configured path looks identical in development and is wrong the moment a prefix
+is stripped in front of the app: behind `uvicorn --root-path /office`,
+`GET /office/admin` answered `/admin/` and sent the browser somewhere that does
+not exist on that deployment. `tests/test_entry_points.py` asserts our target
+against **Starlette's own output** rather than a literal, so the two cannot
+drift — the invariant is "whatever the framework would have done if the
+catch-all were not suppressing it", not a particular string.
+
 **`methods=["GET", "HEAD"]` is load-bearing, not caution.** `ADMIN_PATH` is
 free text, so `/mcp` is a legal if unwise value. The MCP endpoint survives it
 only because three things line up: the redirect `Route` does not take POST,
