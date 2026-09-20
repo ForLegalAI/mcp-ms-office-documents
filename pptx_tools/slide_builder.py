@@ -45,7 +45,9 @@ from .chart_utils import (
     set_axis_titles, ChartDataError,
 )
 from .layouts import LayoutResolver, role_for_slide
-from .placeholder_style import TitleStyle, apply_list_style, draw_title_box
+from .placeholder_style import (
+    TitleStyle, apply_list_style, content_columns, draw_title_box,
+)
 from .text_metrics import theme_body_typeface
 from .schema import Bullet, coerce_slides
 from . import warnings as W
@@ -769,47 +771,73 @@ class PowerpointPresentation(SlideHelpers):
         write_text(paragraph, caption, font_size=DEFAULT_CAPTION_FONT_SIZE, italic=True)
 
     def _build_two_column_slide(self, slide_data, index: int) -> None:
-        """Build a slide with two text columns using built-in PowerPoint layouts.
+        """Build a slide with two text columns.
 
-        Uses the Comparison layout when either column has a heading, otherwise
-        Two Content.
+        Columns are matched to placeholders by geometry, never by placeholder
+        ``idx``: the indices PowerPoint's own Two Content and Comparison
+        layouts use are a convention a corporate template need not follow, and
+        addressing by number silently wrote one column into the other's box and
+        dropped the rest (#194). :func:`~pptx_tools.placeholder_style.content_columns`
+        reads left-to-right columns and each column's heading strip instead.
 
-        Placeholder indices:
-        - Two Content (3): idx 0=Title, 1=Left content, 2=Right content
-        - Comparison (4): idx 0=Title, 1=Left heading, 2=Left content,
-          3=Right heading, 4=Right content
+        A template that reserves fewer columns than the slide has still keeps
+        every word: the columns merge into the one body, with each heading as a
+        bold lead line. Whatever it costs is reported.
         """
-        left_col, right_col = slide_data.left, slide_data.right
-        has_headings = bool(left_col.heading or right_col.heading)
+        sources = (slide_data.left, slide_data.right)
 
         slide = self._new_slide(slide_data, index)
         self._apply_title(slide, slide_data.title, index)
 
-        left_bullets = body_to_bullets(left_col.body)
-        right_bullets = body_to_bullets(right_col.body)
+        columns = content_columns(slide)
 
-        if has_headings:
-            content_slots = {2: left_bullets, 4: right_bullets}
-            heading_slots = {1: left_col.heading, 3: right_col.heading}
-        else:
-            content_slots = {1: left_bullets, 2: right_bullets}
-            heading_slots = {}
+        if not columns:
+            if any(column.heading or column.body for column in sources):
+                self._warn(index, W.COLUMN_DROPPED,
+                           "this layout has no body placeholder; both columns "
+                           "were dropped.")
+            self._add_speaker_notes(slide, slide_data.notes)
+            return
 
-        for shape in slide.placeholders:
-            idx = shape.placeholder_format.idx
+        if len(columns) == 1:
+            merged: List[Bullet] = []
+            for column in sources:
+                merged.extend(self._column_bullets(column))
+            if merged:
+                _, body = columns[0]
+                self._fill_bullets(body.text_frame, merged)
+                self._fit_text(body, merged, index)
+            self._warn(index, W.COLUMNS_MERGED,
+                       "this layout reserves one content area, not two; the "
+                       "columns were merged into it in order.")
+            self._add_speaker_notes(slide, slide_data.notes)
+            return
 
-            if idx == 0:
-                continue  # already set through _apply_title
-            elif idx in heading_slots:
-                if heading_slots[idx]:
-                    write_text(shape.text_frame, heading_slots[idx])
-            elif idx in content_slots:
-                bullets = content_slots[idx]
-                if bullets:
-                    self._fill_bullets(shape.text_frame, bullets)
-                    self._fit_text(shape, bullets, index)
+        for column, (heading_placeholder, body) in zip(sources, columns):
+            bullets = body_to_bullets(column.body)
+            if column.heading and heading_placeholder is None:
+                bullets = self._column_bullets(column)
+                self._warn(index, W.HEADING_INLINED,
+                           f"this layout has no heading placeholder; the heading "
+                           f"{column.heading!r} was written as a bold first line.")
+            elif column.heading:
+                write_text(heading_placeholder.text_frame, column.heading)
+            if bullets:
+                self._fill_bullets(body.text_frame, bullets)
+                self._fit_text(body, bullets, index)
 
         self._add_speaker_notes(slide, slide_data.notes)
+
+    @staticmethod
+    def _column_bullets(column) -> List[Bullet]:
+        """A column's bullets with its heading folded in as a bold lead line.
+
+        What a column becomes when there is no heading strip to write it into.
+        """
+        bullets = list(body_to_bullets(column.body))
+        if column.heading:
+            bullets.insert(0, Bullet(text=f"**{column.heading}**"))
+        return bullets
 
     def _build_chart_slide(self, slide_data, index: int) -> None:
         """Build a slide with a category chart."""

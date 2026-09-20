@@ -42,7 +42,7 @@ from __future__ import annotations
 import copy
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 from pptx.enum.shapes import PP_PLACEHOLDER
 from pptx.oxml.ns import qn
@@ -115,6 +115,63 @@ def content_placeholders(container):
     """Body/object placeholders of a layout or slide, in document order."""
     return [placeholder for placeholder in container.placeholders
             if placeholder.placeholder_format.type in CONTENT_PLACEHOLDER_TYPES]
+
+
+# A heading strip is much shorter than the body beneath it. Anything taller
+# than this share of the body is a second body, not a heading for the first.
+_HEADING_MAX_HEIGHT_RATIO = 0.6
+# Two placeholders share a column when they overlap horizontally by more than
+# this share of the narrower one.
+_COLUMN_OVERLAP_RATIO = 0.5
+
+
+def _placed(placeholder) -> bool:
+    return not any(value is None for value in
+                   (placeholder.left, placeholder.top,
+                    placeholder.width, placeholder.height))
+
+
+def content_columns(container):
+    """``(heading, body)`` per content column of *container*, left to right.
+
+    Addressing a two-column layout by placeholder ``idx`` only works on a
+    template numbered the way PowerPoint's built-in layouts are. A corporate
+    template routinely is not — the one in #194 numbered its two cards 4 and
+    2, left and right in that order, and its Comparison layout used 4, 13, 14
+    and 15 — so the builder wrote one column into the other's box and dropped
+    the rest without a word.
+
+    Geometry says what ``idx`` cannot: placeholders that overlap horizontally
+    are one column, the tallest of a column is its body, and a shorter
+    placeholder above that body is the heading for it. ``heading`` is None for
+    a layout that reserves no heading strip, which is what Two Content is.
+    """
+    placeholders = [ph for ph in content_placeholders(container) if _placed(ph)]
+    if not placeholders:
+        return []
+
+    columns: List[List[Any]] = []
+    for placeholder in sorted(placeholders, key=lambda ph: (ph.left, ph.top)):
+        for column in columns:
+            other = column[0]
+            overlap = (min(placeholder.left + placeholder.width, other.left + other.width)
+                       - max(placeholder.left, other.left))
+            if overlap > _COLUMN_OVERLAP_RATIO * min(placeholder.width, other.width):
+                column.append(placeholder)
+                break
+        else:
+            columns.append([placeholder])
+
+    resolved = []
+    for column in columns:
+        column.sort(key=lambda ph: ph.top)
+        body = max(column, key=lambda ph: ph.height)
+        above = [ph for ph in column if ph.top < body.top
+                 and ph.height <= _HEADING_MAX_HEIGHT_RATIO * body.height]
+        resolved.append((above[0] if above else None, body))
+
+    resolved.sort(key=lambda pair: pair[1].left)
+    return resolved
 
 
 def read_content_rect(layout) -> Optional[Rect]:

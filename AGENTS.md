@@ -105,6 +105,11 @@ backend → URL string or LibreChat artifact dict. Details:
 
 **PowerPoint**
 - Never index `slide_layouts[N]` in a builder; go through `_new_slide()`.
+- Never match a content placeholder by `idx`: a customer template numbers them
+  however it likes. Columns come from `content_columns()`, a single body from
+  `_content_placeholders()`. Only footers and slide numbers still read `idx`
+  (11 and 12). Details in
+  [powerpoint.md](docs/development/tools/powerpoint.md#two-columns-matched-by-geometry).
 - Keep the published slide schema flat (no `oneOf`/`$ref`/`discriminator`);
   validation is `coerce_slides()` in the build step.
 - Write a caller's text with `inline_formatting.write_text()`, never

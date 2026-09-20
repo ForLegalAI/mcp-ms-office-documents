@@ -88,7 +88,7 @@ problems go to the warnings list instead.
 | `slide_builder.py` | `PowerpointPresentation`: template selection, one `_build_*` method per slide type, sections, footer and slide numbers, language, the warnings list |
 | `helpers.py` | `SlideHelpers` mixin (titles, placeholders, bullets, tables, images, notes) and free functions: `body_to_bullets()`, `parse_table_data()`, `estimate_text_fill()`, `apply_autofit()`, `fit_table_font_size()`, `set_runs_language()`, `resolve_fill()` |
 | `layouts.py` | Layout roles, `classify_layout()`, `role_for_slide()`, `LayoutResolver` |
-| `placeholder_style.py` | Reading placeholder geometry, character style and list style from a template, and replaying them on plain text boxes (`read_title_style()`, `read_content_rect()`, `draw_title_box()`, `apply_list_style()`) |
+| `placeholder_style.py` | Reading placeholder geometry, character style and list style from a template, and replaying them on plain text boxes (`read_title_style()`, `read_content_rect()`, `content_columns()`, `draw_title_box()`, `apply_list_style()`) |
 | `templates.py` | `TemplateSpec`, the registry loaded from YAML with an mtime-fingerprint cache, `.potx` handling, `select_template()`, `validate_templates()` |
 | `chart_utils.py` | Category charts from `CategoryChartData`, scatter from `XyChartData`, legend, title, data labels, axis titles |
 | `inline_formatting.py` | Renders the shared inline grammar into python-pptx runs |
@@ -240,6 +240,42 @@ percentages, which `list_presentation_templates` passes through. That is the
 answer for a caller positioning a `blank` slide's elements: those coordinates
 stay absolute on the slide — changing them would silently move every existing
 deck — so the safe band is published instead.
+
+### Two columns, matched by geometry
+
+`two_column` slides do **not** address placeholders by `idx`. The indices
+PowerPoint's own Two Content (1, 2) and Comparison (1-4) layouts use are a
+convention, not a rule, and a corporate template routinely breaks it: the one
+in [#194](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/194)
+numbered its two cards 4 and 2 — left and right *in that order* — and its
+comparison layout 4, 13, 14, 15. Addressing by number wrote the right column
+into the left card, dropped the left column and both headings, left three
+placeholders empty, and reported none of it.
+
+`content_columns()` in `placeholder_style.py` reads the shape of the layout
+instead:
+
+1. content placeholders that overlap horizontally by more than half the
+   narrower one are **one column**;
+2. the **tallest** placeholder of a column is its body;
+3. a **shorter** placeholder above that body is the column's heading strip —
+   at most 60% of the body's height, so a second body is never mistaken for a
+   heading;
+4. columns are returned left to right, as `(heading, body)` pairs, with
+   `heading` None for a layout that reserves no strip (Two Content).
+
+The builder then fills column by column, and every shortfall is a warning
+rather than a silent loss:
+
+| Template offers | What happens | Code | Severity |
+|---|---|---|---|
+| Two columns with heading strips | Each heading and body written as asked | — | — |
+| Two columns, no heading strips | Heading becomes a bold first line of its column | `heading_inlined` | info |
+| One content area | Both columns merged into it, in order, headings bolded | `columns_merged` | warning |
+| No content placeholder | Nothing to write into | `column_dropped` | error |
+
+A layout with *more* columns than the slide has leaves the extra ones as the
+template drew them.
 
 ### Pictures in a picture placeholder
 
@@ -412,9 +448,12 @@ Both are reported.
   image that fails becomes a placeholder box **and** a warning.
 - **A builder exception fails the deck.** This is intentional: a half-built
   deck with a success response is worse than an error naming the slide.
-- **Two-column slides depend on placeholder `idx` values 1–4** matching
-  PowerPoint's Two Content and Comparison conventions, and footers on `idx`
-  11 and 12. A custom template that renumbers them silently drops content.
+- **Never match a content placeholder by `idx`.** Use `content_columns()`
+  (columns) or `_content_placeholders()` (single body). `idx` numbering is a
+  PowerPoint convention a customer template need not follow, and assuming it
+  silently dropped content ([#194](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/194)).
+  Footers and slide numbers are the remaining exception: they are still read
+  from `idx` 11 and 12.
 - **Template defaults bypass the schema.** Coerce and clamp them in the
   builder, as `_coerce_bool()` and `_coerce_font_size()` do.
 - **The registry cache is keyed by file mtimes.** A test that writes a
@@ -438,6 +477,7 @@ Both are reported.
 | `tests/test_pptx_bullet_glyphs.py` | Bullets in a text box: the master's glyphs and indents, and the order of `<a:pPr>` |
 | `tests/test_pptx_table_formatting.py` | Column widths, cell and row fills, merged blocks, and what happens when they do not fit the table |
 | `tests/test_pptx_text_metrics.py` | Measured line counts, wrapping, face selection, the arithmetic fallback, and that the image's font packages exist and match the table |
+| `tests/test_pptx_two_columns.py` | Columns matched by geometry on renumbered templates, and the warning each degraded path owes |
 | `tests/test_pptx_sections.py` | Outline-pane sections |
 | `tests/test_pptx_templates.py` | Registry loading, `.potx`, layout classification and resolution, defaults |
 | `tests/test_admin_pptx.py` | Admin UI support for PowerPoint templates |
@@ -454,8 +494,8 @@ assert on shapes and XML. See [`../testing.md`](../testing.md).
   autofit are not reproduced, and the deck's face may only be approximated by
   a substitute. The shrink factor remains a hint PowerPoint recomputes on
   first edit.
-- **Placeholder `idx` conventions are assumed** for two-column bodies and for
-  footers and slide numbers. See the invariants above.
+- **Placeholder `idx` conventions are assumed for footers and slide numbers**
+  (`idx` 11 and 12). Bodies and columns are matched by geometry instead.
 - **No SmartArt.** KPI and timeline slides are built from autoshapes.
 - **Category charts only in `chart`.** Scatter is its own slide type because
   it needs a different data object; bubble and combo charts are not offered.
