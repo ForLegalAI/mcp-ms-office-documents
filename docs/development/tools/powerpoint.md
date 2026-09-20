@@ -180,7 +180,7 @@ and finally the last layout rather than an `IndexError` on a trimmed template.
 
 The neighbour step exists because the positional index is a guess about a
 template that has already proved unusual. On the template in
-[#194](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/194) the
+[#195](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/194) the
 `comparison` role was unprovided and position 4 was Title Only, so a
 two-column slide landed on a layout with no body placeholder and lost both
 columns. Every alternative listed can still hold the content: `comparison`
@@ -198,7 +198,7 @@ layout"
 
 `closing` is in `CONFIGURED_ROLE_DEFAULT`: no signature detects it, because a
 contact or thank-you slide is a designer's layout rather than a shape — the
-template in #194 has a "kontakt" layout carrying a QR code, a photo and the
+template in #195 has a "kontakt" layout carrying a QR code, a photo and the
 firm's details. Naming it a role is what lets a template map it in the
 registry's `layouts:` block; unmapped, it resolves to `title` **without** a
 warning, since that is its documented default and not a substitution.
@@ -214,7 +214,7 @@ content placeholders (two_column), and for one, `BODY` means section and
 `OBJECT` means content.
 
 `comparison` is the one role that is **not** decided by counting. Four content
-placeholders were enough to claim it, and the template in #194 spent them on
+placeholders were enough to claim it, and the template in #195 spent them on
 three cards side by side plus a caption bar — so every two-column slide in the
 deck was laid out on a three-card layout. A layout now has to resolve, through
 `content_columns()`, to exactly two columns *each with a heading strip*.
@@ -271,7 +271,7 @@ deck — so the safe band is published instead.
 
 Anything the builder *draws* rather than places in a placeholder is a plain
 text box, so it inherits the presentation's `<p:defaultTextStyle>` — `tx1`,
-black — not the body style a placeholder gets. On the dark template in #194
+black — not the body style a placeholder gets. On the dark template in #195
 the KPI figures and the timeline detail lines were black on near-black.
 
 `read_body_color()` reads the master's `<p:bodyStyle>` colour and returns a
@@ -306,7 +306,7 @@ third card of a three-card layout, the heading strip of a Comparison column
 given no heading, the body of a Section Header (a `section` slide carries only
 a title), the subtitle of a title slide without one. They neither print nor
 appear in a slideshow, but they are the first thing anyone opening the file to
-edit it sees, and on the template in #194 there were three on a single slide.
+edit it sees, and on the template in #195 there were three on a single slide.
 
 `_drop_unused_placeholders()` runs once after every slide is built and removes
 any non-chrome placeholder still holding an empty text frame. A placeholder
@@ -321,7 +321,7 @@ Slide restores it from the layout.
 `two_column` slides do **not** address placeholders by `idx`. The indices
 PowerPoint's own Two Content (1, 2) and Comparison (1-4) layouts use are a
 convention, not a rule, and a corporate template routinely breaks it: the one
-in [#194](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/194)
+in [#195](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/194)
 numbered its two cards 4 and 2 — left and right *in that order* — and its
 comparison layout 4, 13, 14, 15. Addressing by number wrote the right column
 into the left card, dropped the left column and both headings, left three
@@ -456,7 +456,7 @@ wrote a bare `<a:normAutofit/>`, and PowerPoint rendered the text at full size
 straight off the bottom of the slide, because it only recomputes autofit when
 someone clicks into the box. The overflow warning is derived from the same
 number, so the caller was not told either
-([#194](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/194)).
+([#195](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/194)).
 
 `read_body_font_size()` resolves the real size the way PowerPoint inherits it,
 nearest first: the shape's own `<a:lstStyle>`, the layout placeholder it came
@@ -550,7 +550,7 @@ Both are reported.
 - **Never match a content placeholder by `idx`.** Use `content_columns()`
   (columns) or `_content_placeholders()` (single body). `idx` numbering is a
   PowerPoint convention a customer template need not follow, and assuming it
-  silently dropped content ([#194](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/194)).
+  silently dropped content ([#195](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/194)).
   Footers and slide numbers are the remaining exception: they are still read
   from `idx` 11 and 12.
 - **Template defaults bypass the schema.** Coerce and clamp them in the

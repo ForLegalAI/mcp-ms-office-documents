@@ -110,7 +110,7 @@ TABLE_ROW_HEIGHT_PER_POINT = 2.1
 # `schemeClr`, so the table follows whatever palette the template carries.
 # These were pinned to Office's old default blue and a grey near it, which
 # stayed that blue on every template — including one whose own accent is a
-# brand teal (#194). Both remain overridable per slide through `header_color`
+# brand teal (#195). Both remain overridable per slide through `header_color`
 # and `fills`, and per template through the registry's `table` defaults.
 TABLE_HEADER_FILL = "accent1"
 TABLE_ALT_ROW_FILL = "bg2"

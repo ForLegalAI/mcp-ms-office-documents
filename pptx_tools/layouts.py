@@ -61,7 +61,7 @@ ROLES = (
 )
 
 # Roles no placeholder signature can detect. A contact or closing slide is a
-# designer's layout, not a shape — the template in #194 has a "kontakt" layout
+# designer's layout, not a shape — the template in #195 has a "kontakt" layout
 # with a QR code, a photo and the firm's details, which classifies as whatever
 # placeholders happen to be on it. Naming it a role is what lets a template map
 # it in the registry's `layouts:` block, or a slide name it directly; with
@@ -90,7 +90,7 @@ CONTENT_REFERENCE_ROLES = (
 # Roles to try, in order, when a template provides none for the one asked for.
 # A near neighbour that this template really has beats the positional index,
 # which is a guess about a template that has already proved unusual: on the
-# template in #194 the comparison role went unfilled and position 4 was Title
+# template in #195 the comparison role went unfilled and position 4 was Title
 # Only, so a two-column slide landed somewhere with no body placeholder at all
 # and lost both columns. Each alternative here can still hold the content, and
 # the builder degrades into it — merging columns, inlining a heading — rather
@@ -227,7 +227,7 @@ def classify_layout(layout) -> Optional[str]:
     # plus two content placeholders and no headings.
     if len(contents) == 4:
         # Four content placeholders are not enough to say "Comparison". The
-        # template in #194 had four on a layout that is three cards side by
+        # template in #195 had four on a layout that is three cards side by
         # side plus a caption bar, and every two-column slide in the deck was
         # laid out on it. A real Comparison resolves to exactly two columns,
         # each with a heading strip above its body; anything else is a shape

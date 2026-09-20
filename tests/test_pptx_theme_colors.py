@@ -3,7 +3,7 @@
 Anything the builder draws rather than places in a placeholder — KPI figures,
 timeline detail lines, a quote, blank-slide text, chart axis labels, table
 fills — was pinned to a literal or left inheriting the presentation's default
-text style (`tx1`, black). On the dark template in #194 the KPI figures came
+text style (`tx1`, black). On the dark template in #195 the KPI figures came
 out black on near-black, and every table header was Office's old default blue
 whatever the template's own accent was.
 """

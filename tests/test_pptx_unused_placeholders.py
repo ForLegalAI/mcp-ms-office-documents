@@ -5,7 +5,7 @@ offers more than the slide filled left empty prompt boxes behind: the third
 card of a three-card layout, the heading strip of a Comparison column given no
 heading, the body of a Section Header. They neither print nor show in a
 slideshow, but they are the first thing anyone opening the file to edit it
-sees — three per slide on the template in #194.
+sees — three per slide on the template in #195.
 """
 
 import sys

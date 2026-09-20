@@ -1,6 +1,6 @@
 """A two-column slide keeps both columns, whatever the template numbers them.
 
-The bug (#194): ``_build_two_column_slide`` addressed placeholders by ``idx``,
+The bug (#195): ``_build_two_column_slide`` addressed placeholders by ``idx``,
 assuming PowerPoint's built-in numbering — 1/2 for Two Content, 1-4 for
 Comparison. A customer template numbered its two cards 4 and 2 (left and right
 *in that order*) and its comparison layout 4, 13, 14, 15. The builder wrote the
@@ -112,7 +112,7 @@ def test_two_content_fills_both_columns_whatever_the_idx(tmp_path, mapping):
 
 
 def test_comparison_fills_headings_and_bodies_whatever_the_idx(tmp_path):
-    # Exactly the shape of the template in #194.
+    # Exactly the shape of the template in #195.
     spec = _template(tmp_path, COMPARISON, {1: 4, 2: 13, 3: 14, 4: 15})
     slide, warnings = _build({**SLIDE, "layout": COMPARISON}, spec)
 
@@ -188,7 +188,7 @@ def test_empty_columns_on_a_bodyless_layout_warn_about_nothing():
 
 
 def test_nothing_is_lost_without_a_warning_saying_so():
-    """The invariant behind #194: content is in the file, or the caller is told."""
+    """The invariant behind #195: content is in the file, or the caller is told."""
     words = ("Vy dodáváte", "Odbornost", "Strategii",
              "AI dodává", "Rychlost", "Drafting")
 
@@ -215,7 +215,7 @@ def _reshape(layout, boxes):
 
 
 def test_three_cards_and_a_bar_is_not_a_comparison(tmp_path):
-    """The layout from #194: three cards side by side plus a caption bar.
+    """The layout from #195: three cards side by side plus a caption bar.
 
     It has four content placeholders, so the old count-only rule called it
     Comparison and every two-column slide in the deck landed on it.
@@ -264,7 +264,7 @@ def _without_layout(tmp_path, name) -> TemplateSpec:
 def test_a_template_with_no_comparison_layout_degrades_into_two_content(tmp_path):
     """Without this the positional fallback picked a layout with no body at all.
 
-    On the #194 template `comparison` is unprovided and position 4 is Title
+    On the #195 template `comparison` is unprovided and position 4 is Title
     Only, so a two-column slide landed there and lost both columns. A role the
     template really has is tried first.
     """

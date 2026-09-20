@@ -570,7 +570,7 @@ class TestTableAndChartDefaults:
 
         It was pinned to Office's old default blue, so a table came out that
         blue on every template — including one whose accent is a brand teal
-        (#194). `_set_cell_fill()` already wrote a theme name as `schemeClr`;
+        (#195). `_set_cell_fill()` already wrote a theme name as `schemeClr`;
         only the default was not one.
         """
         from pptx.enum.dml import MSO_THEME_COLOR

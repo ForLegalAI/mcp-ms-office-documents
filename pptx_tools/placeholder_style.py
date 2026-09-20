@@ -138,7 +138,7 @@ def content_columns(container):
 
     Addressing a two-column layout by placeholder ``idx`` only works on a
     template numbered the way PowerPoint's built-in layouts are. A corporate
-    template routinely is not — the one in #194 numbered its two cards 4 and
+    template routinely is not — the one in #195 numbered its two cards 4 and
     2, left and right in that order, and its Comparison layout used 4, 13, 14
     and 15 — so the builder wrote one column into the other's box and dropped
     the rest without a word.
@@ -301,7 +301,7 @@ def read_body_color(master):
     What the builder's own text boxes should be. They are plain text boxes, so
     they inherit the presentation's default text style rather than the body
     style a placeholder would — `tx1`, black, whatever the deck looks like.
-    On a dark template that is black on near-black: the KPI figures in #194
+    On a dark template that is black on near-black: the KPI figures in #195
     were unreadable, and so were the timeline detail lines.
 
     A scheme colour comes back as its ``MSO_THEME_COLOR`` so it keeps tracking
@@ -376,7 +376,7 @@ def read_body_font_size(placeholder, level: int = 0) -> Optional[float]:
     The fit estimate used to assume ``DEFAULT_BODY_FONT_SIZE`` — 18pt — for
     every template. A template whose master sets a different body size was
     then measured against a font it does not use: the one in
-    [#194] sets 28pt, so a body needing 1.9x its box measured as 0.86x, no
+    [#195] sets 28pt, so a body needing 1.9x its box measured as 0.86x, no
     shrink factor was written, and PowerPoint rendered the text at full size
     straight off the bottom of the slide. Being wrong in this direction is
     silent, because the overflow warning is computed from the same number.

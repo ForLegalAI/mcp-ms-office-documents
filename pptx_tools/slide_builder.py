@@ -115,7 +115,7 @@ class PowerpointPresentation(SlideHelpers):
         # Text the builder draws itself is a plain text box, so it inherits
         # the presentation's default text style (tx1, black) rather than the
         # body style a placeholder gets. On a dark template that is black on
-        # near-black (#194), so the template's own body colour is applied.
+        # near-black (#195), so the template's own body colour is applied.
         self._body_color = read_body_color(
             self.presentation.slide_masters[0]
             if self.presentation.slide_masters else None
@@ -352,7 +352,7 @@ class PowerpointPresentation(SlideHelpers):
         gave no heading, the body of a Section Header — left a box reading
         "Click to add text" in the deck. It does not print and does not show
         in a slideshow, but it is the first thing anyone opening the file to
-        edit it sees, and on the template in #194 there were three per slide.
+        edit it sees, and on the template in #195 there were three per slide.
 
         A placeholder holding a picture, table or chart is not an ``<p:sp>``
         with a text frame any more, so filling one keeps it. Dropping a
@@ -822,7 +822,7 @@ class PowerpointPresentation(SlideHelpers):
         ``idx``: the indices PowerPoint's own Two Content and Comparison
         layouts use are a convention a corporate template need not follow, and
         addressing by number silently wrote one column into the other's box and
-        dropped the rest (#194). :func:`~pptx_tools.placeholder_style.content_columns`
+        dropped the rest (#195). :func:`~pptx_tools.placeholder_style.content_columns`
         reads left-to-right columns and each column's heading strip instead.
 
         A template that reserves fewer columns than the slide has still keeps
@@ -1383,7 +1383,7 @@ class PowerpointPresentation(SlideHelpers):
         made the fit estimate wrong by the square of the ratio. Both templates
         this server ships set 28pt, not 18: a body needing 1.9x its box
         measured as 0.86x, so no shrink factor was written and the overflow
-        warning — computed from the same number — never fired either (#194).
+        warning — computed from the same number — never fired either (#195).
         """
         size = read_body_font_size(placeholder)
         return size if size else float(DEFAULT_BODY_FONT_SIZE.pt)

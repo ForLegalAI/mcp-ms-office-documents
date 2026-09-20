@@ -1,6 +1,6 @@
 """The fit estimate measures the size the template really renders body text at.
 
-The bug (#194): ``_fit_text`` always passed ``DEFAULT_BODY_FONT_SIZE`` — 18pt —
+The bug (#195): ``_fit_text`` always passed ``DEFAULT_BODY_FONT_SIZE`` — 18pt —
 to ``estimate_text_fill``, whatever the template said. Both templates this
 server ships set 28pt in the master's ``<p:bodyStyle>``, so every fill estimate
 was low by the square of 28/18, roughly 2.4x. Text needing 1.9x its placeholder
