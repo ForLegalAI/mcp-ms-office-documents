@@ -32,7 +32,9 @@ from .constants import (
     TITLE_LAYOUT, SECTION_LAYOUT, CONTENT_LAYOUT,
     TWO_COLUMN_LAYOUT, TWO_COLUMN_TEXT_LAYOUT, TITLE_ONLY_LAYOUT, BLANK_LAYOUT,
 )
-from .placeholder_style import Rect, TitleStyle, read_content_rect, read_title_style
+from .placeholder_style import (
+    Rect, TitleStyle, content_columns, read_content_rect, read_title_style,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +52,22 @@ ROLE_COMPARISON = "comparison"
 ROLE_IMAGE_TEXT = "image_text"
 ROLE_TITLE_ONLY = "title_only"
 ROLE_BLANK = "blank"
+ROLE_CLOSING = "closing"
 
 ROLES = (
     ROLE_TITLE, ROLE_SECTION, ROLE_CONTENT, ROLE_TWO_COLUMN,
     ROLE_COMPARISON, ROLE_IMAGE_TEXT, ROLE_TITLE_ONLY, ROLE_BLANK,
+    ROLE_CLOSING,
 )
+
+# Roles no placeholder signature can detect. A contact or closing slide is a
+# designer's layout, not a shape — the template in #195 has a "kontakt" layout
+# with a QR code, a photo and the firm's details, which classifies as whatever
+# placeholders happen to be on it. Naming it a role is what lets a template map
+# it in the registry's `layouts:` block, or a slide name it directly; with
+# neither, the role standing in here is used, and that is the documented
+# default rather than a substitution, so it is not warned about.
+CONFIGURED_ROLE_DEFAULT = {ROLE_CLOSING: ROLE_TITLE}
 
 # Where to read a title's position and styling from when the layout a slide
 # landed on has no title placeholder of its own (#118). Ordinary body layouts
@@ -73,6 +86,26 @@ TITLE_REFERENCE_ROLES = (
 CONTENT_REFERENCE_ROLES = (
     ROLE_CONTENT, ROLE_SECTION, ROLE_TWO_COLUMN, ROLE_COMPARISON, ROLE_IMAGE_TEXT,
 )
+
+# Roles to try, in order, when a template provides none for the one asked for.
+# A near neighbour that this template really has beats the positional index,
+# which is a guess about a template that has already proved unusual: on the
+# template in #195 the comparison role went unfilled and position 4 was Title
+# Only, so a two-column slide landed somewhere with no body placeholder at all
+# and lost both columns. Each alternative here can still hold the content, and
+# the builder degrades into it — merging columns, inlining a heading — rather
+# than dropping it.
+ROLE_ALTERNATIVES = {
+    ROLE_TITLE: (ROLE_SECTION, ROLE_TITLE_ONLY, ROLE_CONTENT),
+    ROLE_SECTION: (ROLE_TITLE_ONLY, ROLE_CONTENT, ROLE_TITLE),
+    ROLE_CONTENT: (ROLE_TWO_COLUMN, ROLE_SECTION, ROLE_TITLE_ONLY),
+    ROLE_TWO_COLUMN: (ROLE_COMPARISON, ROLE_CONTENT),
+    ROLE_COMPARISON: (ROLE_TWO_COLUMN, ROLE_CONTENT),
+    ROLE_IMAGE_TEXT: (ROLE_CONTENT, ROLE_TITLE_ONLY),
+    ROLE_TITLE_ONLY: (ROLE_CONTENT, ROLE_BLANK),
+    ROLE_BLANK: (ROLE_TITLE_ONLY,),
+    ROLE_CLOSING: (ROLE_TITLE, ROLE_SECTION, ROLE_TITLE_ONLY),
+}
 
 # Positional fallbacks, i.e. what the builder assumed before this module.
 ROLE_FALLBACK_INDEX = {
@@ -96,7 +129,7 @@ SLIDE_TYPE_ROLE = {
     "kpi": ROLE_TITLE_ONLY,
     "timeline": ROLE_TITLE_ONLY,
     "agenda": ROLE_CONTENT,
-    "closing": ROLE_TITLE,
+    "closing": ROLE_CLOSING,
     "section": ROLE_SECTION,
     "content": ROLE_CONTENT,
     "table": ROLE_CONTENT,
@@ -193,7 +226,17 @@ def classify_layout(layout) -> Optional[str]:
     # Comparison is title + heading/content twice over; Two Content is title
     # plus two content placeholders and no headings.
     if len(contents) == 4:
-        return ROLE_COMPARISON
+        # Four content placeholders are not enough to say "Comparison". The
+        # template in #195 had four on a layout that is three cards side by
+        # side plus a caption bar, and every two-column slide in the deck was
+        # laid out on it. A real Comparison resolves to exactly two columns,
+        # each with a heading strip above its body; anything else is a shape
+        # this vocabulary has no name for, and an unnamed layout is left for
+        # an explicit name to select rather than guessed at.
+        columns = content_columns(layout)
+        if len(columns) == 2 and all(heading is not None for heading, _ in columns):
+            return ROLE_COMPARISON
+        return None
     if len(contents) == 2:
         body_count = sum(1 for t in contents if t == PP_PLACEHOLDER.BODY)
         object_count = sum(1 for t in contents if t == PP_PLACEHOLDER.OBJECT)
@@ -315,12 +358,26 @@ class LayoutResolver:
                 "which this file does not contain"
             ))
 
+        default = CONFIGURED_ROLE_DEFAULT.get(role)
+        if default is not None and role not in self._by_role:
+            # Its documented default, not a fallback: no warning.
+            return self._resolve_detected(default)
+
         return self._resolve_detected(role)
 
     def _resolve_detected(self, role: str, extra: Optional[str] = None):
         layout = self._by_role.get(role)
         if layout is not None:
             return layout, (f"{extra}; fell back to detected layout {layout.name!r}." if extra else None)
+
+        for alternative in ROLE_ALTERNATIVES.get(role, ()):
+            layout = self._by_role.get(alternative)
+            if layout is not None:
+                note = (
+                    f"no layout in this template matches the {role!r} role; "
+                    f"used its {alternative!r} layout {layout.name!r}."
+                )
+                return layout, (f"{extra}; {note}" if extra else note)
 
         index = ROLE_FALLBACK_INDEX.get(role, CONTENT_LAYOUT)
         if index < len(self._layouts):
@@ -427,6 +484,10 @@ class LayoutResolver:
     def missing_roles(self) -> List[str]:
         """Roles the slide types actually use that this template does not provide."""
         used = set(SLIDE_TYPE_ROLE.values()) | {ROLE_TWO_COLUMN, ROLE_COMPARISON}
+        # A configuration-only role is never detected, so it is never missing:
+        # reporting it would tell every template it lacks something it cannot
+        # have from its placeholders alone.
+        used -= set(CONFIGURED_ROLE_DEFAULT)
         return sorted(role for role in used if role not in self._by_role)
 
     def layouts_without_footer(self) -> List[str]:

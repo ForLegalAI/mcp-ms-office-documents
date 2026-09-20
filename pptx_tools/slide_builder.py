@@ -17,7 +17,7 @@ import logging
 from typing import Any, List, Optional, Sequence, Tuple
 
 from pptx import Presentation
-from pptx.dml.color import MSO_THEME_COLOR
+from pptx.dml.color import MSO_THEME_COLOR, RGBColor
 from pptx.enum.shapes import MSO_SHAPE, PP_PLACEHOLDER
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
@@ -45,7 +45,11 @@ from .chart_utils import (
     set_axis_titles, ChartDataError,
 )
 from .layouts import LayoutResolver, role_for_slide
-from .placeholder_style import TitleStyle, apply_list_style, draw_title_box
+from .placeholder_style import (
+    TitleStyle, apply_list_style, apply_text_color, content_columns,
+    draw_title_box, read_body_color, read_body_font_size,
+    read_master_body_font_size,
+)
 from .text_metrics import theme_body_typeface
 from .schema import Bullet, coerce_slides
 from . import warnings as W
@@ -107,6 +111,15 @@ class PowerpointPresentation(SlideHelpers):
         # The face body text is actually set in, so the fit estimate measures
         # this deck's text rather than a generic one (#125).
         self._typeface = theme_body_typeface(self.presentation)
+        self._body_size = None
+        # Text the builder draws itself is a plain text box, so it inherits
+        # the presentation's default text style (tx1, black) rather than the
+        # body style a placeholder gets. On a dark template that is black on
+        # near-black (#195), so the template's own body colour is applied.
+        self._body_color = read_body_color(
+            self.presentation.slide_masters[0]
+            if self.presentation.slide_masters else None
+        )
 
         defaults = self.spec.defaults if self.spec else {}
         self._footer_text = footer_text if footer_text is not None else defaults.get("footer_text")
@@ -119,6 +132,7 @@ class PowerpointPresentation(SlideHelpers):
 
         self._remove_template_slides()
         self._build_slides(self.slides)
+        self._drop_unused_placeholders()
         self._apply_sections()
         if self._footer_text or self._show_slide_numbers:
             self._apply_footer_and_slide_numbers()
@@ -322,6 +336,44 @@ class PowerpointPresentation(SlideHelpers):
         if note:
             self._warn(index, W.LAYOUT_SUBSTITUTED, note)
         return self.presentation.slides.add_slide(layout)
+
+    # Chrome is cloned and filled by _apply_footer_and_slide_numbers, which
+    # runs after this pass; an empty one there is not an unused placeholder.
+    _CHROME_PLACEHOLDERS = frozenset((
+        PP_PLACEHOLDER.DATE, PP_PLACEHOLDER.FOOTER, PP_PLACEHOLDER.SLIDE_NUMBER,
+    ))
+
+    def _drop_unused_placeholders(self) -> None:
+        """Remove placeholders no slide content reached.
+
+        ``add_slide()`` copies every placeholder its layout defines, so a
+        layout offering more than the slide filled — the third card of a
+        three-card layout, the heading strip of a Comparison column a caller
+        gave no heading, the body of a Section Header — left a box reading
+        "Click to add text" in the deck. It does not print and does not show
+        in a slideshow, but it is the first thing anyone opening the file to
+        edit it sees, and on the template in #195 there were three per slide.
+
+        The test is "has an empty text frame", so anything that replaced its
+        ``<p:sp>`` with a graphic survives. Today only the picture path does
+        that: ``_fill_picture_placeholder()`` calls ``insert_picture()``,
+        which swaps in a ``<p:pic>``. Tables and charts never reach a
+        placeholder at all — ``_add_title_content_slide()`` removes the
+        content placeholder and draws a fresh shape in its rectangle — but a
+        future change that inserted into one would be safe for the same
+        reason. Dropping a placeholder does not change what a reader sees;
+        PowerPoint's Reset Slide puts it back from the layout.
+        """
+        for slide in self.presentation.slides:
+            for placeholder in list(slide.placeholders):
+                if placeholder.placeholder_format.type in self._CHROME_PLACEHOLDERS:
+                    continue
+                if not placeholder.has_text_frame:
+                    continue
+                if placeholder.text_frame.text.strip():
+                    continue
+                element = placeholder._element
+                element.getparent().remove(element)
 
     def _remove_template_slides(self) -> None:
         """Remove every slide the template ships with, parts included.
@@ -769,47 +821,73 @@ class PowerpointPresentation(SlideHelpers):
         write_text(paragraph, caption, font_size=DEFAULT_CAPTION_FONT_SIZE, italic=True)
 
     def _build_two_column_slide(self, slide_data, index: int) -> None:
-        """Build a slide with two text columns using built-in PowerPoint layouts.
+        """Build a slide with two text columns.
 
-        Uses the Comparison layout when either column has a heading, otherwise
-        Two Content.
+        Columns are matched to placeholders by geometry, never by placeholder
+        ``idx``: the indices PowerPoint's own Two Content and Comparison
+        layouts use are a convention a corporate template need not follow, and
+        addressing by number silently wrote one column into the other's box and
+        dropped the rest (#195). :func:`~pptx_tools.placeholder_style.content_columns`
+        reads left-to-right columns and each column's heading strip instead.
 
-        Placeholder indices:
-        - Two Content (3): idx 0=Title, 1=Left content, 2=Right content
-        - Comparison (4): idx 0=Title, 1=Left heading, 2=Left content,
-          3=Right heading, 4=Right content
+        A template that reserves fewer columns than the slide has still keeps
+        every word: the columns merge into the one body, with each heading as a
+        bold lead line. Whatever it costs is reported.
         """
-        left_col, right_col = slide_data.left, slide_data.right
-        has_headings = bool(left_col.heading or right_col.heading)
+        sources = (slide_data.left, slide_data.right)
 
         slide = self._new_slide(slide_data, index)
         self._apply_title(slide, slide_data.title, index)
 
-        left_bullets = body_to_bullets(left_col.body)
-        right_bullets = body_to_bullets(right_col.body)
+        columns = content_columns(slide)
 
-        if has_headings:
-            content_slots = {2: left_bullets, 4: right_bullets}
-            heading_slots = {1: left_col.heading, 3: right_col.heading}
-        else:
-            content_slots = {1: left_bullets, 2: right_bullets}
-            heading_slots = {}
+        if not columns:
+            if any(column.heading or column.body for column in sources):
+                self._warn(index, W.COLUMN_DROPPED,
+                           "this layout has no body placeholder; both columns "
+                           "were dropped.")
+            self._add_speaker_notes(slide, slide_data.notes)
+            return
 
-        for shape in slide.placeholders:
-            idx = shape.placeholder_format.idx
+        if len(columns) == 1:
+            merged: List[Bullet] = []
+            for column in sources:
+                merged.extend(self._column_bullets(column))
+            if merged:
+                _, body = columns[0]
+                self._fill_bullets(body.text_frame, merged)
+                self._fit_text(body, merged, index)
+            self._warn(index, W.COLUMNS_MERGED,
+                       "this layout reserves one content area, not two; the "
+                       "columns were merged into it in order.")
+            self._add_speaker_notes(slide, slide_data.notes)
+            return
 
-            if idx == 0:
-                continue  # already set through _apply_title
-            elif idx in heading_slots:
-                if heading_slots[idx]:
-                    write_text(shape.text_frame, heading_slots[idx])
-            elif idx in content_slots:
-                bullets = content_slots[idx]
-                if bullets:
-                    self._fill_bullets(shape.text_frame, bullets)
-                    self._fit_text(shape, bullets, index)
+        for column, (heading_placeholder, body) in zip(sources, columns):
+            bullets = body_to_bullets(column.body)
+            if column.heading and heading_placeholder is None:
+                bullets = self._column_bullets(column)
+                self._warn(index, W.HEADING_INLINED,
+                           f"this layout has no heading placeholder; the heading "
+                           f"{column.heading!r} was written as a bold first line.")
+            elif column.heading:
+                write_text(heading_placeholder.text_frame, column.heading)
+            if bullets:
+                self._fill_bullets(body.text_frame, bullets)
+                self._fit_text(body, bullets, index)
 
         self._add_speaker_notes(slide, slide_data.notes)
+
+    @staticmethod
+    def _column_bullets(column) -> List[Bullet]:
+        """A column's bullets with its heading folded in as a bold lead line.
+
+        What a column becomes when there is no heading strip to write it into.
+        """
+        bullets = list(body_to_bullets(column.body))
+        if column.heading:
+            bullets.insert(0, Bullet(text=f"**{column.heading}**"))
+        return bullets
 
     def _build_chart_slide(self, slide_data, index: int) -> None:
         """Build a slide with a category chart."""
@@ -847,6 +925,7 @@ class PowerpointPresentation(SlideHelpers):
             )
             configure_data_labels(chart, data_labels, slide_data.number_format)
             set_axis_titles(chart, slide_data.x_title, slide_data.y_title)
+            self._paint_chart(chart)
         except ChartDataError as e:
             logger.error(f"Chart error: {e}")
             self._add_text_box(
@@ -874,7 +953,7 @@ class PowerpointPresentation(SlideHelpers):
         slide, left, top, width, height = self._content_slide(slide_data, index)
 
         try:
-            add_scatter_to_slide(
+            self._paint_chart(add_scatter_to_slide(
                 slide,
                 series=slide_data.series,
                 left=left, top=top, width=width, height=height,
@@ -882,7 +961,7 @@ class PowerpointPresentation(SlideHelpers):
                 title=slide_data.chart_title,
                 x_title=slide_data.x_title,
                 y_title=slide_data.y_title,
-            )
+            ))
         except ChartDataError as e:
             logger.error(f"Scatter chart error: {e}")
             self._add_text_box(
@@ -914,6 +993,7 @@ class PowerpointPresentation(SlideHelpers):
             )
             author_para.space_before = Pt(24)
 
+        self._paint(tf)
         self._add_speaker_notes(slide, slide_data.notes)
 
     # -------------------------------------------------------------------------
@@ -958,6 +1038,8 @@ class PowerpointPresentation(SlideHelpers):
                 delta.space_before = Pt(2)
                 # Theme accent, so the figure follows the template's palette.
                 delta.font.color.theme_color = MSO_THEME_COLOR.ACCENT_1
+
+            self._paint(frame)
 
         if len(items) > 4:
             self._warn(
@@ -1131,6 +1213,7 @@ class PowerpointPresentation(SlideHelpers):
                     bold=element.bold,
                     alignment=self._ELEMENT_ALIGN[element.align],
                 )
+                self._paint(box.text_frame)
             elif element.kind == "image":
                 picture, error = self._add_image(
                     slide, element.source,
@@ -1233,6 +1316,7 @@ class PowerpointPresentation(SlideHelpers):
                 detail = caption.text_frame.paragraphs[0]
                 write_text(detail, step.detail, font_size=TIMELINE_DETAIL_FONT_SIZE,
                            alignment=PP_ALIGN.CENTER)
+                self._paint(caption.text_frame)
 
         self._add_speaker_notes(slide, slide_data.notes)
 
@@ -1252,22 +1336,68 @@ class PowerpointPresentation(SlideHelpers):
         box = slide.shapes.add_textbox(left, top, width, height)
         self._fill_bullets(box.text_frame, bullets)
         apply_list_style(box.text_frame, slide.slide_layout.slide_master)
+        self._paint(box.text_frame)
         apply_autofit(box.text_frame, scale=self._fit_scale(bullets, width, height))
         return box
 
     def _fit_scale(self, bullets, width, height):
-        """Shrink factor for a text box, or None when the text already fits."""
+        """Shrink factor for a text box, or None when the text already fits.
+
+        Measured at the master's body size, because that is what
+        :func:`apply_list_style` gives these boxes — not the built-in default.
+        """
         fill = estimate_text_fill(
-            bullets, width, height, font_size_pt=float(DEFAULT_BODY_FONT_SIZE.pt),
+            bullets, width, height, font_size_pt=self._master_body_font_size(),
             typeface=self._typeface,
         )
         return (1.0 / fill) if fill > 1.0 else None
+
+    def _paint(self, target) -> None:
+        """Give text the builder drew the colour this template uses for body text."""
+        apply_text_color(target, self._body_color)
+
+    def _paint_chart(self, chart) -> None:
+        """Give a chart's axis labels, legend and title the template's text colour.
+
+        Chart text lives in its own part and inherits nothing from the slide,
+        so it came out `tx1` — black — whatever the deck looked like. Setting
+        it on ``chart.font`` reaches every label that does not override it.
+        """
+        if chart is None or self._body_color is None:
+            return
+        try:
+            if isinstance(self._body_color, RGBColor):
+                chart.font.color.rgb = self._body_color
+            else:
+                chart.font.color.theme_color = self._body_color
+        except (AttributeError, ValueError) as error:  # pragma: no cover
+            logger.debug("Could not colour chart text: %s", error)
+
+    def _master_body_font_size(self) -> float:
+        """The template's own body size, read once per deck."""
+        if self._body_size is None:
+            master = self.presentation.slide_masters[0] if self.presentation.slide_masters else None
+            size = read_master_body_font_size(master)
+            self._body_size = size if size else float(DEFAULT_BODY_FONT_SIZE.pt)
+        return self._body_size
+
+    def _body_font_size(self, placeholder) -> float:
+        """The size body text in *placeholder* really renders at, in points.
+
+        Measuring against ``DEFAULT_BODY_FONT_SIZE`` regardless of the template
+        made the fit estimate wrong by the square of the ratio. Both templates
+        this server ships set 28pt, not 18: a body needing 1.9x its box
+        measured as 0.86x, so no shrink factor was written and the overflow
+        warning — computed from the same number — never fired either (#195).
+        """
+        size = read_body_font_size(placeholder)
+        return size if size else float(DEFAULT_BODY_FONT_SIZE.pt)
 
     def _fit_text(self, placeholder, bullets, index: int) -> None:
         """Ask PowerPoint to shrink overfull body text, and warn when it is far gone."""
         fill = estimate_text_fill(
             bullets, placeholder.width, placeholder.height,
-            font_size_pt=float(DEFAULT_BODY_FONT_SIZE.pt),
+            font_size_pt=self._body_font_size(placeholder),
             typeface=self._typeface,
         )
         apply_autofit(placeholder.text_frame, scale=(1.0 / fill) if fill > 1.0 else None)

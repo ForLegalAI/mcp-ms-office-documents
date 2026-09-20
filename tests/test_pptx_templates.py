@@ -566,9 +566,19 @@ class TestTableAndChartDefaults:
         assert not chart.plots[0].has_data_labels
 
     def test_without_template_defaults_the_built_ins_still_apply(self, registry):
+        """The built-in header fill is the template's own accent, not a literal.
+
+        It was pinned to Office's old default blue, so a table came out that
+        blue on every template — including one whose accent is a brand teal
+        (#195). `_set_cell_fill()` already wrote a theme name as `schemeClr`;
+        only the default was not one.
+        """
+        from pptx.enum.dml import MSO_THEME_COLOR
+
         self._register(registry, {})
         table = self._table_of(build([{"type": "table", "rows": self.TABLE}], template="brand"))
-        assert str(table.cell(0, 0).fill.fore_color.rgb) == "4172C4"
+        assert table.cell(0, 0).fill.fore_color.theme_color == MSO_THEME_COLOR.ACCENT_1
+        assert '<a:schemeClr val="accent1"/>' in table.cell(0, 0)._tc.xml
         assert "<a:solidFill>" in table.cell(2, 0)._tc.xml
 
 
