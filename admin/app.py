@@ -52,8 +52,9 @@ from admin.kinds import (
     KINDS, content_disposition, descriptor, is_kind, media_type,
 )
 from admin.sections import (
-    SECTIONS, TAB_BASE, TAB_FILES, TAB_LOG, TAB_OVERVIEW, TAB_STATUS,
-    TAB_STYLES, TAB_TEMPLATES, assert_slugs_free, section, slot_section,
+    MOVED_PATHS, SECTIONS, TAB_BASE, TAB_FILES, TAB_LOG, TAB_OVERVIEW,
+    TAB_STATUS, TAB_STYLES, TAB_TEMPLATES, assert_slugs_free, section,
+    slot_section,
 )
 from admin.preview import (
     has_submitted_values, render_docx_preview, render_email_preview,
@@ -69,16 +70,6 @@ from template_utils import find_file_in_template_dirs
 
 logger = logging.getLogger(__name__)
 
-#: Pages that used to be top-level and are now tabs, and where they went.
-#: Redirected rather than dropped: each was a top-bar link for the whole life
-#: of the UI, so they are in bookmarks and in links people pasted to each
-#: other. ``tests/test_admin_sections.py`` pins every one of them.
-MOVED_PATHS = {
-    "/status": ("server", TAB_STATUS),
-    "/files": ("server", TAB_FILES),
-    "/styles": ("word", TAB_STYLES),
-    "/base": ("word", TAB_BASE),
-}
 
 class AdminContext:
     """Shared services the views depend on."""

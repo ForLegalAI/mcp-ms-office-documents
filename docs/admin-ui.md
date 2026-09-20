@@ -51,6 +51,8 @@ templates to manage, but both have a tool worth checking on.
 Every tab is its own URL, so any view can be bookmarked or pasted to a
 colleague. The pages that used to be top-level — `/status`, `/files`,
 `/styles`, `/base` — still work and redirect to the tab that replaced them.
+(`/base` showed all five base templates at once; it now lands on **Word ▸ Base
+template**, and the other four are on their own areas' Base tabs.)
 
 ## What you can do
 

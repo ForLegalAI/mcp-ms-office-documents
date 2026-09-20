@@ -227,6 +227,22 @@ _XML = Section(
     doc="docs/development/tools/xml.md",
 )
 
+#: Pages that used to be top-level and are now tabs, and where each went.
+#: Redirected rather than dropped: every one was a top-bar link for the whole
+#: life of the UI, so they are in bookmarks and in links people pasted to each
+#: other. ``tests/test_admin_sections.py`` pins every entry.
+#:
+#: Declared here rather than beside the routes because it is the same kind of
+#: fact as the table below — which tab a thing lives on — and because
+#: :data:`RESERVED_SEGMENTS` is derived from it. A legacy path added there and
+#: forgotten here is exactly the drift that derivation removes.
+MOVED_PATHS = {
+    "/status": ("server", TAB_STATUS),
+    "/files": ("server", TAB_FILES),
+    "/styles": ("word", TAB_STYLES),
+    "/base": ("word", TAB_BASE),
+}
+
 _SERVER = Section(
     slug="server",
     label="Server",
@@ -281,12 +297,24 @@ def slot_section(key: str) -> Section:
     raise KeyError(f"No section holds base slot {key!r}")
 
 
+#: The admin's own literal pages, as first path segments.
+_PAGE_SEGMENTS: Tuple[str, ...] = ("new", "base", "files", "styles",
+                                   "login", "logout")
+
 #: First path segments the admin serves that are not sections. A slug taken
 #: from this set would shadow that page, because the section routes are
 #: registered first.
-RESERVED_SEGMENTS: Tuple[str, ...] = (
-    "new", "base", "files", "styles", "login", "logout",
-)
+#:
+#: The legacy half is *derived* from :data:`MOVED_PATHS` rather than spelled
+#: out again. Listing it by hand meant "status" was missing while the other
+#: three legacy paths were present — harmless, because the route-table walk in
+#: the tests catches a real collision either way, but the sort of asymmetry
+#: that invites someone to trust the list and be wrong. Adding a redirect now
+#: reserves its segment on its own.
+RESERVED_SEGMENTS: Tuple[str, ...] = tuple(dict.fromkeys(
+    _PAGE_SEGMENTS
+    + tuple(path.strip("/").split("/")[0] for path in MOVED_PATHS)
+))
 
 
 def assert_slugs_free(reserved: Sequence[str] = RESERVED_SEGMENTS) -> None:
@@ -327,7 +355,8 @@ def tab_items(s: Section, url, active: str = ""):
 
 
 __all__ = [
-    "Section", "Tab", "SECTIONS", "RESERVED_SEGMENTS", "TAB_OVERVIEW",
+    "Section", "Tab", "SECTIONS", "MOVED_PATHS", "RESERVED_SEGMENTS",
+    "TAB_OVERVIEW",
     "TAB_TEMPLATES", "TAB_BASE", "TAB_STYLES", "TAB_STATUS", "TAB_FILES",
     "TAB_LOG", "section", "is_section", "section_for_kind", "slot_section",
     "assert_slugs_free", "nav_items", "tab_items",

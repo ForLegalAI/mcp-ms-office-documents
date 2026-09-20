@@ -94,12 +94,27 @@ other way passes; one that breaks it fails wherever it happens.
 
 ### Moved URLs
 
-`app.MOVED_PATHS` maps the four pages that used to be top-level — `/status`,
-`/files`, `/styles`, `/base` — to the tab that replaced each. They redirect
-(303) rather than 404: each was a top-bar link for the whole life of the UI, so
-they are in bookmarks and in links people pasted to each other. The test
-asserts both the redirect *and* that its target renders, so a redirect to a
-page that no longer exists cannot pass.
+`sections.MOVED_PATHS` maps the four pages that used to be top-level —
+`/status`, `/files`, `/styles`, `/base` — to the tab that replaced each. They
+redirect (303) rather than 404: each was a top-bar link for the whole life of
+the UI, so they are in bookmarks and in links people pasted to each other. The
+test asserts both the redirect *and* that its target renders, so a redirect to
+a page that no longer exists cannot pass.
+
+It lives beside the section table rather than beside the routes because
+`RESERVED_SEGMENTS` is **derived** from it: the admin's own literal pages plus
+the first segment of every legacy path. Typed out by hand, that list had
+`base`, `files` and `styles` but not `status` — harmless, because the
+route-table walk catches a real collision either way, but the kind of asymmetry
+that invites someone to trust the list and be wrong. Adding a redirect now
+reserves its segment on its own, and
+`test_every_moved_path_reserves_its_own_segment` says so.
+
+`/base` is the one redirect that loses something: it used to show all five base
+slots on one page and now lands on Word's Base tab, since each slot lives with
+the documents it styles. That is the trade the split makes — the Word document
+is what an admin arriving at `/base` is nearly always after, and the other four
+are one click away in their own sections.
 
 ### Mounting
 

@@ -33,8 +33,10 @@ import pytest
 from starlette.routing import Route
 
 from admin import sections as sec_mod
-from admin.app import MOVED_PATHS
-from admin.sections import SECTIONS, assert_slugs_free, nav_items, tab_items
+from admin.sections import (
+    MOVED_PATHS, RESERVED_SEGMENTS, SECTIONS, assert_slugs_free, nav_items,
+    tab_items,
+)
 
 from tests.test_admin_app import admin_client  # noqa: F401  (fixture)
 
@@ -238,3 +240,18 @@ def test_slugs_free_passes_for_the_shipped_sections():
 def test_slugs_free_refuses_a_slug_that_shadows_a_page():
     with pytest.raises(RuntimeError, match="word"):
         assert_slugs_free(("word",))
+
+
+def test_every_moved_path_reserves_its_own_segment():
+    """A redirect the reserved list does not know about is a latent collision.
+
+    `RESERVED_SEGMENTS` used to be typed out by hand and "status" was missing
+    from it while `base`, `files` and `styles` were there — so a section
+    slugged `status` would have passed the startup check and shadowed the
+    redirect. Deriving the legacy half from `MOVED_PATHS` means adding a
+    redirect reserves its segment, and this test is what says so.
+    """
+    for path in MOVED_PATHS:
+        segment = path.strip("/").split("/")[0]
+        assert segment in RESERVED_SEGMENTS, (
+            f"{path} redirects from /{segment}, which nothing reserves")
