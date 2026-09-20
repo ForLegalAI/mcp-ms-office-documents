@@ -30,6 +30,14 @@ http://localhost:8958/admin
   argument form. Fill in each argument's type, whether it's required, a default,
   and the description the AI sees.
 - **Preview** with sample values (generates a real file; never uploaded anywhere).
+- **Preview with my values…** — a form with one control per argument,
+  pre-filled with those same samples, so it stays one click if you do not care.
+  Text values are textareas because **Markdown works inside a placeholder** —
+  a heading, a list or a bold run in a body placeholder comes out as real Word
+  formatting, and a generated `[body]` sample can never show you that.
+  Conditionals get checkboxes, so you can see the document with a block
+  switched off as well as on. It previews what is on screen, including edits
+  you have not saved.
 - **Save** — the template becomes a live MCP tool **immediately**, no restart.
 - **Edit** later — adjust arguments, **download** the source file the template
   is actually using, or upload a new version over it and re-scan for

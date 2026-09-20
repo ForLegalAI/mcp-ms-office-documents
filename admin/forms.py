@@ -10,7 +10,8 @@ they match the default — can be unit tested without rendering anything.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
+import json
+from typing import Any, Dict, List, Optional
 
 from admin.kinds import STYLE_KEYS, descriptor
 from admin.store import KIND_DOCX, KIND_PPTX, validate_name
@@ -125,6 +126,31 @@ def build_pptx_spec(form) -> Dict[str, Any]:
         defaults["show_slide_numbers"] = True
     if defaults:
         spec["defaults"] = defaults
+    return spec
+
+
+#: Hidden field carrying an already-built spec between two POSTs. The preview
+#: values form needs the spec the admin is editing — unsaved changes included
+#: — without re-emitting every field `build_spec` reads and drifting from it.
+CARRIED_SPEC_FIELD = "spec_json"
+
+
+def carried_spec(form) -> Optional[Dict[str, Any]]:
+    """The spec carried in `CARRIED_SPEC_FIELD`, or ``None``.
+
+    Treated as untrusted like any other form field: anything that is not a
+    named mapping is ignored and the caller rebuilds from the form instead.
+    It only ever drives an in-memory preview render.
+    """
+    raw = form.get(CARRIED_SPEC_FIELD)
+    if not raw:
+        return None
+    try:
+        spec = json.loads(str(raw))
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(spec, dict) or not spec.get("name"):
+        return None
     return spec
 
 

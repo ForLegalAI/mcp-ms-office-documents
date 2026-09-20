@@ -565,6 +565,83 @@ def new_page(ctx, kind: str, csrf: str = "", error: Optional[str] = None):
     )
 
 
+def _value_control(arg: Dict[str, Any], value: Any, is_cond: bool):
+    """One control for one argument, matched to its declared type."""
+    from admin.preview import VALUE_PREFIX
+
+    name = arg.get("name", "")
+    field = f"{VALUE_PREFIX}{name}"
+    atype = str(arg.get("type", "string")).lower()
+    desc = arg.get("description") or ""
+
+    if atype in ("bool", "boolean") or is_cond:
+        return c.checkbox_field(
+            field, f"{name} — show this block", checked=bool(value),
+            hint=desc or ("Untick it to see the document with this "
+                          "conditional off."))
+    if atype in ("int", "integer", "float"):
+        return c.field(name, Input(name=field, value=str(value), type="number",
+                                   step="any" if atype == "float" else "1"),
+                       hint=desc)
+    # A textarea, not an input: the whole point is to try real content, and
+    # these templates promise Markdown inside a placeholder value.
+    return c.field(name, Textarea(str(value), name=field, rows="3"), hint=desc)
+
+
+def preview_values_page(ctx, kind: str, spec: Dict[str, Any],
+                        values: Dict[str, Any], conditionals: List[str],
+                        csrf: str = ""):
+    """Fill in the arguments yourself before previewing (#168).
+
+    Generated samples prove the placeholders are wired up. They cannot prove
+    the template works: `[body]` is a plain string, so no sample ever renders
+    a list, a heading or a bold run through a placeholder — and every flag is
+    forced on, so no preview ever shows a conditional block *off*.
+    """
+    import json
+
+    from admin.forms import CARRIED_SPEC_FIELD
+    from admin.preview import VALUES_MARKER
+
+    d = descriptor(kind)
+    cond_set = set(conditionals or [])
+    args = [a for a in (spec.get("args") or []) if isinstance(a, dict)]
+    by_name = {a.get("name"): a for a in args}
+    # Conditionals detected in the document but never declared still need a
+    # control, or they could not be turned off.
+    for cond in sorted(cond_set - set(by_name)):
+        args.append({"name": cond, "type": "bool", "description": ""})
+
+    controls = [_value_control(a, values.get(a.get("name")),
+                               a.get("name") in cond_set) for a in args]
+    if not controls:
+        controls = [P("This template declares no arguments.", cls="muted")]
+
+    return page(
+        ctx, f"Preview {spec.get('name', '')}",
+        H1(f"Preview {spec.get('name', '')}"),
+        P("Pre-filled with the same samples the one-click preview uses — "
+          "change what you want to try. Markdown works in any text value, "
+          "which is the thing a generated sample can never show you.",
+          cls="muted"),
+        c.card(
+            c.post_form(
+                ctx.u(f"/{kind}/preview"),
+                c.hidden(CARRIED_SPEC_FIELD, json.dumps(spec)),
+                c.hidden(VALUES_MARKER, "1"),
+                *controls,
+                c.action_bar(
+                    Button(d.preview_label, type="submit",
+                           cls="btn btn-primary", formtarget="_blank"),
+                    A("Back", href=ctx.u(f"/{kind}/{spec.get('name', '')}/edit"),
+                      cls="btn"),
+                ),
+                csrf=csrf,
+            ),
+        ),
+    )
+
+
 def _readonly_args_table(spec: Dict[str, Any]):
     """The declared arguments, as a table rather than an editor."""
     args = spec.get("args") or []

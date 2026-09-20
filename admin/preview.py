@@ -28,8 +28,13 @@ def sample_values(args: List[Dict[str, Any]], conditionals: List[str] = None) ->
 
     Strings use their declared default when non-empty, else a bracketed name
     like ``[recipient_name]`` so the placeholder is obvious in the output.
-    Booleans (including conditional flags) default to True so conditional blocks
-    are visible in the preview.
+
+    A boolean uses its declared default, and only falls back to True when it
+    has none — which is the case for a required flag and for a conditional
+    found in the document but never declared. An *optional* boolean therefore
+    samples as False, because `build_spec()` writes `default: false` for one
+    with a blank default, so its block previews hidden. Either way a sample is
+    a guess; #168 is how you preview the value you actually mean.
     """
     conditionals = set(conditionals or [])
     values: Dict[str, Any] = {}
@@ -52,6 +57,79 @@ def sample_values(args: List[Dict[str, Any]], conditionals: List[str] = None) ->
     # Any conditional without a declared arg still defaults to shown.
     for cond in conditionals:
         values.setdefault(cond, True)
+    return values
+
+
+#: Prefix for a submitted preview value, so the values form and the spec
+#: fields (``arg_name``, ``arg_type``, …) can travel in one POST without
+#: colliding.
+VALUE_PREFIX = "value_"
+
+
+#: Hidden marker the values form always submits. An unticked checkbox sends
+#: nothing, so a template whose arguments are all booleans can submit *no*
+#: ``value_`` key at all — and "no values" would then be read as "generate
+#: samples", quietly overriding the admin's explicit off with a sample on.
+VALUES_MARKER = "preview_values"
+
+
+def has_submitted_values(form) -> bool:
+    """Whether this POST carries explicit preview values.
+
+    Absence means "generate samples", which is what keeps Preview one click
+    for anyone who does not care (#168).
+
+    The marker is what makes that reliable; the prefix check stays so a POST
+    built by hand, without the form, still counts as submitting values.
+    """
+    if form.get(VALUES_MARKER):
+        return True
+    return any(str(k).startswith(VALUE_PREFIX) for k in form.keys())
+
+
+def values_from_form(form, args: List[Dict[str, Any]],
+                     conditionals: List[str] = None) -> Dict[str, Any]:
+    """Read the preview values an admin typed, coerced by declared type.
+
+    Anything missing or unparseable falls back to the sample, so a half-filled
+    form still renders rather than erroring — the point is to look at the
+    document, not to validate input.
+
+    A boolean is read from the presence of its checkbox, not from a value:
+    that is the only way to preview a conditional block *off*, which no
+    generated sample could ever show because `sample_values()` forces every
+    flag to True.
+    """
+    samples = sample_values(args, conditionals)
+    values: Dict[str, Any] = dict(samples)
+    by_name = {a.get("name"): a for a in (args or []) if isinstance(a, dict)}
+
+    for name in values:
+        arg = by_name.get(name) or {}
+        atype = str(arg.get("type", "string")).lower()
+        key = f"{VALUE_PREFIX}{name}"
+        if atype in ("bool", "boolean") or name in set(conditionals or []):
+            values[name] = str(form.get(key) or "").lower() in (
+                "1", "true", "yes", "on")
+            continue
+        if key not in form:
+            continue
+        raw = form.get(key)
+        if raw is None:
+            continue
+        text = str(raw)
+        if atype in ("int", "integer"):
+            try:
+                values[name] = int(text.strip())
+            except ValueError:
+                pass
+        elif atype == "float":
+            try:
+                values[name] = float(text.strip())
+            except ValueError:
+                pass
+        else:
+            values[name] = text
     return values
 
 

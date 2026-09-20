@@ -71,6 +71,11 @@ def form_actions(ctx, kind: str, name: str = ""):
                formaction=ctx.u(f"/{kind}/preview"),
                formtarget="_blank", cls="btn btn-secondary"),
     ]
+    if d.has_args:
+        # Not formtarget="_blank": this one goes to a form, not a document.
+        controls.append(Button("Preview with my values…", type="submit",
+                               formaction=ctx.u(f"/{kind}/preview/values"),
+                               cls="btn btn-secondary"))
     if name:
         controls.append(A("Clone", href=ctx.u(f"/{kind}/{name}/clone"),
                           cls="btn btn-secondary",

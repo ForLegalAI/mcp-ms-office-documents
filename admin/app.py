@@ -47,12 +47,13 @@ from admin import auth, base_templates, views
 from admin import assets as asset_index
 from admin.analysis import analyze, is_unusable
 from admin.components import head_tags
-from admin.forms import build_spec, checked
+from admin.forms import build_spec, carried_spec, checked
 from admin.kinds import (
     KINDS, content_disposition, descriptor, is_kind, media_type,
 )
 from admin.preview import (
-    sample_values, render_docx_preview, render_email_preview, render_pptx_preview,
+    has_submitted_values, render_docx_preview, render_email_preview,
+    render_pptx_preview, sample_values, values_from_form,
 )
 from admin.store import (
     FileTemplateStore, KIND_DOCX, KIND_PPTX, TemplateStoreError, validate_name,
@@ -859,6 +860,35 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         return views.saved_page(ctx, kind, spec["name"], ok,
                                 enabled=is_enabled(spec))
 
+    @rt("/{kind}/preview/values", methods=["post"])
+    async def preview_values(req, sess, kind: str):
+        """The form for previewing with your own values (#168).
+
+        Reached from the edit form, so it carries whatever is on screen —
+        unsaved edits included — rather than what is saved on disk.
+        """
+        if not is_kind(kind):
+            return _home()
+        form = await req.form()
+        bad = _csrf_guard(sess, form)
+        if bad:
+            return bad
+        try:
+            spec = build_spec(kind, form)
+        except TemplateStoreError as e:
+            return views.save_failed_page(ctx, str(e))
+        asset = spec.get(descriptor(kind).path_key)
+        conditionals: List[str] = []
+        if asset and ctx.store.asset_exists(kind, asset):
+            try:
+                conditionals = list(analyze(kind, ctx.store.read_asset(kind, asset))
+                                    .conditionals)
+            except Exception:
+                logger.exception("[admin] Could not analyse %s for preview", asset)
+        return views.preview_values_page(
+            ctx, kind, spec, sample_values(spec.get("args") or [], conditionals),
+            conditionals, csrf=auth.ensure_csrf(sess))
+
     @rt("/{kind}/preview", methods=["post"])
     async def preview(req, sess, kind: str):
         if not is_kind(kind):
@@ -867,7 +897,9 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         bad = _csrf_guard(sess, form)
         if bad:
             return bad
-        spec = build_spec(kind, form)
+        # The values form carries the spec it was built from, so a preview
+        # with your own values reflects the unsaved edits you started from.
+        spec = carried_spec(form) or build_spec(kind, form)
         asset = spec.get(descriptor(kind).path_key)
         if not asset or not ctx.store.asset_exists(kind, asset):
             return HTMLResponse("<p>Nothing to preview yet — save the template first.</p>",
@@ -897,7 +929,9 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
 
         data = ctx.store.read_asset(kind, asset)
         analysis = analyze(kind, data)
-        values = sample_values(spec.get("args") or [], analysis.conditionals)
+        values = (values_from_form(form, spec.get("args") or [], analysis.conditionals)
+                  if has_submitted_values(form)
+                  else sample_values(spec.get("args") or [], analysis.conditionals))
         if kind == KIND_DOCX:
             out = render_docx_preview(data, spec, values, ctx.global_style_mapping)
             return Response(
