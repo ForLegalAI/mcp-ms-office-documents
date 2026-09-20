@@ -7,6 +7,7 @@ import io
 import re
 import sys
 from pathlib import Path
+from urllib.parse import urlparse
 
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
@@ -869,6 +870,62 @@ def test_mcp_endpoint_still_works(admin_client):
         "jsonrpc": "2.0", "id": 1, "method": "initialize",
         "params": {"protocolVersion": "2025-06-18", "capabilities": {},
                    "clientInfo": {"name": "t", "version": "1"}},
-    }, headers=headers)
-    assert r.status_code == 200
+    }, headers=headers, follow_redirects=False)
+    # Not following: a 200 after a silent redirect would look identical to a
+    # direct match, and every other redirect-sensitive test in this file opts
+    # out the same way (#193).
+    assert r.status_code == 200, f"got {r.status_code} {r.headers.get('location', '')}"
     assert "mcp-session-id" in r.headers
+
+
+def test_the_bare_mount_path_reaches_the_admin_ui(admin_client):
+    """`GET /admin` — the address an admin is actually given — must work.
+
+    Starlette compiles `Mount("/admin")` to `^/admin/(?P<path>.*)$`, which does
+    not match `/admin`, and its router only offers the missing-trailing-slash
+    redirect when *nothing* matched. The catch-all MCP mount matches
+    everything, so the request reached the MCP app and came back 404: the one
+    URL a person types was the one that did not work.
+    """
+    client, _ = admin_client
+
+    r = client.get("/admin", follow_redirects=False)
+    assert r.status_code == 307, "no redirect — /admin fell through to the MCP mount"
+    # Absolute, because the target is derived from the request the way
+    # Starlette's own redirect_slashes derives it — that is what keeps it
+    # correct behind a proxy. Compared by path so the host stays the
+    # TestClient's business.
+    assert urlparse(r.headers["location"]).path == "/admin/"
+
+    # And the whole way through, as a browser does it. The fixture is already
+    # signed in, so this lands on the templates index rather than the login
+    # form — which is the stronger signal: the request reached the admin app,
+    # session and all, not just a redirect into open air.
+    r = client.get("/admin")
+    assert r.status_code == 200
+    assert "Template Admin" in r.text and 'href="/admin/styles"' in r.text
+
+
+def test_the_redirect_follows_a_custom_mount_path(monkeypatch, tmp_path):
+    """The redirect is built from config, not from the literal "/admin"."""
+    import admin.store as store_mod
+    from fastmcp import FastMCP
+
+    from admin.app import build_combined_app
+
+    monkeypatch.setattr(store_mod, "_APP_CUSTOM_DIR", tmp_path / "nx1")
+    monkeypatch.setattr(store_mod, "_APP_CONFIG_DIR", tmp_path / "nx2")
+    monkeypatch.setattr(store_mod, "_LOCAL_CUSTOM_DIR", tmp_path / "custom")
+    monkeypatch.setattr(store_mod, "_LOCAL_CONFIG_DIR", tmp_path / "config")
+    monkeypatch.setenv("ADMIN_ENABLED", "true")
+    monkeypatch.setenv("ADMIN_PASSWORD", "pw")
+    monkeypatch.setenv("ADMIN_PATH", "/manage")
+    monkeypatch.delenv("API_KEY", raising=False)
+
+    client = TestClient(build_combined_app(FastMCP("t"), Config.from_env()))
+    with client:
+        r = client.get("/manage", follow_redirects=False)
+        assert r.status_code == 307
+        assert urlparse(r.headers["location"]).path == "/manage/"
+        assert client.get("/admin", follow_redirects=False).status_code == 404, \
+            "and only the configured path redirects"

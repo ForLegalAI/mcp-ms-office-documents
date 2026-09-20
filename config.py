@@ -293,6 +293,17 @@ class StorageSettings(BaseModel):
         return self
 
 
+_DEFAULT_ADMIN_PATH = "/admin"
+
+#: Paths the server already serves, which ``ADMIN_PATH`` must not take over.
+#: The MCP endpoint (``mcp.http_app(path=...)``) and the three Kubernetes
+#: probes, all registered in ``main.py``. Listed here rather than imported
+#: because ``config`` stays free of application imports;
+#: ``tests/test_admin_reserved_paths.py`` compares the two so they cannot
+#: drift.
+RESERVED_PATHS: frozenset = frozenset({"/mcp", "/healthz", "/readyz", "/livez"})
+
+
 class AdminSettings(BaseModel):
     """Configuration for the optional FastHTML template-admin UI.
 
@@ -323,6 +334,19 @@ class AdminSettings(BaseModel):
         if not p.startswith("/"):
             p = "/" + p
         p = p.rstrip("/") or "/admin"
+        if p in RESERVED_PATHS:
+            # Mounting the admin UI over the MCP endpoint or a Kubernetes probe
+            # shadows it: the admin routes are registered first, so they win
+            # (#193). Falling back keeps the reserved path serving what it is
+            # for and leaves the UI reachable at the documented default --
+            # refusing to start would take document generation down over a
+            # misconfiguration of an optional feature.
+            logging.getLogger(__name__).error(
+                "[admin] ADMIN_PATH=%s collides with a reserved path (%s); "
+                "using %s instead. Choose a different ADMIN_PATH.",
+                p, ", ".join(sorted(RESERVED_PATHS)), _DEFAULT_ADMIN_PATH,
+            )
+            p = _DEFAULT_ADMIN_PATH
         self.path = p
         if self.password is not None:
             self.password = self.password.strip() or None

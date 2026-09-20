@@ -22,6 +22,65 @@ contain, [`dynamic-templates.md`](dynamic-templates.md).
 | `admin/preview.py` | rendering a template without touching the upload backend |
 | `admin/auth.py` | the shared-password gate and CSRF tokens |
 
+### Mounting
+
+`build_combined_app()` puts three routes on one Starlette app, and the order is
+load-bearing:
+
+```python
+Route(config.admin.path, endpoint=_admin_root_redirect, methods=["GET", "HEAD"])
+Mount(config.admin.path, app=admin_app)
+Mount("/", app=mcp_app)
+```
+
+The `Route` is not a nicety. Starlette compiles `Mount("/admin")` to
+`^/admin/(?P<path>.*)$`, which does **not** match `/admin`, and its router only
+offers the missing-trailing-slash redirect when *nothing* matched at all. The
+catch-all MCP mount matches everything, so `GET /admin` used to reach the MCP
+app and come back **404** — the address an admin is given, and the one they
+type, was the one URL that did not work. The redirect is built from
+`config.admin.path`, so a custom `ADMIN_PATH` gets it too;
+`tests/test_admin_app.py` pins both the ordering and that it follows config.
+
+**`ADMIN_PATH` cannot be a path the server already serves.** Because the admin
+routes are registered first, `ADMIN_PATH=/healthz` would answer the startup
+probe out of the admin app — and the redirect above made that worse than it
+found it, since `Route("/healthz")` matches the bare path the `Mount` alone
+would have let through to the health route. `config.RESERVED_PATHS` lists
+`/mcp` and the three probes; a colliding value logs an error and falls back to
+`/admin`, rather than refusing to boot: the admin UI is optional and the MCP
+server is not, so a misconfiguration of the former must not take the latter
+down. `tests/test_admin_reserved_paths.py` also compares the list against the
+routes `main.py` actually registers, so the copy cannot drift.
+
+**The target is derived from the request, not from `config.admin.path`.**
+Starlette's `redirect_slashes` builds its `Location` from the request scope, so
+it folds in `root_path` and keeps the query string. A `Location` built from the
+configured path looks identical in development and is wrong the moment a prefix
+is stripped in front of the app: behind `uvicorn --root-path /office`,
+`GET /office/admin` answered `/admin/` and sent the browser somewhere that does
+not exist on that deployment. `tests/test_entry_points.py` asserts our target
+against **Starlette's own output** rather than a literal, so the two cannot
+drift — the invariant is "whatever the framework would have done if the
+catch-all were not suppressing it", not a particular string.
+
+**`methods=["GET", "HEAD"]` is load-bearing, not caution.** `ADMIN_PATH` is
+free text, so `/mcp` is a legal if unwise value. The MCP endpoint survives it
+only because three things line up: the redirect `Route` does not take POST,
+`Mount("/mcp")` does not match the bare `/mcp`, and the catch-all still does —
+so an MCP client's POST falls past both admin routes to the MCP app. Widening
+the methods "for uniformity" turns that POST into a 307 to `/mcp/` and the
+client never gets a session. `tests/test_entry_points.py` pins it.
+
+`tests/test_entry_points.py` guards the *class* of bug rather than the
+instance. Every URL this server advertises to the outside world — the three
+Kubernetes probes, `/mcp`, `/admin` — is asserted to resolve **exactly as
+advertised**, with no trailing slash added to make it pass. Its assertions are
+deliberately not written from the route table: each is a URL a stranger uses,
+because what failed here was a URL nothing inside the app ever generated for
+itself. Add an entry to `ENTRY_POINTS` whenever something new is advertised in
+a manifest, the README or the startup log.
+
 `components`, `kinds`, `forms`, `store`, `analysis` and `assets` do not import
 `admin.app`; views take the `AdminContext` as a parameter. `store`, `analysis`
 and `forms` have no FastHTML dependency at all, so their rules can be unit

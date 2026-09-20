@@ -40,7 +40,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import metrics
 
 from fasthtml.common import FastHTML, RedirectResponse, Response, HTMLResponse, to_xml
-from starlette.routing import Mount
+from starlette.routing import Mount, Route
 
 from config import Config
 from admin import auth, base_templates, views
@@ -1159,12 +1159,43 @@ def build_combined_app(mcp, config: Config):
     The MCP app (with its required lifespan / session manager) is mounted at the
     root; the admin UI is mounted under ``config.admin.path``. Mount order puts
     the admin prefix first so it wins over the catch-all MCP mount.
+
+    The bare mount path needs a redirect of its own. Starlette compiles
+    ``Mount("/admin")`` to ``^/admin/(?P<path>.*)$``, which does **not** match
+    ``/admin`` — and its router only offers the missing-trailing-slash redirect
+    when *nothing* matched at all. The catch-all MCP mount matches everything,
+    so a plain ``GET /admin`` reached the MCP app and came back 404: the
+    address an admin is given, and the one they type, was the one that did not
+    work.
     """
     from starlette.applications import Starlette
 
     mcp_app = mcp.http_app(path="/mcp", stateless_http=config.stateless_http)
     admin_app = build_admin_app(mcp, config)
+    async def _admin_root_redirect(request):
+        """Send the bare mount path to the mount root, as Starlette would.
+
+        The target is derived from the **request**, not from
+        ``config.admin.path``, and that is the whole subtlety. Starlette's own
+        ``redirect_slashes`` builds its ``Location`` from the request scope, so
+        it folds in ``root_path`` and keeps the query string. A ``Location``
+        built from the configured path instead looks identical in development
+        and is wrong behind a path-rewriting proxy or ``uvicorn --root-path``:
+        ``GET /office/admin`` would answer ``/admin/``, sending the browser to
+        a path that does not exist on that deployment.
+
+        307, also as ``redirect_slashes`` uses: it preserves the method, and
+        nothing here wants the caching a permanent redirect invites.
+        """
+        url = request.url
+        return RedirectResponse(str(url.replace(path=url.path + "/")),
+                                status_code=307)
+
     routes = [
+        # Before the mounts: a Route for the exact path, so it is matched
+        # rather than swallowed by the catch-all below.
+        Route(config.admin.path, endpoint=_admin_root_redirect,
+              methods=["GET", "HEAD"]),
         Mount(config.admin.path, app=admin_app),
         Mount("/", app=mcp_app),
     ]
