@@ -201,6 +201,15 @@ copied into `custom_templates/` when it is not already there, because a master
 entry usually points at a file shipped in `default_templates/`, and a template
 you can edit but whose document you cannot replace is a confusing half-state.
 
+**An adopted template never owns a base-template filename.** `template_utils`
+searches `custom_templates/` before `default_templates/`, so copying a file
+named `default_docx_template.docx` into the uploads directory shadows the base
+Word template — and replacing that one template's document would then restyle
+every Word document the server generates. `base_templates.RESERVED_FILENAMES`
+names every such file (both the `custom_` and the `default_` spelling of all
+five slots); adopting a master entry that points at one gives the template a
+private copy under its own name instead.
+
 The master rows are listed from `_master_specs()` rather than from the live
 tool names: keyed off what is registered, a master template that is disabled
 or that failed to load vanished from the page entirely, with no way to inspect

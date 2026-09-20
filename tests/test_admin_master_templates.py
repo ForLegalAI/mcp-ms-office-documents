@@ -267,17 +267,62 @@ def test_adopting_copies_a_shipped_file_into_the_writable_directory(admin_client
     """Otherwise you could edit the template but never replace its document.
 
     A master entry usually points at a file in `default_templates/`, which is
-    read-only as far as the admin UI is concerned.
+    read-only as far as the admin UI is concerned. `broadcast_email_style_1`
+    ships there and is not one of the base-template names.
     """
     client, _mcp, custom, cfg = admin_client
+    _write_master(cfg, {"name": "broadcast", "description": "d",
+                        "html_path": "broadcast_email_style_1.html", "args": []},
+                  kind="email")
+    assert not (custom / "broadcast_email_style_1.html").exists()
+
+    _post(client, "/admin/email/broadcast/adopt", data={})
+
+    assert (custom / "broadcast_email_style_1.html").exists(), \
+        "the document must land where Replace can overwrite it"
+    assert _store().get_spec("email", "broadcast")["html_path"] == \
+        "broadcast_email_style_1.html"
+
+
+def test_adopting_never_takes_over_a_base_template_filename(admin_client):
+    """The dangerous case: a master entry pointing at a base-template file.
+
+    `template_utils` searches custom_templates/ first, so copying
+    `default_docx_template.docx` in there shadows the base Word template —
+    and then replacing this one template's document silently restyles every
+    Word document the server generates. The adopted template gets a private
+    copy under its own name instead.
+    """
+    client, _mcp, custom, cfg = admin_client
+    before = tu.find_docx_template()
     _write_master(cfg, dict(MASTER_SPEC, docx_path="default_docx_template.docx"))
-    assert not (custom / "default_docx_template.docx").exists()
 
     _post(client, "/admin/docx/legacy_letter/adopt", data={})
 
-    assert (custom / "default_docx_template.docx").exists(), \
-        "the document must land where Replace can overwrite it"
-    assert _store().asset_exists("docx", "default_docx_template.docx")
+    assert not (custom / "default_docx_template.docx").exists(), \
+        "a base-template filename must never appear in the uploads directory"
+    assert _store().get_spec("docx", "legacy_letter")["docx_path"] == \
+        "legacy_letter.docx"
+    assert (custom / "legacy_letter.docx").exists()
+    assert tu.find_docx_template() == before, \
+        "the base Word template must still resolve to the shipped file"
+
+
+def test_replacing_an_adopted_documents_file_cannot_restyle_everything(admin_client):
+    """The consequence the rename above exists to prevent, end to end."""
+    client, _mcp, custom, cfg = admin_client
+    _write_master(cfg, dict(MASTER_SPEC, docx_path="default_docx_template.docx"))
+    _post(client, "/admin/docx/legacy_letter/adopt", data={})
+
+    _post(client, "/admin/docx/legacy_letter/reupload",
+          files={"file": ("x.docx", _docx_bytes("ONLY FOR THIS TEMPLATE"),
+                          "application/octet-stream")})
+
+    base = tu.find_docx_template()
+    assert "custom" not in str(Path(base).parent), \
+        "the base Word template must not have been replaced"
+    assert "ONLY FOR THIS TEMPLATE" not in \
+        Document(str(base)).paragraphs[0].text
 
 
 def test_adopting_leaves_the_admins_own_file_alone(admin_client):

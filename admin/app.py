@@ -289,14 +289,24 @@ class AdminContext:
             raise TemplateStoreError(
                 f"{name!r} records no source file, so there is nothing to adopt."
             )
+        reserved = filename in base_templates.RESERVED_FILENAMES
         data = None
-        if not self.store.asset_exists(kind, filename):
+        if reserved or not self.store.asset_exists(kind, filename):
             found = find_file_in_template_dirs(filename)
             if found is None:
                 raise TemplateStoreError(
                     f"Cannot find {filename!r} in the template directories."
                 )
             data = found.read_bytes()
+        if reserved:
+            # Never let an adopted template own a base-template filename.
+            # template_utils searches custom_templates/ first, so a copy under
+            # this name would shadow the base template for its kind — and
+            # replacing this one template's document would then restyle every
+            # document the server generates. Give it a private copy instead.
+            filename = f"{name}{Path(filename).suffix}"
+            logger.info("[admin] Adopting %r under %r: the master entry named a "
+                        "base-template file", name, filename)
         return self.store.save_spec(kind, dict(spec), asset_bytes=data,
                                     asset_filename=filename)
 
