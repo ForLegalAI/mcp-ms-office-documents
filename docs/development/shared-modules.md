@@ -83,7 +83,9 @@ with the admin-written per-template files, the latter winning by name, and
 drops anything `is_enabled()` rejects unless `include_disabled=True`.
 `read_spec_file()` is the canonical loader for one `.d` file and tolerates a
 `{templates: [spec]}` wrapper. `is_enabled(spec)` reads the `enabled` key —
-absent means enabled, so every spec written before #165 stays live. `safe_remove_tool(mcp, name)` removes a live
+absent means enabled, so every spec written before #165 stays live. It also
+accepts the string forms PyYAML leaves uncoerced (`n`, `disable`, `disabled`)
+and logs anything it recognises in neither direction. `safe_remove_tool(mcp, name)` removes a live
 tool across FastMCP versions. It lives at the root so the core tool modules
 never import the optional `admin` package.
 

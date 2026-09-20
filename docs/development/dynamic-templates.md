@@ -35,6 +35,14 @@ to offer Enable. Filtering here rather than at each registration site is
 deliberate: a future consumer of `gather_specs()` cannot register a disabled
 template by forgetting to check.
 
+`is_enabled()` accepts more than a bare `false`, because PyYAML only coerces
+the full words — `enabled: n` stays the string `"n"`, and so does `disable`,
+which mirrors the admin UI's own button. Reading either as *enabled* would
+invert the author's intent silently, so both count as off. A string in
+neither vocabulary is treated as enabled — the safe direction, since a
+template the AI cannot call looks like a broken server — but it is logged
+with the template's name, so a typo is visible rather than guessed at.
+
 `main.py` registers email templates first, then Word templates, whenever
 either the master file or the `.d` directory exists.
 

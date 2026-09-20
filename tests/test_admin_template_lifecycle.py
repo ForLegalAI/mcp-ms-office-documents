@@ -9,6 +9,7 @@ but is not a live tool, it stays that way across a restart, and a plain save
 does not quietly switch it back on. A rename moves the tool, not the asset.
 """
 import io
+import logging
 import re
 import sys
 from pathlib import Path
@@ -118,8 +119,17 @@ def _store():
     ({"enabled": "No"}, False),
     ({"enabled": "off"}, False),
     ({"enabled": ""}, False),
+    # PyYAML coerces the full words to bools but leaves these as strings, and
+    # they are what someone reaching for "off" actually types — "disable"
+    # mirrors the UI's own button label.
+    ({"enabled": "n"}, False),
+    ({"enabled": "N"}, False),
+    ({"enabled": "disable"}, False),
+    ({"enabled": "disabled"}, False),
     ({"enabled": "true"}, True),
     ({"enabled": "yes"}, True),
+    ({"enabled": "y"}, True),
+    ({"enabled": "enable"}, True),
     (None, True),
 ])
 def test_is_enabled(spec, expected):
@@ -550,3 +560,107 @@ def test_disabling_a_pptx_template_through_the_ui(admin_client):
     _post(client, "/admin/pptx/off_deck/enabled", data={"enabled": ""})
     templates_mod.clear_cache()
     assert "off_deck" not in templates_mod.template_names()
+
+
+def test_an_unrecognised_enabled_value_is_flagged(caplog):
+    """Reading someone's intent backwards in silence is the failure mode.
+
+    Enabled is the safe direction — a template the AI cannot call looks like
+    a broken server — but it must not be a silent guess.
+    """
+    with caplog.at_level(logging.WARNING, logger="template_registry"):
+        assert is_enabled({"name": "typo_tpl", "enabled": "maybe"}) is True
+    assert "typo_tpl" in caplog.text
+    assert "maybe" in caplog.text
+
+
+def test_a_recognised_value_is_not_flagged(caplog):
+    """The warning must not cry wolf on a deliberate, spelled-out choice."""
+    with caplog.at_level(logging.WARNING, logger="template_registry"):
+        is_enabled({"name": "fine_tpl", "enabled": "yes"})
+        is_enabled({"name": "fine_tpl", "enabled": "disable"})
+        is_enabled({"name": "fine_tpl", "enabled": True})
+        is_enabled({"name": "fine_tpl"})
+    assert caplog.text == ""
+
+
+# ---------------------------------------------------------------------------
+# Creating is not editing (#182 review)
+# ---------------------------------------------------------------------------
+
+
+def test_creating_over_an_existing_name_is_refused(admin_client):
+    """The create form has no `original_name`, so a same-name save used to
+    look like an ordinary edit and overwrite the occupant in silence."""
+    client, _mcp, _cfg = admin_client
+    name = _saved(client, "occupied")
+
+    r = _post(client, "/admin/docx/save", data={
+        "kind": "docx", "asset_filename": f"{name}.docx", "name": name,
+        "title": "T", "description": "clobber",   # no original_name: a create
+        "arg_name": ["who"], "arg_type": ["string"], "arg_required": ["true"],
+        "arg_default": [""], "arg_desc": [""],
+    })
+
+    assert "already exists" in r.text
+    assert _store().get_spec("docx", name)["description"] == "d", \
+        "the existing template must be untouched"
+
+
+@pytest.mark.anyio
+async def test_creating_over_a_disabled_name_does_not_inherit_its_state(admin_client):
+    """A fresh upload must not arrive disabled because a stranger with the
+    same name was turned off."""
+    client, mcp, _cfg = admin_client
+    name = _saved(client, "recycled")
+    _post(client, f"/admin/docx/{name}/enabled", data={"enabled": ""})
+
+    r = _post(client, "/admin/docx/save", data={
+        "kind": "docx", "asset_filename": f"{name}.docx", "name": name,
+        "title": "T", "description": "fresh",     # no original_name: a create
+        "arg_name": ["who"], "arg_type": ["string"], "arg_required": ["true"],
+        "arg_default": [""], "arg_desc": [""],
+    })
+
+    # Refused outright, so there is no half-created template to inherit
+    # anything — and the disabled one is still disabled and still off.
+    assert "already exists" in r.text
+    assert _store().get_spec("docx", name)["enabled"] is False
+    assert name not in await _tool_names(mcp)
+
+
+def test_the_create_form_carries_no_original_name(admin_client):
+    """What makes a create distinguishable from an edit at the route."""
+    client, _mcp, _cfg = admin_client
+    r = _post(client, "/admin/docx/draft", data={"name": "brand_new"},
+              files={"file": ("brand_new.docx", _docx_bytes(),
+                              "application/octet-stream")})
+    assert 'name="original_name"' not in r.text, \
+        "the configure form is a create; an original_name makes it look like an edit"
+
+    edit = client.get(f"/admin/docx/{_saved(client, 'existing')}/edit").text
+    assert 'name="original_name"' in edit, "the edit form still needs it"
+
+
+def test_a_failed_rename_reports_instead_of_500ing(admin_client, monkeypatch):
+    """rename_spec raises OSError on a failed unlink; the route must catch it."""
+    client, _mcp, _cfg = admin_client
+    _saved(client, "unlink_fails")
+
+    real = Path.unlink
+
+    def explode(self, *a, **kw):
+        if self.name == "unlink_fails.yaml":
+            raise OSError("permission denied")
+        return real(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "unlink", explode)
+    r = _post(client, "/admin/docx/save", data={
+        "kind": "docx", "asset_filename": "unlink_fails.docx",
+        "name": "renamed_ok", "original_name": "unlink_fails",
+        "title": "T", "description": "d",
+        "arg_name": ["who"], "arg_type": ["string"], "arg_required": ["true"],
+        "arg_default": [""], "arg_desc": [""],
+    })
+    assert r.status_code == 200
+    assert "permission denied" in r.text

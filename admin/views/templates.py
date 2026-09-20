@@ -553,7 +553,11 @@ def configure_page(ctx, kind: str, name: str, filename: str,
         H1(f"Configure {name}"),
         c.flash(d.draft_hint.format(filename=filename), "ok"),
         analysis_report(analysis, spec),
-        edit_form(ctx, kind, spec, analysis, is_new=False, csrf=csrf),
+        # A create, not an edit: this is the form you land on straight after
+        # uploading a new file. Saying so is what keeps `original_name` off
+        # the form, and with it any inherited state from a template that
+        # happens to share the name (#165).
+        edit_form(ctx, kind, spec, analysis, is_new=True, csrf=csrf),
     )
 
 

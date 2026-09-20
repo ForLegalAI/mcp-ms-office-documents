@@ -577,29 +577,40 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             return bad
         try:
             spec = build_spec(kind, form)
-            # The form carries no `enabled` control, so a save rebuilds the
-            # spec without it. Carry the stored flag forward or an edit would
-            # silently switch a disabled template back on (#165).
-            previous = (form.get("original_name") or "").strip() or spec["name"]
-            stored = ctx.store.get_spec(kind, previous)
+            # `original_name` is rendered on the edit form and not on the
+            # create form, so its absence means "create". Keying off that
+            # rather than off finding a stored spec matters: a create that
+            # lands on an existing name must not inherit that template's
+            # state, and must not silently overwrite it either (#165).
+            previous = (form.get("original_name") or "").strip()
+            stored = ctx.store.get_spec(kind, previous) if previous else None
+
+            if stored is None and ctx.store.get_spec(kind, spec["name"]) is not None:
+                raise TemplateStoreError(
+                    f"A {kind} template named {spec['name']!r} already exists. "
+                    "Edit that one, or choose another name."
+                )
+            # The edit form carries no `enabled` control, so a save rebuilds
+            # the spec without it. Carry the stored flag forward or an edit
+            # would silently switch a disabled template back on.
             if stored is not None and not is_enabled(stored):
                 spec["enabled"] = False
 
-            renamed = bool(stored) and previous != spec["name"]
-            if renamed and ctx.store.get_spec(kind, spec["name"]) is not None:
-                raise TemplateStoreError(
-                    f"A {kind} template named {spec['name']!r} already exists."
-                )
+            renamed = stored is not None and previous != spec["name"]
+            if renamed:
+                # Through the store, which owns the collision check, the name
+                # validation and the write-before-unlink ordering. Doing it
+                # inline here duplicated that invariant in a copy no test
+                # covered.
+                ctx.store.rename_spec(kind, previous, spec["name"])
             ctx.store.save_spec(kind, spec)
             if renamed:
-                # New spec first, then drop the old one — an interrupted
-                # rename leaves two templates rather than none. The asset stays
-                # put, and the new spec keeps pointing at it.
-                ctx.store.delete_spec(kind, previous, delete_asset=False)
                 ctx.unregister(kind, previous)
                 logger.info("[admin] Renamed %s template %r -> %r",
                             kind, previous, spec["name"])
-        except TemplateStoreError as e:
+        except (TemplateStoreError, OSError) as e:
+            # OSError too: a failed unlink inside rename_spec is a save
+            # failure to report, not an unhandled 500.
             return views.save_failed_page(ctx, str(e))
         ok = ctx.sync(kind, spec)
         return views.saved_page(ctx, kind, spec["name"], ok)

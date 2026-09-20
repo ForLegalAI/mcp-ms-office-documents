@@ -67,11 +67,17 @@ def read_spec_file(path: Path) -> Optional[Dict[str, Any]]:
     return data
 
 
-#: Spec values that mean "disabled". A spec file is hand-editable YAML, so
-#: ``enabled: false`` may arrive as a bool or as a string from a quoted value.
-#: Anything else — including a missing key — means enabled, because every spec
-#: written before #165 has no ``enabled`` key and must stay live.
-_DISABLED_WORDS = frozenset({"false", "no", "off", "0", ""})
+#: Spec values that mean "disabled". A spec file is hand-editable YAML, and
+#: PyYAML only coerces the full words (``no``/``off``/``false``) to a bool —
+#: ``n`` stays a string, as does anything mirroring the UI's own button. Those
+#: are the words someone reaching for "off" actually types, so they are
+#: recognised rather than read as their opposite.
+_DISABLED_WORDS = frozenset({"false", "no", "n", "off", "0", "disable",
+                             "disabled", ""})
+
+#: The same courtesy in the other direction, so a deliberate "on" is not
+#: mistaken for a typo and warned about.
+_ENABLED_WORDS = frozenset({"true", "yes", "y", "on", "1", "enable", "enabled"})
 
 
 def is_enabled(spec: Any) -> bool:
@@ -80,12 +86,27 @@ def is_enabled(spec: Any) -> bool:
     Disabling keeps the spec file and its asset but takes the tool off the
     server, which is the only way to stop the AI reaching for a template
     without destroying its configuration (#165).
+
+    A missing key means enabled: every spec written before #165 has none and
+    must stay live. A string this does not recognise also means enabled — the
+    safe direction, since a template the AI cannot call looks like a broken
+    server — but it is logged, because silently reading someone's intent
+    backwards is exactly what a hand-edited file invites.
     """
     if not isinstance(spec, dict) or "enabled" not in spec:
         return True
     value = spec["enabled"]
     if isinstance(value, str):
-        return value.strip().lower() not in _DISABLED_WORDS
+        word = value.strip().lower()
+        if word in _DISABLED_WORDS:
+            return False
+        if word not in _ENABLED_WORDS:
+            logger.warning(
+                "[template-registry] %s: unrecognised enabled value %r — "
+                "treating the template as enabled. Use true or false.",
+                spec.get("name", "<unnamed>"), value,
+            )
+        return True
     return bool(value)
 
 
