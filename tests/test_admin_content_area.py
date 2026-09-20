@@ -150,9 +150,21 @@ def test_an_unusually_small_area_is_warned_about(monkeypatch):
     assert any("Tiny" in w for w in analysis.warnings)
 
 
-@pytest.mark.parametrize("w, h", [(0.86, 0.63), (0.94, 0.94), (0.26, 0.9)])
+@pytest.mark.parametrize("w, h", [
+    (0.86, 0.63),   # the shipped template
+    (0.94, 0.94),   # generous, but not the whole slide
+    (0.26, 0.90),
+    (0.20, 1.00),   # a narrow full-height sidebar rail
+    (1.00, 0.18),   # a wide shallow banner
+    (0.48, 0.64),   # one column of a two-column layout
+])
 def test_an_ordinary_area_is_not_warned_about(monkeypatch, w, h):
-    """The thresholds must not cry wolf on the shapes real templates have."""
+    """The thresholds must not cry wolf on the shapes real templates have.
+
+    The sidebar and banner are why the small-area rule is on the *area* and
+    not on either dimension: both are ordinary, and a width-or-height rule
+    calls them cramped.
+    """
     analysis = _analyse_with(monkeypatch, _rect(0.05, 0.2, w, h))
     assert analysis.warnings == []
 

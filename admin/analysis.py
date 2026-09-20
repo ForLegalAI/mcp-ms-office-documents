@@ -362,7 +362,11 @@ def _read_content_area(analysis: PptxAnalysis, presentation) -> None:
             "template draws. Check that layout's body placeholder, or set a "
             "content-role override below."
         )
-    elif w < 0.25 or h < 0.25:
+    elif w * h < 0.08:
+        # Area, not either dimension on its own: a narrow full-height sidebar
+        # and a wide shallow banner are both ordinary content shapes, and a
+        # rule on width-or-height calls them cramped when they are not. What
+        # actually makes content cramped is how little room there is in total.
         analysis.warnings.append(
             f"The content area read from '{rect.source}' is unusually small "
             f"({round(w * 100)}% × {round(h * 100)}% of the slide). Positioned "
