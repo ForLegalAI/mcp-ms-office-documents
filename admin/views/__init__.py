@@ -2,7 +2,9 @@
 
 One module per area — :mod:`~admin.views.shell` for the wrapper and the
 fragments every editor shares, :mod:`~admin.views.templates` for the template
-pages, :mod:`~admin.views.status`, :mod:`~admin.views.login`. Views are pure:
+pages, :mod:`~admin.views.base` for the base-template slots,
+:mod:`~admin.views.assets` for the source-file maintenance view,
+:mod:`~admin.views.status`, :mod:`~admin.views.login`. Views are pure:
 they take the :class:`~admin.app.AdminContext` and already-loaded data and
 return a FastHTML tree, so :mod:`admin.app` holds nothing but routes.
 
@@ -11,6 +13,7 @@ Markup primitives live in :mod:`admin.components`; per-kind wording lives in
 """
 from __future__ import annotations
 
+from admin.views.assets import assets_page, delete_asset_page, fmt_size
 from admin.views.base import base_templates_page
 from admin.views.login import login_page, logout_page
 from admin.views.shell import (
@@ -28,7 +31,8 @@ from admin.views.templates import (
 )
 
 __all__ = [
-    "BRAND", "base_templates_page", "analysis_report", "arg_row", "configure_page", "delete_page",
+    "BRAND", "assets_page", "base_templates_page", "analysis_report", "arg_row",
+    "configure_page", "delete_asset_page", "delete_page", "fmt_size",
     "edit_form",
     "edit_page", "fmt_ts", "fmt_uptime", "form_actions", "index_page",
     "login_page", "logout_page", "name_field", "new_page", "not_found_page",

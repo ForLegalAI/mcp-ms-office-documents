@@ -15,13 +15,14 @@ contain, [`dynamic-templates.md`](dynamic-templates.md).
 | `admin/kinds.py` | one `KindDescriptor` per *dynamic* template kind: label, icon, wording, `has_args` |
 | `admin/base_templates.py` | one `BaseSlot` per *static* base template (fixed filename, one of each) |
 | `admin/forms.py` | reading a submitted form back into a spec dict |
-| `admin/views/` | the pages — `shell`, `templates`, `base`, `status`, `login` |
+| `admin/assets.py` | what is in `custom_templates/` and what still references it |
+| `admin/views/` | the pages — `shell`, `templates`, `base`, `assets`, `status`, `login` |
 | `admin/store.py` | persistence: `config/<kind>_templates.d/<name>.yaml` + the asset |
 | `admin/analysis.py` | what is inside an uploaded `.docx` / `.html` / `.pptx` |
 | `admin/preview.py` | rendering a template without touching the upload backend |
 | `admin/auth.py` | the shared-password gate and CSRF tokens |
 
-`components`, `kinds`, `forms`, `store` and `analysis` do not import
+`components`, `kinds`, `forms`, `store`, `analysis` and `assets` do not import
 `admin.app`; views take the `AdminContext` as a parameter. `store`, `analysis`
 and `forms` have no FastHTML dependency at all, so their rules can be unit
 tested without rendering anything.
@@ -191,6 +192,20 @@ its `enabled` flag, so a brand-new template could arrive disabled. A create
 that lands on an occupied name is now refused with the same message a rename
 gets.
 
+**An orphan is defined by what does *not* reference a file, so the reference
+map has to be complete.** `assets.reference_map()` counts three things, and
+the page offers to delete anything it misses: managed specs, master-YAML
+entries (read with `include_disabled=True`, because a disabled template still
+owns its file), and the base-template slots — which live in the same flat
+directory under fixed names and are named by no spec at all. Deleting one of
+those would silently restyle every document the server produces.
+
+Deletion is keyed off the scan rather than the URL: the filename has to match
+one `scan()` produced, which is a basename read from the directory, and it
+has to still be an orphan when the request arrives. A crafted path matches
+nothing, and a file that gained a reference since the page was rendered is no
+longer deletable.
+
 ## Known limitations
 
 - The **global** `style_mapping` is still read-only: the editor now says what
@@ -201,9 +216,6 @@ gets.
   `style_map.load_global_style_map()` caches its result for the process, so
   both would have to change together for an edit to take effect without a
   restart.
-- A kept source file is still invisible: deleting now offers to remove it, but
-  nothing lists the files in `custom_templates/` that no template points at
-  ([#166](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/166)).
 - An **accepted** upload is still read fully into memory. Streaming it
   straight to its destination would need the analysers and
   `store.write_asset()` to take a file object rather than bytes — worth doing
@@ -221,4 +233,5 @@ gets.
 | `tests/test_metrics_warnings.py` | warnings reach the counters and the Status page |
 | `tests/test_admin_log_view.py` | the log view's level, source and search filters |
 | `tests/test_admin_template_lifecycle.py` | disabling, enabling and renaming a template |
+| `tests/test_admin_source_files.py` | the reference map, and that only an orphan can be deleted |
 | `tests/test_admin_config.py` | `ADMIN_*` settings |

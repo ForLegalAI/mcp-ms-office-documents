@@ -235,6 +235,6 @@ def nav_links(url, authed: bool = True) -> Sequence[Tuple[str, str]]:
         return ()
     links = [("All templates", url("/"))]
     links += [(f"New {DESCRIPTORS[k].label}", url(f"/new/{k}")) for k in NAV_KINDS]
-    links += [("Base templates", url("/base")),
+    links += [("Base templates", url("/base")), ("Source files", url("/files")),
               ("Status", url("/status")), ("Log out", url("/logout"))]
     return links

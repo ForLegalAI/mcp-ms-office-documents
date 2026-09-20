@@ -585,8 +585,8 @@ def delete_page(ctx, kind: str, name: str, asset: Optional[str],
     else:
         asset_choice = c.checkbox_field(
             "delete_asset", f"Also delete the source file ({asset})",
-            hint="Off by default. Kept files stay in custom_templates/, where "
-                 "nothing in this UI lists them.")
+            hint="Off by default. A kept file stays in custom_templates/ and "
+                 "shows up under Source files, where it can be removed later.")
 
     return page(
         ctx, f"Delete {name}",

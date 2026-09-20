@@ -44,6 +44,7 @@ from starlette.routing import Mount
 
 from config import Config
 from admin import auth, base_templates, views
+from admin import assets as asset_index
 from admin.analysis import analyze, is_unusable
 from admin.components import head_tags
 from admin.forms import build_spec, checked
@@ -205,6 +206,26 @@ class AdminContext:
             logger.exception("[admin] Could not read the %s master YAML", kind)
             return []
         return [t for t in templates if isinstance(t, dict)]
+
+    def scan_assets(self) -> List[asset_index.AssetFile]:
+        """Every file in ``custom_templates/`` and what references it (#166)."""
+        refs = asset_index.reference_map(self.store, self._master_specs)
+        return asset_index.scan(self.store.custom_dir, refs)
+
+    def orphan(self, filename: str) -> Optional[asset_index.AssetFile]:
+        """The scanned, unreferenced file called *filename*, or ``None``.
+
+        Deletion is keyed off this rather than off the URL: the name has to
+        match one the scan produced, which is a real basename read from the
+        directory, and it has to still be an orphan at the moment of the
+        request. A file that gained a reference between the page render and
+        the click is no longer deletable, and a crafted path never matches
+        anything at all.
+        """
+        for f in self.scan_assets():
+            if f.name == filename and f.orphaned:
+                return f
+        return None
 
     def analyze_asset(self, kind: str, spec: Dict[str, Any]):
         """Analyse a spec's installed source file, or ``None`` when it is gone."""
@@ -444,6 +465,53 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
                        "named styles are available until you upload one.")
         return _base_page(sess, focus=key, message=message,
                           message_kind="ok" if s.has_default else "warn")
+
+    # ---- Source files (#166) ---------------------------------------------
+    # Registered BEFORE the generic /{kind}/{name}/… routes below, or
+    # /files/{name}/delete would be matched as a template delete.
+
+    @rt("/files")
+    def files_index(sess):
+        return views.assets_page(ctx, ctx.scan_assets(),
+                                 csrf=auth.ensure_csrf(sess))
+
+    @rt("/files/{filename}/delete", methods=["get", "post"])
+    async def delete_file(req, sess, filename: str):
+        """Remove one unreferenced file from ``custom_templates/``.
+
+        Only an orphan, and only one the scan just confirmed is still an
+        orphan — the referenced files are the base templates and everything a
+        spec points at, and deleting one of those would silently change what
+        the server produces.
+        """
+        found = ctx.orphan(filename)
+        if found is None:
+            return views.not_found_page(ctx, filename)
+
+        if req.method != "POST":
+            return views.delete_asset_page(ctx, found.name,
+                                           csrf=auth.ensure_csrf(sess))
+
+        form = await req.form()
+        bad = _csrf_guard(sess, form)
+        if bad:
+            return bad
+        try:
+            # unlink() removes the directory entry, so a symlink placed here
+            # by hand takes only the link with it — never what it points at.
+            # Together with the name coming from iterdir(), that is why this
+            # route cannot reach a file outside custom_templates/.
+            (Path(ctx.store.custom_dir) / found.name).unlink()
+        except OSError as e:
+            logger.exception("[admin] Could not delete %s", found.name)
+            return views.assets_page(
+                ctx, ctx.scan_assets(), csrf=auth.ensure_csrf(sess),
+                message=f"Could not delete {found.name}: {e}",
+                message_kind="err")
+        logger.info("[admin] Deleted unreferenced source file %r", found.name)
+        return views.assets_page(
+            ctx, ctx.scan_assets(), csrf=auth.ensure_csrf(sess),
+            message=f"Deleted {found.name}.")
 
     @rt("/new/{kind}")
     def new(sess, kind: str):
