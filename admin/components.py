@@ -379,7 +379,15 @@ def badge(text: str, variant: str = "off", **kwargs):
     return Span(text, cls=f"badge badge-{variant}", **kwargs)
 
 
-def status_badge(live: bool):
+def status_badge(live: bool, enabled: bool = True):
+    """Live / Disabled / Not live.
+
+    Disabled is its own state rather than another "Not live": one is a choice
+    the admin made and can undo from the same row, the other is a template that
+    failed to register and wants investigating (#165).
+    """
+    if not enabled:
+        return badge("Disabled", "off", title="Turned off — the AI cannot call it")
     return badge("● Live", "live") if live else badge("Not live", "off")
 
 

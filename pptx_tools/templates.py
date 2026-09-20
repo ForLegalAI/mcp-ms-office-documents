@@ -29,7 +29,7 @@ from pptx import Presentation
 from pptx.util import Emu
 
 import template_utils
-from template_registry import gather_specs
+from template_registry import gather_specs, is_enabled
 from template_utils import find_file_in_template_dirs
 
 from .constants import SLIDE_FORMAT_4_3, SLIDE_FORMAT_16_9
@@ -257,16 +257,24 @@ def load_specs(force: bool = False) -> List[TemplateSpec]:
     spec_dir = cfg / SPEC_SUBDIR
 
     specs: List[TemplateSpec] = []
+    all_disabled = False
     if master.is_file() or spec_dir.is_dir():
-        entries, _ = gather_specs(master, spec_dir)
+        all_entries, _ = gather_specs(master, spec_dir, include_disabled=True)
+        entries = [e for e in all_entries if is_enabled(e)]
+        all_disabled = bool(all_entries) and not entries
         for entry in entries:
             spec = _spec_from_yaml(entry)
             if spec is not None:
                 specs.append(spec)
 
-    if not specs:
+    # The historical filename slots are the safety net for "nothing readable is
+    # configured" — a missing config, or entries too malformed to build a spec
+    # from. Turning every template off is neither: it is a deliberate choice,
+    # and answering it by resurrecting the built-ins would hand back the very
+    # templates the admin just took away (#165).
+    if not specs and not all_disabled:
         specs = _legacy_specs()
-    else:
+    elif specs:
         # Fill in the aspect from each file, and make sure exactly one default.
         for spec in specs:
             try:

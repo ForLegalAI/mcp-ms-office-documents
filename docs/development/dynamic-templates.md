@@ -25,6 +25,24 @@ file's top-level mapping so callers can read `style_mapping`. A malformed
 `.d` file is logged and skipped; it never aborts the load. The same loader
 serves the PowerPoint registry.
 
+**`enabled: false` is where a template is turned off.** `gather_specs()`
+drops those specs, so a disabled template is never registered — at startup or
+after an edit — and stays disabled across a restart without anything having to
+remember it. The key is absent from every spec written before #165 and absent
+means enabled, so nothing goes dark on upgrade. Only the admin UI passes
+`include_disabled=True`, because it has to list a disabled template in order
+to offer Enable. Filtering here rather than at each registration site is
+deliberate: a future consumer of `gather_specs()` cannot register a disabled
+template by forgetting to check.
+
+`is_enabled()` accepts more than a bare `false`, because PyYAML only coerces
+the full words — `enabled: n` stays the string `"n"`, and so does `disable`,
+which mirrors the admin UI's own button. Reading either as *enabled* would
+invert the author's intent silently, so both count as off. A string in
+neither vocabulary is treated as enabled — the safe direction, since a
+template the AI cannot call looks like a broken server — but it is logged
+with the template's name, so a typo is visible rather than guessed at.
+
 `main.py` registers email templates first, then Word templates, whenever
 either the master file or the `.d` directory exists.
 
@@ -185,4 +203,5 @@ template name, for the filename.
 | `tests/test_docx_conditionals.py` | Marker parsing, balance, nesting, unknown names |
 | `tests/test_dynamic_args_schema.py` | The flat-schema rules for both kinds |
 | `tests/test_template_registry.py` | `gather_specs()` merging and live (un)registration |
+| `tests/test_admin_template_lifecycle.py` | `enabled: false` across the merge, the loaders and a restart |
 | `tests/test_template_store.py`, `tests/test_admin_app.py` | The admin store and UI paths that write `.d` files |

@@ -41,9 +41,20 @@ http://localhost:8958/admin
   heading levels, three numbered and three bulleted list levels, quote, table,
   normal and code), and each dropdown's default option names what that key
   resolves to today — including when a global `style_mapping` sets it.
+- **Disable** — takes the tool off the server without touching anything else.
+  The configuration, the arguments and the uploaded file all stay put; the AI
+  simply stops being able to call it, and **Enable** puts it back. Reach for
+  this rather than Delete for a seasonal template, one being revised, or one
+  whose wording is under review. It survives a restart, and saving an edit to
+  a disabled template leaves it disabled.
+- **Rename** — change the name on the edit page and save. The tool the AI
+  calls is renamed; the uploaded source file keeps its own filename, so
+  anything else pointing at that file still works.
 - **Delete** — asks first, on its own page, listing what goes: the
   configuration and the live tool. The uploaded source file is kept unless you
   tick the box, and it is never removed while another template still uses it.
+  If you only want the AI to stop calling it, Disable instead — Delete
+  destroys the arguments and descriptions with it.
 - **Status** page — filter the activity log by level, by which part of the
   server logged it, or by a search over the message and logger name, and
   optionally have the page refresh itself. Every filter is in the URL, so a

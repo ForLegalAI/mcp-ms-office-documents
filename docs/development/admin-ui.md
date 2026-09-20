@@ -163,6 +163,34 @@ parameterised document: it declares arguments and becomes an MCP tool, so
 arguments; it becomes one more value for the presentation tool's `template`
 argument, so "live" means the registry re-read it.
 
+**Disabling is a spec key, not UI state.** `enabled: false` lives in the spec
+file and `template_registry.gather_specs()` drops it, which is why a disabled
+template stays disabled across a restart with nothing having to remember it.
+`AdminContext.sync()` is the one place that decides whether saving a template
+registers it or takes it off — a disabled spec must not come back as a live
+tool just because it was saved. The edit form carries no `enabled` control, so
+the save route reads the stored flag and carries it forward; without that, an
+edit would silently switch a disabled template back on.
+
+**A rename goes through `store.rename_spec()`.** It owns the collision check,
+the name validation and the write-before-unlink ordering, so an interrupted
+rename leaves two templates rather than none. The save route calls it rather
+than re-doing the sequence inline: an inline copy is a second implementation
+of the same invariant, and it is the one no test reaches. A failed unlink
+raises `OSError`, which the route catches alongside `TemplateStoreError` —
+otherwise a rename that cannot remove the old file 500s instead of saying so.
+The asset keeps its own filename: renaming it would break any master-YAML
+entry pointing at the same file, and the spec names it explicitly anyway.
+
+**`original_name` is what separates a create from an edit.** The edit form
+renders it, the create form does not, and the save route keys off its
+*presence* — not off whether a spec with that name happens to exist. Keyed
+the other way, a fresh upload whose name collided with an existing template
+read as an ordinary edit: it overwrote the occupant in silence and inherited
+its `enabled` flag, so a brand-new template could arrive disabled. A create
+that lands on an occupied name is now refused with the same message a rename
+gets.
+
 ## Known limitations
 
 - The **global** `style_mapping` is still read-only: the editor now says what
@@ -192,4 +220,5 @@ argument, so "live" means the registry re-read it.
 | `tests/test_admin_base_templates.py` | the five base-template slots: state, upload, download, revert |
 | `tests/test_metrics_warnings.py` | warnings reach the counters and the Status page |
 | `tests/test_admin_log_view.py` | the log view's level, source and search filters |
+| `tests/test_admin_template_lifecycle.py` | disabling, enabling and renaming a template |
 | `tests/test_admin_config.py` | `ADMIN_*` settings |

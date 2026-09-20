@@ -4,7 +4,8 @@ Both the docx and email dynamic-tool modules use these to:
 
 * merge the heavily-documented master YAML (``config/<kind>_templates.yaml``)
   with the UI-managed per-template files in ``config/<kind>_templates.d/`` —
-  the per-template file wins when names collide; and
+  the per-template file wins when names collide, and a spec marked
+  ``enabled: false`` is dropped so no path registers it (#165); and
 * remove a live MCP tool by name (so a template can be re-registered after an
   edit, or unregistered on delete) tolerantly across FastMCP versions.
 
@@ -66,6 +67,49 @@ def read_spec_file(path: Path) -> Optional[Dict[str, Any]]:
     return data
 
 
+#: Spec values that mean "disabled". A spec file is hand-editable YAML, and
+#: PyYAML only coerces the full words (``no``/``off``/``false``) to a bool —
+#: ``n`` stays a string, as does anything mirroring the UI's own button. Those
+#: are the words someone reaching for "off" actually types, so they are
+#: recognised rather than read as their opposite.
+_DISABLED_WORDS = frozenset({"false", "no", "n", "off", "0", "disable",
+                             "disabled", ""})
+
+#: The same courtesy in the other direction, so a deliberate "on" is not
+#: mistaken for a typo and warned about.
+_ENABLED_WORDS = frozenset({"true", "yes", "y", "on", "1", "enable", "enabled"})
+
+
+def is_enabled(spec: Any) -> bool:
+    """Whether *spec* should be registered as a live tool.
+
+    Disabling keeps the spec file and its asset but takes the tool off the
+    server, which is the only way to stop the AI reaching for a template
+    without destroying its configuration (#165).
+
+    A missing key means enabled: every spec written before #165 has none and
+    must stay live. A string this does not recognise also means enabled — the
+    safe direction, since a template the AI cannot call looks like a broken
+    server — but it is logged, because silently reading someone's intent
+    backwards is exactly what a hand-edited file invites.
+    """
+    if not isinstance(spec, dict) or "enabled" not in spec:
+        return True
+    value = spec["enabled"]
+    if isinstance(value, str):
+        word = value.strip().lower()
+        if word in _DISABLED_WORDS:
+            return False
+        if word not in _ENABLED_WORDS:
+            logger.warning(
+                "[template-registry] %s: unrecognised enabled value %r — "
+                "treating the template as enabled. Use true or false.",
+                spec.get("name", "<unnamed>"), value,
+            )
+        return True
+    return bool(value)
+
+
 def read_spec_dir(spec_dir: Path) -> List[Dict[str, Any]]:
     """Return the specs in ``spec_dir`` (one per ``*.yaml``), sorted by filename."""
     if not spec_dir or not spec_dir.is_dir():
@@ -79,7 +123,8 @@ def read_spec_dir(spec_dir: Path) -> List[Dict[str, Any]]:
 
 
 def gather_specs(
-    master_yaml: Optional[Path], spec_dir: Optional[Path]
+    master_yaml: Optional[Path], spec_dir: Optional[Path],
+    include_disabled: bool = False,
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Merge the master YAML's ``templates`` with the per-template ``spec_dir``.
 
@@ -90,6 +135,14 @@ def gather_specs(
       original master order preserved and dir-only templates appended after; and
     * ``master_cfg`` is the parsed master mapping (``{}`` if absent), so callers
       can still read top-level keys such as ``style_mapping``.
+
+    Specs marked ``enabled: false`` are dropped unless *include_disabled*. This
+    is the one merge point every registration path goes through — the docx and
+    email loaders, the PowerPoint registry — so filtering here is what makes a
+    disabled template stay disabled across a restart, and what stops a future
+    consumer from registering one by forgetting to check. Only the admin UI,
+    which has to list a disabled template in order to offer Enable, passes
+    *include_disabled*.
     """
     master_cfg: Dict[str, Any] = {}
     master_templates: List[Dict[str, Any]] = []
@@ -122,5 +175,8 @@ def gather_specs(
     for name in sorted(overrides):
         if name not in seen:
             merged.append(overrides[name])
+
+    if not include_disabled:
+        merged = [spec for spec in merged if is_enabled(spec)]
 
     return merged, master_cfg

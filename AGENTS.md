@@ -134,6 +134,11 @@ backend → URL string or LibreChat artifact dict. Details:
   default alone. Descriptions must be siblings of a flat type.
 - Do not give `add_unique_prefix` a default in a dynamic tool body; it must
   reach `upload_file()` as `None`.
+- A disabled template (`enabled: false`) is filtered in
+  `template_registry.gather_specs()` — the one merge point every registration
+  path uses — never at a call site. A new consumer of `gather_specs()` gets
+  the filtering for free; only the admin UI passes `include_disabled=True`.
+  Absent means enabled, so specs written before #165 stay live.
 
 **Docs — part of every change, never a follow-up**
 - Before you finish any change, find every page under `docs/` that describes

@@ -21,10 +21,28 @@ from admin.analysis import Analysis, PptxAnalysis, reconcile
 from admin.kinds import ARG_TYPES, KINDS, STYLE_GROUPS, descriptor
 from admin.store import KIND_DOCX, KIND_PPTX
 from admin.views.shell import form_actions, name_field, page
+from template_registry import is_enabled
 
 # ---------------------------------------------------------------------------
 # Template table
 # ---------------------------------------------------------------------------
+
+
+def _enabled_toggle(ctx, kind: str, name: str, enabled: bool, csrf: str):
+    """The Enable / Disable button for one row.
+
+    A POST, not a link: it changes server state, and a crawler or a prefetch
+    following a GET would take a template off the air.
+    """
+    return c.post_form(
+        ctx.u(f"/{kind}/{name}/enabled"),
+        c.hidden("enabled", "" if enabled else "true"),
+        Button("Disable" if enabled else "Enable", type="submit",
+               cls="btn btn-secondary btn-sm",
+               title=("Keep the configuration but stop the AI calling it"
+                      if enabled else "Put the tool back on the server")),
+        csrf=csrf, cls="inline-form",
+    )
 
 
 def template_table(ctx, kind: str, csrf: str = ""):
@@ -37,12 +55,14 @@ def template_table(ctx, kind: str, csrf: str = ""):
     rows = []
     for spec in managed:
         name = spec.get("name")
+        enabled = is_enabled(spec)
         rows.append(Tr(
             Td(A(name, href=ctx.u(f"/{kind}/{name}/edit"))),
             Td(d.detail_cell(spec)),
-            Td(c.status_badge(name in live)),
+            Td(c.status_badge(name in live, enabled)),
             Td(c.action_bar(
                 A("Edit", href=ctx.u(f"/{kind}/{name}/edit"), cls="btn btn-secondary btn-sm"),
+                _enabled_toggle(ctx, kind, name, enabled, csrf),
                 A("Delete", href=ctx.u(f"/{kind}/{name}/delete"), cls="btn btn-danger btn-sm"),
             )),
         ))
@@ -328,7 +348,10 @@ def _form_shell(ctx, kind: str, spec: Dict[str, Any], is_new: bool,
         c.csrf_input(csrf),
         c.hidden("kind", kind),
         c.hidden("asset_filename", asset_filename),
-        c.hidden("name", spec.get("name", "")) if not is_new else None,
+        # What the template is called *now*, so the save route can tell a
+        # rename from an edit. The visible name input is editable in both
+        # states (#165).
+        c.hidden("original_name", spec.get("name", "")) if not is_new else None,
         *cards,
         form_actions(ctx, kind),
         action=ctx.u(f"/{kind}/save"), method="post",
@@ -530,7 +553,11 @@ def configure_page(ctx, kind: str, name: str, filename: str,
         H1(f"Configure {name}"),
         c.flash(d.draft_hint.format(filename=filename), "ok"),
         analysis_report(analysis, spec),
-        edit_form(ctx, kind, spec, analysis, is_new=False, csrf=csrf),
+        # A create, not an edit: this is the form you land on straight after
+        # uploading a new file. Saying so is what keeps `original_name` off
+        # the form, and with it any inherited state from a template that
+        # happens to share the name (#165).
+        edit_form(ctx, kind, spec, analysis, is_new=True, csrf=csrf),
     )
 
 
