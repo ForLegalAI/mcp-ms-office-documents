@@ -210,6 +210,17 @@ names every such file (both the `custom_` and the `default_` spelling of all
 five slots); adopting a master entry that points at one gives the template a
 private copy under its own name instead.
 
+**`save_spec()` will not adopt a file it only guessed the name of.** The asset
+filename comes from the argument, else the spec's path key, else the template's
+name — and that last branch is a guess. The guard under it used to read "the
+asset must exist", when what a caller in that branch means is "the asset must
+be the one I just wrote", so a file left behind by a deleted template was
+adopted by the next template of the same name in silence (#184). Deriving onto
+an existing file is refused unless bytes are supplied; naming the file
+explicitly still reuses it, which is how every edit of an existing template
+saves. The two refusals — nothing there, and something unexpected there — say
+different things, because they are different problems.
+
 **The pptx analysis reports the content area, read with no overrides.**
 `analysis.content_area` comes from the same `templates.content_area_summary()`
 the tool's own diagnostics use, so the page and `list_presentation_templates`
