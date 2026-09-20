@@ -183,7 +183,13 @@ class TemplateStore(ABC):
         asset_bytes: Optional[bytes] = None,
         asset_filename: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Persist *spec* (and optionally its asset). Returns the stored spec."""
+        """Persist *spec* (and optionally its asset). Returns the stored spec.
+
+        The asset filename comes from *asset_filename*, else the spec's path
+        key, else the template's name. Deriving it onto a file that already
+        exists is refused unless bytes are supplied: silently adopting some
+        earlier template's leftovers is never what a caller means (#184).
+        """
 
     @abstractmethod
     def delete_spec(self, kind: str, name: str, delete_asset: bool = False) -> bool:
@@ -314,9 +320,10 @@ class FileTemplateStore(TemplateStore):
         name = validate_name(str(spec.get("name", "")))
 
         path_key = meta["path_key"]
-        # Determine the asset filename: explicit arg wins, else the spec's path
-        # key, else derive from the template name.
-        filename = asset_filename or spec.get(path_key) or f"{name}{meta['asset_ext']}"
+        # The asset filename: explicit arg wins, else the spec's path key,
+        # else derived from the template name.
+        named = asset_filename or spec.get(path_key)
+        filename = named or f"{name}{meta['asset_ext']}"
         validate_asset_filename(filename, kind)
         spec[path_key] = filename
 
@@ -327,6 +334,17 @@ class FileTemplateStore(TemplateStore):
         elif not self.asset_exists(kind, filename):
             raise TemplateStoreError(
                 f"No asset bytes provided and asset {filename!r} does not exist yet."
+            )
+        elif not named:
+            # The guard read "the asset must exist", but what a caller in this
+            # branch means is "the asset must be the one I just wrote". A file
+            # of the derived name left behind by a deleted template would be
+            # adopted here with nothing saying so — the new template would be
+            # built on a document nobody uploaded (#184).
+            raise TemplateStoreError(
+                f"{filename!r} already exists, and no document was supplied for "
+                f"{name!r}. Upload one, or name the file explicitly if reusing "
+                "it is what you mean."
             )
 
         spec_path = self._spec_path(kind, name)
