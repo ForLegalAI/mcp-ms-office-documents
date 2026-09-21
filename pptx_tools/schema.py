@@ -899,6 +899,52 @@ SlidesInput = Annotated[List[SlideInput], BeforeValidator(_migrate_list)]
 # Entry point for non-MCP callers
 # =============================================================================
 
+@lru_cache(maxsize=1)
+def _fields_by_type() -> Dict[str, Tuple[str, ...]]:
+    """Every field name each slide type accepts, in declaration order."""
+    return {
+        _slide_type_of(model): tuple(
+            name for name in model.model_fields if name != "type"
+        )
+        for model in _SLIDE_MODELS
+    }
+
+
+@lru_cache(maxsize=1)
+def _types_by_field() -> Dict[str, Tuple[str, ...]]:
+    """Which slide types accept each field name."""
+    owners: Dict[str, List[str]] = {}
+    for slide_type, fields in _fields_by_type().items():
+        for name in fields:
+            owners.setdefault(name, []).append(slide_type)
+    return {name: tuple(types) for name, types in owners.items()}
+
+
+def _rejected_field(slide_type: Optional[str], field: str) -> str:
+    """Why this field was refused, and what to do instead.
+
+    "Extra inputs are not permitted" names the mistake and not the fix, so a
+    model that assumed every slide takes a title, a subtitle and a body — the
+    common assumption, and the one that cost a whole deck in production — gets
+    told only that it is wrong. The schema does say which types take which
+    field, but by then the caller has already read it once and drawn the wrong
+    conclusion; repeating it at the point of failure is what turns a retry
+    into a correction rather than a guess.
+    """
+    detail = f"'{field}' is not a field of"
+    detail += f" a '{slide_type}' slide" if slide_type else " this slide type"
+    if slide_type:
+        accepted = _fields_by_type().get(slide_type, ())
+        if accepted:
+            detail += f" (it takes: {', '.join(accepted)})"
+    owners = _types_by_field().get(field, ())
+    if owners:
+        detail += f"; '{field}' belongs to: {', '.join(owners)}"
+    else:
+        detail += "; no slide type has that field"
+    return detail + "."
+
+
 def _describe_error(error: Dict[str, Any]) -> str:
     """Render one pydantic error as 'slide 2 -> rows.0: message'."""
     loc = [str(part) for part in error.get("loc", ())]
@@ -907,22 +953,37 @@ def _describe_error(error: Dict[str, Any]) -> str:
     # JSON) carry no path and already name the slide they are about.
     if not loc:
         return message.removeprefix("Value error, ")
-    # Drop the union-member tag pydantic injects so the path reads naturally.
+    # Drop the union-member tag pydantic injects so the path reads naturally,
+    # but keep hold of it: it is the slide's own type, and the only thing that
+    # says which field set applied.
+    #
+    # Exactly one leading segment, never "every segment that looks like a type
+    # name". `title` is both a field on every slide and a slide type, so
+    # filtering by membership silently ate it: an error about the title field
+    # rendered as "slide 0: Input should be a valid string", naming no field
+    # at all. The tag is always at position 1 of a tagged union's path, so
+    # position is what identifies it.
     index = loc[0]
-    rest = [part for part in loc[1:] if part not in SLIDE_TYPES]
+    rest = list(loc[1:])
+    slide_type = rest.pop(0) if rest and rest[0] in SLIDE_TYPES else None
     where = f"slide {index}"
     if rest:
         where += " -> " + ".".join(rest)
+    if error.get("type") == "extra_forbidden" and len(rest) == 1:
+        message = _rejected_field(slide_type, rest[0])
     return f"{where}: {message}"
 
 
 def coerce_slides(slides: Any) -> List[Any]:
     """Validate *slides* into typed models, raising a readable ``ValueError``.
 
-    MCP callers never reach the error path — FastMCP validates against the tool
-    signature first — but direct callers (tests, ``create_presentation``) do,
-    and a raw pydantic dump is poor feedback for a model trying to correct
-    itself.
+    This is the *only* validation an MCP caller meets, so its wording is the
+    tool's error message. The parameter is declared as ``Any`` carrying a
+    hand-built JSON schema (see :data:`SlideInput`), so FastMCP passes the
+    payload through untouched and every rejection is raised here — which is
+    why these messages name the slide, the field and, for a field the type
+    does not have, what it does take. A raw pydantic dump is poor feedback for
+    a model trying to correct itself, and worse when it is all the model gets.
     """
     if isinstance(slides, list) and slides and all(
         isinstance(slide, SlideBase) for slide in slides

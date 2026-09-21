@@ -122,6 +122,27 @@ read. The tool parameter declares that flat schema through `WithJsonSchema`;
 validation still runs against the union in `coerce_slides()`, on the worker
 thread, where the error can say `slide 2 -> rows.0: …`.
 
+**`coerce_slides()`'s wording *is* the tool's error message.** Because the
+parameter is declared `Any` with a hand-built schema, FastMCP passes the
+payload straight through and every rejection is raised here — there is no
+earlier validator whose message a caller might see instead. So these strings
+are model-facing API, not developer diagnostics.
+
+That is why `extra_forbidden` is rewritten rather than passed through. A model
+that assumes every slide takes a title, a subtitle and a body — the common
+assumption — used to get only "Extra inputs are not permitted", which names
+the mistake and not the fix; a production call lost a whole seven-slide deck
+to exactly that. `_rejected_field()` now answers both halves:
+
+    slide 1 -> subtitle: 'subtitle' is not a field of a 'section' slide
+    (it takes: title, notes, layout); 'subtitle' belongs to: title, closing.
+
+Both sides are derived from `_SLIDE_MODELS` (`_fields_by_type()` and
+`_types_by_field()`), so a new slide type is covered without touching the
+error path, and a field no type declares says so rather than pointing
+nowhere. Every other error keeps pydantic's own wording — only the one that
+said nothing actionable is replaced.
+
 Two shims sit in front of validation. `migrate_legacy_slide()` renames the
 previous key spellings (`slide_type`, `slide_text`, `chart_data`, …) so old
 client prompts still work, logging once per call. `slide_from_text()` reads

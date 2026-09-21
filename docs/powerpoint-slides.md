@@ -37,6 +37,8 @@ Every slide takes `type` plus optional `title`, `notes` (speaker notes) and `lay
 | `closing` | `subtitle?`, `contact?` |
 | `blank` | `elements` — positioned items, each `{kind: text\|image\|shape, x, y, w, h?}` with lengths in inches (`1.5`, `"1.5in"`) or as a share of the slide (`"40%"`) |
 
+**Fields are per type.** A field not listed for a type is rejected, and the call fails without generating anything — there is no partial deck. `subtitle` exists only on `title` and `closing`; bullets go in `body`, which only `content`, `chart` and `image` take (`two_column` puts them in `left` and `right`); `section` carries a title and nothing else. A rejection names the slide, the field, what that type does take and which types the field belongs to, so it can be corrected in one pass.
+
 **Colours come from your template.** Table headers use its `accent1` and zebra rows its `bg2`, and text the tool draws itself — KPI figures, timeline captions, quotes, positioned text, chart axis labels — takes the colour your template gives body text. A dark template gets readable text without you asking. Override any of it per slide with `header_color`, `fills` or a `fill` on a shape.
 
 **Empty placeholders are removed.** A layout usually reserves more boxes than a slide fills — a section layout's body, a comparison column you gave no heading, a third card. Anything left empty is dropped from the finished deck, so it does not open with "Click to add text" boxes in it. PowerPoint's Reset Slide brings them back from the layout if you want them.

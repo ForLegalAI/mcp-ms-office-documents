@@ -290,19 +290,27 @@ class AdminContext:
         the live registries and the metrics counters — the three things a view
         is not allowed to know about. The view gets a plain record.
         """
-        specs = self.store.list_specs(s.kind) if s.kind else []
+        # Both halves of what the Templates tab lists. A template written by
+        # hand in the master YAML is as live as one made here — it registers
+        # the same tool — so counting only the managed specs made this page
+        # disagree with the Templates tab beside it and with the Server
+        # section's "live Word tools", and left a tool the AI can call out of
+        # the table headed "Tools the AI can call".
+        managed = self.store.list_specs(s.kind) if s.kind else []
+        from_master = self.unmanaged_master_specs(s.kind) if s.kind else []
+        specs = [(spec, "template") for spec in managed]
+        specs += [(spec, "master") for spec in from_master]
         live_names = set(self.live_names(s.kind)) if s.kind else set()
-        enabled = [spec for spec in specs if is_enabled(spec)]
 
         tools = [self._tool_fact(name, origin="static") for name in s.tools]
         # A docx or email template is a tool of its own and belongs in the
         # same list; a pptx template is not, so it is counted as a template
         # and nothing else. descriptor().has_args is the distinction.
         if s.kind and descriptor(s.kind).has_args:
-            for spec in specs:
+            for spec, origin in specs:
                 name = spec.get("name")
                 tools.append(self._tool_fact(
-                    name, origin="template", live=name in live_names))
+                    name, origin=origin, live=name in live_names))
 
         slots = []
         for slot in s.slots:
@@ -320,13 +328,11 @@ class AdminContext:
                 notes.append((
                     f"No {slot.label} file is installed. {slot.controls}",
                     "warn"))
-        if s.kind:
-            unmanaged = self.unmanaged_master_specs(s.kind)
-            if unmanaged:
-                notes.append((
-                    f"{len(unmanaged)} template(s) come from the hand-written "
-                    "master YAML and are shown read-only on the Templates tab.",
-                    "info"))
+        if from_master:
+            notes.append((
+                f"{len(from_master)} template(s) come from the hand-written "
+                "master YAML. They are counted here and shown read-only on "
+                "the Templates tab.", "info"))
 
         extra = []
         if s.kind == KIND_PPTX:
@@ -334,9 +340,10 @@ class AdminContext:
 
         return views.SectionFacts(
             templates=len(specs),
-            live=len([spec for spec in specs
+            live=len([spec for spec, _origin in specs
                       if spec.get("name") in live_names]),
-            disabled=len(specs) - len(enabled),
+            disabled=len([spec for spec, _origin in specs
+                          if not is_enabled(spec)]),
             tools=tuple(tools), slots=tuple(slots), notes=tuple(notes),
             extra_stats=tuple(extra),
         )

@@ -460,3 +460,92 @@ def test_a_managed_templates_yaml_block_still_says_the_ui_wrote_it(admin_client)
 
     html = client.get("/admin/docx/legacy_letter/edit").text
     assert "what the UI wrote" in html
+
+
+# ---------------------------------------------------------------------------
+# The Overview tab counts it (#194 follow-up)
+# ---------------------------------------------------------------------------
+
+
+def _install_and_register(mcp, custom, cfg, spec=None):
+    """Write a master-YAML template and register it, as startup would.
+
+    The admin app does not register dynamic tools — ``main.py`` does that once
+    at startup — so a test that only writes the YAML has a template the
+    registry has never heard of, and "live" is legitimately 0. The deployed
+    server has it registered, which is the shape this bug appeared in, so the
+    test has to do what startup does or it is measuring something else.
+    """
+    from docx_tools.dynamic_docx_tools import register_docx_template_tools_from_yaml
+
+    master = _write_master(cfg, spec or MASTER_SPEC)
+    (custom / "legacy_letter.docx").write_bytes(_docx_bytes())
+    register_docx_template_tools_from_yaml(mcp, master)
+    return master
+
+
+def test_the_overview_counts_a_master_yaml_template(admin_client):
+    """A hand-written template is as live as a managed one, and says so.
+
+    Found on the deployed instance, which has exactly this shape: one Word
+    template declared in config/docx_templates.yaml and none managed by the
+    UI. Three pages then disagreed about the same fact — the Templates tab
+    showed it Live, Server > Status counted 1 live Word tool, and the Word
+    Overview said 0 with the tool missing from the table headed "Tools the AI
+    can call". The counts came from `store.list_specs()` alone, which is the
+    managed half only; `template_table()` walks both, which is why it was the
+    one page that was right.
+    """
+    client, mcp, custom, cfg = admin_client
+    _install_and_register(mcp, custom, cfg)
+
+    overview = client.get("/admin/word").text
+    assert "legacy_letter" in overview, (
+        "a live tool is missing from the table of tools the AI can call")
+    assert "From master YAML" in overview, (
+        "it is live but not editable here; the table should say which it is")
+
+    # The dashboard tile counts it too — it reads from the same record. Match
+    # the tile, not the nav link of the same href, which carries no counts.
+    tile = re.search(r'<a href="/admin/word" class="tile">.*?</a>',
+                     client.get("/admin/").text, re.S)
+    assert tile, "no Word tile on the dashboard"
+    assert "<b>1</b><span>live</span>" in re.sub(r"\s+", "", tile.group(0)), (
+        "the Word tile must count the master-YAML template as live")
+
+
+def test_the_overview_and_the_server_status_agree_on_live_word_tools(admin_client):
+    """The two counts are of the same thing and must not contradict.
+
+    Server > Status reads the registry through `live_names()`, the Overview
+    reads the specs. One counting a template the other does not is the shape
+    of the bug, whichever way round it happens.
+    """
+    client, mcp, custom, cfg = admin_client
+    _install_and_register(mcp, custom, cfg)
+
+    status = client.get("/admin/server/status").text
+    on_status = re.search(
+        r'<div class="num">(\d+)</div>\s*<div class="lbl">Live Word tools</div>',
+        status)
+    assert on_status, "the Status tab no longer reports live Word tools"
+    assert on_status.group(1) == "1", "the fixture did not register the tool"
+
+    # +1: create_word_document is always live and is not a template.
+    overview = client.get("/admin/word").text
+    live_rows = len(re.findall(r"badge badge-live", overview))
+    assert live_rows == int(on_status.group(1)) + 1, (
+        "Overview and Status disagree about how many Word tools are live")
+
+
+def test_a_disabled_master_template_is_counted_as_disabled(admin_client):
+    """`enabled: false` in the master YAML is a real state, not an absence."""
+    client, mcp, custom, cfg = admin_client
+    _install_and_register(mcp, custom, cfg, dict(MASTER_SPEC, enabled=False))
+
+    overview = client.get("/admin/word").text
+    assert "legacy_letter" in overview
+    # One template, not live, so the Templates card's Disabled count is 1.
+    assert re.search(r'<div class="num warn-text">1</div>\s*'
+                     r'<div class="lbl">Disabled</div>', overview), (
+        "a disabled master-YAML template must show as disabled, not missing")
