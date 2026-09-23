@@ -4,7 +4,8 @@ The :class:`SlideHelpers` mixin holds the slide-level operations the builder
 shares across slide types (titles, placeholders, bullets, tables, images,
 notes). The free functions handle data shaping and fit: ``body_to_bullets``,
 ``parse_table_data``, ``estimate_text_fill``, ``apply_autofit``,
-``fit_table_font_size``, ``set_runs_language``, ``resolve_fill``. Template
+``fit_table_font_size``, ``set_runs_language``, ``resolve_fill``,
+``scrub_control_chars``, ``caller_strings``. Template
 loading lives in :mod:`pptx_tools.templates`, layout choice in
 :mod:`pptx_tools.layouts`. See docs/development/tools/powerpoint.md.
 """
@@ -324,6 +325,97 @@ def table_overflows(row_count: int, height: int, font_size_pt: int) -> bool:
     return needed_pt > Emu(height).inches * 72.0
 
 
+# Characters XML 1.0 cannot carry at all (C0 controls other than tab, newline
+# and carriage return; lone surrogates; U+FFFE/U+FFFF). python-pptx escapes
+# them in text frames, but the footer, the outline's section names and the
+# chart workbook are written without that escaping, so one pasted control
+# character made lxml raise and took the whole deck with it.
+_XML_INVALID_RE = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
+# Office pastes a soft line break as a vertical tab; a form feed is a page
+# break. Both read as a line break, so they become one instead of vanishing.
+_XML_BREAKS = {"\x0b": "\n", "\x0c": "\n"}
+
+
+def clean_control_chars(text: str) -> Tuple[str, int]:
+    """*text* without XML-invalid characters, and how many were replaced."""
+    count = 0
+
+    def _sub(match):
+        nonlocal count
+        count += 1
+        return _XML_BREAKS.get(match.group(0), "")
+
+    return _XML_INVALID_RE.sub(_sub, text), count
+
+
+def scrub_control_chars(value: Any) -> Tuple[Any, int]:
+    """Clean every string reachable from *value*, in place where possible.
+
+    Walks validated slide models, lists, tuples and dicts, so it runs once on
+    the whole deck and no builder has to remember to call it. Returns the
+    (possibly new) value and the number of characters replaced.
+    """
+    if isinstance(value, str):
+        if not _XML_INVALID_RE.search(value):
+            return value, 0
+        return clean_control_chars(value)
+    if isinstance(value, list):
+        total = 0
+        for i, item in enumerate(value):
+            value[i], n = scrub_control_chars(item)
+            total += n
+        return value, total
+    if isinstance(value, tuple):
+        items = [scrub_control_chars(item) for item in value]
+        return tuple(item for item, _ in items), sum(n for _, n in items)
+    if isinstance(value, dict):
+        total = 0
+        for key in list(value):
+            value[key], n = scrub_control_chars(value[key])
+            total += n
+        return value, total
+    fields = getattr(type(value), "model_fields", None)
+    if fields:
+        total = 0
+        for name in fields:
+            current = getattr(value, name)
+            cleaned, n = scrub_control_chars(current)
+            if n:
+                setattr(value, name, cleaned)
+                total += n
+        return value, total
+    return value, 0
+
+
+def caller_strings(value: Any):
+    """Every string reachable from validated slides, in document order."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from caller_strings(item)
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from caller_strings(item)
+    else:
+        fields = getattr(type(value), "model_fields", None)
+        for name in fields or ():
+            yield from caller_strings(getattr(value, name))
+
+
+# The schema spells the four base theme slots the way the tool description
+# does ("dark1"); DrawingML's ST_SchemeColorVal spells them "dk1". Writing the
+# schema name straight into <a:schemeClr val="…"/> produced a file python-pptx
+# could not read back and PowerPoint offered to repair. The accents are spelled
+# the same in both.
+_SCHEME_COLOR_VAL = {"dark1": "dk1", "dark2": "dk2", "light1": "lt1", "light2": "lt2"}
+
+
+def scheme_color_val(name: str) -> str:
+    """The DrawingML ``schemeClr`` value for a schema theme-colour name."""
+    return _SCHEME_COLOR_VAL.get(name, name)
+
+
 def resolve_fill(color: Optional[str], default: RGBColor):
     """Return either an ``RGBColor`` or a theme colour name for *color*.
 
@@ -590,7 +682,7 @@ class SlideHelpers:
 
             ns = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
             if isinstance(color, str):
-                inner = f'<a:schemeClr val="{color}"/>'
+                inner = f'<a:schemeClr val="{scheme_color_val(color)}"/>'
             else:
                 inner = f'<a:srgbClr val="{color}"/>'
 

@@ -90,7 +90,8 @@ today; the built-in tools are.
 - Set `API_KEY` on any server reachable beyond localhost. The health routes
   stay open by design; everything else is gated.
 - Set `ADMIN_PASSWORD` if the admin UI is enabled, or it falls back to the
-  API key.
+  API key. With neither set the UI is locked and every page redirects to the
+  login form.
 - Leave `SSRF_ALLOW_PRIVATE_ADDRESSES` unset unless images must come from
   inside your network.
 - Signed download links expire after `SIGNED_URL_EXPIRES_IN` seconds; keep

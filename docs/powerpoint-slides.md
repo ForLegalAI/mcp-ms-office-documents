@@ -58,7 +58,7 @@ Every slide takes `type` plus optional `title`, `notes` (speaker notes) and `lay
 
 Indent child items with any consistent unit — two spaces, four spaces or a tab. A line without a `-` marker becomes a top-level bullet. The explicit form is `[{"text": "…", "level": 2}]`, where `level` is 1 (outermost) to 5.
 
-**Inline formatting** works in every text field — titles and subtitles, bullets, table cells, KPI figures and labels, timeline steps, captions, quotes and attributions, column headings, chart and axis titles, and the text of a blank slide's elements. A link is the one exception inside a chart, where PowerPoint does not follow one: the label is shown as written. `**bold**`, `*italic*`, `***bold italic***`, `~~strikethrough~~`, `__underline__`, `` `code` ``, `^superscript^`, `~subscript~`, and `[links](https://example.com)`. The same grammar drives the Word tool, so text formats identically in both. A marker only formats when it hugs its text (`**bold**`, not `** bold **`), so prose like `5 * 3 * 2 = 30` is left alone. Escape a literal marker with `\*`, or wrap it in backticks.
+**Inline formatting** works in every text field — titles and subtitles, bullets, table cells, KPI figures and labels, timeline steps, captions, quotes and attributions, column headings, chart and axis titles, and the text of a blank slide's elements. A link is the one exception inside a chart, where PowerPoint does not follow one: the label is shown as written. `**bold**`, `*italic*`, `***bold italic***`, `~~strikethrough~~`, `__underline__`, `` `code` ``, `^superscript^`, `~subscript~`, and `[links](https://example.com)`. Only `http`, `https`, `mailto` and `tel` targets become links; any other — a `file:` or network path, a bare `example.com`, a custom protocol — keeps its label as plain text and is reported as `link_refused`. The same grammar drives the Word tool, so text formats identically in both. A marker only formats when it hugs its text (`**bold**`, not `** bold **`), so prose like `5 * 3 * 2 = 30` is left alone. Escape a literal marker with `\*`, or wrap it in backticks.
 
 **Tables** take raw values — numbers and `null` are fine, not just strings:
 
@@ -88,7 +88,7 @@ Three options shape the table beyond its text. `widths` are **relative** — `[3
 
 A width list that does not have one entry per column is reported in `warnings` and the columns stay equal; a fill or merge naming a cell the table does not have, or a merge overlapping another, is reported and skipped. The rest of the table is built either way.
 
-**Colours** accept 6-digit hex with or without `#`, or a theme name (`accent1`…`accent6`, `dark1`, `dark2`, `light1`, `light2`). Prefer a theme name so the deck follows your template's palette.
+**Colours** accept 6-digit hex with or without `#`, or a theme name (`accent1`…`accent6`, `dark1`, `dark2`, `light1`, `light2`). Prefer a theme name so the deck follows your template's palette. Numbers — chart values, scatter points, column widths, positions — must be finite: `NaN` and `Infinity` are rejected with the field's path rather than failing the build.
 
 **Images** take an https URL or an inline data URI, so an image you already hold can be placed without publishing it first:
 
@@ -119,7 +119,7 @@ Each warning is an object rather than a sentence, so you can act on it without r
 | `slide` | the index in the `slides` list you sent, counting from zero; absent when the warning is about the deck as a whole |
 | `message` | the sentence, unchanged |
 
-So `any(w["severity"] == "error" for w in warnings)` answers "did the deck lose anything", and `w["code"] == "text_overflow"` finds the slides worth splitting. Overflow is judged by measuring the text against a real font rather than counting characters, so a slide of narrow words and one of wide ones are told apart — worth acting on rather than treating as a hint.
+So `any(w["severity"] == "error" for w in warnings)` answers "did the deck lose anything", and `w["code"] == "text_overflow"` finds the slides worth splitting. Two deck-level codes concern the text you sent rather than any slide: `control_chars_removed` (`info` — characters a PowerPoint file cannot hold, such as a pasted vertical tab, were removed; vertical tabs and form feeds became line breaks) and `link_refused` (`warning` — a link whose scheme is not allowed was kept as plain text). Overflow is judged by measuring the text against a real font rather than counting characters, so a slide of narrow words and one of wide ones are told apart — worth acting on rather than treating as a hint.
 
 **Compatibility.** The previous key names (`slide_type`, `slide_title`, `slide_text`, `indentation_level`, `speaker_notes`, `table_data`, `alternate_rows`, `image_url`, `image_caption`, `quote_text`, `quote_author`, `left_column`, `right_column`, `chart_data`, `has_legend`, `legend_position`) are still accepted and mapped onto the current ones, with a note in the log. They will be removed in a future release.
 

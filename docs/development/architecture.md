@@ -299,7 +299,9 @@ several replicas, put the files on shared storage and restart the pods.
   including after redirects. `SSRF_ALLOW_PRIVATE_ADDRESSES=true` disables the
   check for trusted networks.
 - **Admin UI.** One shared password (`ADMIN_PASSWORD`, falling back to
-  `API_KEY`), CSRF tokens on forms, and a 10 MB cap on uploads.
+  `API_KEY`), CSRF tokens on forms, and a 10 MB cap on uploads. With no
+  password the gate is locked (`auth.make_before(locked=True)`) and the
+  session secret is random, never a constant.
 - **Multi-replica.** `STATELESS_HTTP=true` makes the transport stateless so
   requests can land on any replica; the default keeps sessions in-process.
 

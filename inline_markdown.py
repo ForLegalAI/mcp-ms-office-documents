@@ -11,7 +11,8 @@ The grammar lives here once. A renderer asks for the pattern with the spans
 it can actually draw (Word can highlight; PowerPoint cannot) and dispatches
 on the token shapes, which are identical for both. The token *shapes* are the
 contract: ``**…**``, ``*…*``, ``~~…~~``, ``__…__``, `````…`````,
-``^…^``, ``~…~``, ``==…==`` and ``[label](target)``.
+``^…^``, ``~…~``, ``==…==`` and ``[label](target)``. A link target is only
+made clickable when :func:`is_safe_link_target` allows its scheme.
 
 Flanking follows CommonMark: an opening marker must be followed, and a
 closing marker preceded, by something that is neither whitespace nor the
@@ -25,6 +26,8 @@ from __future__ import annotations
 
 import re
 import string
+from typing import List
+from urllib.parse import urlsplit
 
 # A backslash escapes only the ASCII punctuation markdown uses as markers. It
 # must not swallow the backslash before other characters: a literal "\n" is
@@ -36,6 +39,55 @@ ESCAPE_RE = re.compile(r"\\([" + re.escape(string.punctuation) + r"])")
 # the target takes no nesting and no whitespace. Anchored, because a renderer
 # applies it to a whole token the inline pattern has already isolated.
 LINK_RE = re.compile(r"^\[([^\]\n]+)\]\(([^)\s]+)\)$")
+
+# The schemes a link may point at. Anything else — file:, a UNC or drive path,
+# a custom protocol handler, javascript: — is written as an external
+# relationship that the reader's Office resolves on click, so a model steered
+# by injected content could plant a link that leaks credentials or launches a
+# local handler. A target with no scheme at all is refused too: Office
+# resolves it as a path relative to the document. A refused link keeps its
+# label as plain text. Shared, so Word and PowerPoint draw the same line.
+SAFE_LINK_SCHEMES = frozenset({"http", "https", "mailto", "tel"})
+
+# A link token anywhere in a string, for counting refusals before rendering.
+# "![alt](src)" counts too: the inline renderers have no image branch, so they
+# draw "!" and then a link. Only a caller that turns some of that shape into
+# an image block (Word, for a line that is nothing but the image) removes
+# those lines before scanning.
+_LINK_ANYWHERE_RE = re.compile(r"\[[^\]\n]+\]\(([^)\s]+)\)")
+_CODE_SPAN_RE = re.compile(r"`[^`]+`")
+
+
+def is_safe_link_target(target: str) -> bool:
+    """True when *target* may become a clickable hyperlink."""
+    try:
+        scheme = urlsplit(target).scheme.lower()
+    except ValueError:
+        return False
+    return scheme in SAFE_LINK_SCHEMES
+
+
+def refused_link_targets(text: str) -> List[str]:
+    """The link targets in *text* a renderer will draw as plain text.
+
+    A pre-scan for the warnings channel, so the renderers themselves need no
+    channel: they refuse through :func:`is_safe_link_target` and the builder
+    reports once. Code spans are skipped, since a link inside one is literal.
+    """
+    if "](" not in text:
+        return []
+    text = _CODE_SPAN_RE.sub("", text)
+    return [target for target in _LINK_ANYWHERE_RE.findall(text)
+            if not is_safe_link_target(target)]
+
+
+def refused_links_message(targets: List[str]) -> str:
+    """The warning both tools give for :func:`refused_link_targets`' result."""
+    shown = ", ".join(t if len(t) <= 60 else t[:57] + "..." for t in targets[:3])
+    more = f" and {len(targets) - 3} more" if len(targets) > 3 else ""
+    return (f"{len(targets)} link(s) kept as plain text, not made clickable: "
+            f"{shown}{more}. Only http, https, mailto and tel links are allowed.")
+
 
 # One nested italic unit, usable inside a bold span: flanked on both sides.
 _NESTED_ITALIC = r"\*[^\s*][^*]*?(?<=[^\s*])\*"
@@ -51,8 +103,17 @@ _LONE_STAR = r"\*(?!\*)"
 _BOLD_ITALIC = r"\*{3}(?=[^\s*])(?:[^*]|\*(?!\*{2}))+?(?<=[^\s*])\*{3}"
 # Bold, allowing a nested *italic* — including as the very last thing before
 # the closer, which a plain lookbehind would reject ("**a *b***").
+#
+# The body takes plain characters and lone stars only; the nested-italic unit
+# appears in the closer alone. A nested italic mid-span is still inside the
+# token — its two stars are lone stars to the body, and the renderer parses the
+# inner text again — so nothing is lost by leaving it out of the body. Keeping
+# it there made every "*x" readable two ways (lone star, or the opener of a
+# nested unit), so an unclosed span had exponentially many parses to reject:
+# a 67-character title held the GIL for 1.5 s, doubling every two characters.
+# With one reading per character the scan from each opener is linear.
 _BOLD = (
-    r"\*\*(?=[^\s*])(?:[^*]|" + _NESTED_ITALIC + r"|" + _LONE_STAR + r")*?"
+    r"\*\*(?=[^\s*])(?:[^*]|" + _LONE_STAR + r")*?"
     r"(?:[^\s*]|" + _NESTED_ITALIC + r")\*\*"
 )
 _STRIKE = r"~~(?=[^\s~]).+?(?<=[^\s~])~~"

@@ -5,6 +5,8 @@ import logging
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.opc.constants import RELATIONSHIP_TYPE
+
+from inline_markdown import is_safe_link_target
 from .patterns import (
     _INLINE_FORMAT_RE, _LINK_RE, _ESCAPE_RE, _BR_RE, normalize_newlines,
 )
@@ -34,8 +36,13 @@ _SAFE_HTML_ENTITIES = (
 )
 def add_hyperlink(paragraph, text, url, color="0000FF", underline=True):
     """Adds a hyperlink to a paragraph.
-    Falls back to plain text if hyperlink creation fails.
+    Falls back to plain text if hyperlink creation fails, and when *url*'s
+    scheme is not one :func:`inline_markdown.is_safe_link_target` allows —
+    the builder reports that from a pre-scan of the markdown.
     """
+    if not is_safe_link_target(url):
+        paragraph.add_run(text)
+        return
     try:
         part = paragraph.part
         r_id = part.relate_to(url, RELATIONSHIP_TYPE.HYPERLINK, is_external=True)

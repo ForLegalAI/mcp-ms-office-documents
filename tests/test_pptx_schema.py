@@ -415,6 +415,29 @@ class TestCharts:
         assert plot.has_data_labels
         assert plot.data_labels.number_format == "#,##0"
 
+    @pytest.mark.parametrize("chart_type", [
+        "bar", "bar_stacked", "column", "column_stacked", "line", "line_markers",
+        "pie", "doughnut", "area", "area_stacked", "radar",
+    ])
+    def test_labels_sit_outside_only_where_the_chart_type_allows(self, chart_type):
+        """Regression: "outEnd" was written on every chart type, relying on
+        python-pptx to raise where it is invalid. It never raises, so stacked,
+        line, doughnut, area and radar charts carried a label position
+        PowerPoint rejects with its repair prompt."""
+        pres = build([{
+            "type": "chart", "title": "C", "chart_type": chart_type,
+            "categories": ["a", "b"], "series": [{"name": "s", "values": [1, 2]}],
+            "data_labels": True,
+        }])
+        chart = [s.chart for s in reload_presentation(pres).slides[0].shapes if s.has_chart][0]
+        positions = [el.get("val") for el in chart._chartSpace.iter(qn("c:dLblPos"))]
+
+        assert chart.plots[0].has_data_labels
+        if chart_type in ("bar", "column", "pie"):
+            assert positions == ["outEnd"]
+        else:
+            assert positions == []
+
     def test_legend_none_hides_it(self):
         pres = build([{
             "type": "chart", "title": "C", "chart_type": "pie",

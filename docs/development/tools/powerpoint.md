@@ -55,6 +55,9 @@ slides (list of dicts, models, or strings)  +  format / template / author / foot
   ├─ LayoutResolver(presentation, spec.layouts)               layouts.py
   │    └─ classify_layout()      role per layout from placeholder types
   ├─ template defaults           footer_text, language, slide numbers, table/chart defaults
+  ├─ _scrub_caller_text()        XML-invalid characters out of every caller string
+  │                              (control_chars_removed); refused link schemes
+  │                              counted up front (link_refused)
   ├─ _remove_template_slides()   unless strip_slides: false
   ▼
   _build_slides(): one builder per slide type
@@ -75,9 +78,12 @@ save() → BytesIO; warnings list
 ```
 
 Unlike the Word and Excel tools, a failure inside one slide builder fails
-the whole deck: `_build_slides()` re-raises as `ValueError("Error creating
-slide N (type): …")`, which the handler turns into a `ToolError`. Recoverable
-problems go to the warnings list instead.
+the whole deck: `_build_slides()` re-raises a `ValueError` (the caller's
+input, found wanting) as `ValueError("Error creating slide N (type): …")`,
+which the handler reports as invalid input, and anything else as a
+`RuntimeError` chained to the original and logged with its traceback, which
+the handler reports as a server error. Recoverable problems go to the
+warnings list instead.
 
 ## Module map
 
@@ -566,6 +572,21 @@ Both are reported.
   image that fails becomes a placeholder box **and** a warning.
 - **A builder exception fails the deck.** This is intentional: a half-built
   deck with a success response is worse than an error naming the slide.
+  Raise `ValueError` only for input the caller can fix; any other exception
+  is treated as a server bug.
+- **Caller text is cleaned once, before any builder runs.**
+  `_scrub_caller_text()` walks the validated models with
+  `helpers.scrub_control_chars()`. The footer, the p14 section list and the
+  chart workbook are written without python-pptx's escaping, so a builder
+  must not assume a raw caller string is XML-safe unless it came through
+  there.
+- **A theme colour name is not a DrawingML value.** The schema says
+  `dark1`, DrawingML says `dk1`: anything that writes `<a:schemeClr>` goes
+  through `helpers.scheme_color_val()`.
+- **Chart label positions are type-specific.** python-pptx writes any
+  `dLblPos` without complaint, and PowerPoint repairs the file when the
+  chart type does not allow it; `configure_data_labels()` only sets
+  outside-end on `bar`, `column` and `pie`.
 - **Never measure text against a hardcoded point size.** Ask
   `read_body_font_size()` what the template actually renders at; the estimate
   is wrong by the *square* of any error, and it is the same number the
@@ -598,6 +619,10 @@ Both are reported.
 | `tests/test_pptx_warnings.py` | Warning records: codes, severities, the deck-wide case, and the tool boundary |
 | `tests/test_pptx_bullet_glyphs.py` | Bullets in a text box: the master's glyphs and indents, and the order of `<a:pPr>` |
 | `tests/test_pptx_table_formatting.py` | Column widths, cell and row fills, merged blocks, and what happens when they do not fit the table |
+| `tests/test_pptx_control_chars.py` | XML-invalid characters in caller text: removed once, reported once, no field crashes the deck |
+| `tests/test_pptx_non_finite_numbers.py` | NaN and Infinity refused at validation with the field's path |
+| `tests/test_pptx_internal_errors.py` | A builder bug surfaces as a server error with its traceback, not as invalid input |
+| `tests/test_link_schemes.py` | The link-scheme allow-list, in both the Word and the PowerPoint renderer |
 | `tests/test_pptx_text_metrics.py` | Measured line counts, wrapping, face selection, the arithmetic fallback, and that the image's font packages exist and match the table |
 | `tests/test_pptx_theme_colors.py` | Drawn text, chart text and table fills taking the template's colours rather than literals |
 | `tests/test_pptx_unused_placeholders.py` | That no generated slide keeps an empty "Click to add text" box, and that filled ones survive |

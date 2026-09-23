@@ -34,6 +34,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import secrets
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -474,15 +475,20 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
     metrics.install_log_capture(level=config.logging.level_no)
 
     # Stable session secret derived from the password so cookies survive
-    # restarts; falls back to a constant when no password is configured (the
-    # login can't succeed in that case anyway).
-    secret = hashlib.sha256(f"mcp-office-admin:{expected_pw or ''}".encode()).hexdigest()
+    # restarts. With no password there is no login to survive, and a secret
+    # derived from nothing would be a constant anyone can read in this file —
+    # enough to sign a session cookie by hand. So it is random per process,
+    # and the gate is locked besides (`auth.make_before(locked=True)`).
+    if expected_pw:
+        secret = hashlib.sha256(f"mcp-office-admin:{expected_pw}".encode()).hexdigest()
+    else:
+        secret = secrets.token_hex(32)
 
     # Self-contained headers (no CDN): meta + theme CSS + the row JS, with the
     # blank-row HTML injected so "Add argument" can clone it client-side.
     hdrs = head_tags(json.dumps(to_xml(views.arg_row())))
 
-    app = FastHTML(secret_key=secret, before=auth.make_before(login_path),
+    app = FastHTML(secret_key=secret, before=auth.make_before(login_path, locked=not expected_pw),
                    default_hdrs=False, htmx=False, surreal=False, hdrs=hdrs,
                    htmlkw={"lang": "en"})
     rt = app.route

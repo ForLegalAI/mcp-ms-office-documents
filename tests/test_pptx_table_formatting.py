@@ -88,6 +88,21 @@ class TestCellFills:
 
         assert table.cell(1, 0).fill.fore_color.theme_color == MSO_THEME_COLOR.ACCENT_2
 
+    @pytest.mark.parametrize("name, member", [
+        ("accent1", MSO_THEME_COLOR.ACCENT_1), ("accent6", MSO_THEME_COLOR.ACCENT_6),
+        ("dark1", MSO_THEME_COLOR.DARK_1), ("dark2", MSO_THEME_COLOR.DARK_2),
+        ("light1", MSO_THEME_COLOR.LIGHT_1), ("light2", MSO_THEME_COLOR.LIGHT_2),
+    ])
+    def test_every_theme_name_writes_a_valid_scheme_colour(self, name, member):
+        """Regression: "dark1" and friends went into <a:schemeClr val=…> as
+        spelled, but DrawingML only knows "dk1"/"lt1"/"dk2"/"lt2". The file
+        could not be read back and PowerPoint offered to repair it. Reading
+        the colour back is what failed, so that is the assertion."""
+        _, table = build(header_color=name, fills=[{"row": 1, "color": name}])
+
+        assert table.cell(0, 0).fill.fore_color.theme_color == member
+        assert table.cell(1, 0).fill.fore_color.theme_color == member
+
     def test_an_explicit_fill_beats_zebra_and_the_header(self):
         _, table = build(zebra=True, header_color="accent1",
                          fills=[{"row": 0, "col": 0, "color": "FFFF00"},
@@ -133,6 +148,27 @@ class TestMergedCells:
         assert W.TABLE_MERGE_IGNORED in codes(pres)
         assert table.cell(0, 1).is_spanned
         assert not table.cell(0, 2).is_spanned
+
+    def test_a_huge_block_is_rejected_before_it_is_expanded(self):
+        """Regression: spans have no upper bound, and every cell of a block
+        went into a set before the bounds check, so one merge on a 2x2 table
+        could allocate millions of cells. The bounds check now runs first."""
+        import time
+
+        start = time.perf_counter()
+        pres, table = build(merges=[{"row": 0, "col": 0,
+                                     "row_span": 100_000, "col_span": 100_000}])
+
+        assert time.perf_counter() - start < 5.0
+        assert W.TABLE_MERGE_IGNORED in codes(pres)
+        assert not table.cell(0, 1).is_spanned
+
+    def test_blocks_that_only_touch_both_apply(self):
+        pres, table = build(merges=[{"row": 1, "col": 0, "row_span": 2},
+                                    {"row": 1, "col": 1, "col_span": 2}])
+
+        assert W.TABLE_MERGE_IGNORED not in codes(pres)
+        assert table.cell(2, 0).is_spanned and table.cell(1, 2).is_spanned
 
     def test_a_block_running_past_the_edge_is_reported_and_skipped(self):
         pres, table = build(merges=[{"row": 0, "col": 2, "col_span": 2}])

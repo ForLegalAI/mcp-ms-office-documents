@@ -309,6 +309,7 @@ configuration and has no line to give.
 | `style_missing` | warning | The template has no such style; the fallback was used |
 | `style_fallback_missing` | warning | The fallback style is missing too |
 | `widths_invalid` | warning | A `<!-- widths -->` directive is not a list of numbers; it was ignored |
+| `link_refused` | warning | A link target's scheme is not `http`, `https`, `mailto` or `tel`; `add_hyperlink()` kept the label as text. Reported from a pre-scan in `_markdown_to_word_buffer()`, since the inline renderer has no channel; `_inline_text()` leaves out whole-line images and fenced code, which make no link |
 
 Two properties of the channel matter here. It **de-duplicates** identical
 `(code, message, location)` entries, so a template without `List Number` warns

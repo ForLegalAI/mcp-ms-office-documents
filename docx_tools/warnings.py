@@ -34,6 +34,7 @@ TABLE_SEPARATOR_MISSING = "table_separator_missing"
 STYLE_MISSING = "style_missing"
 STYLE_FALLBACK_MISSING = "style_fallback_missing"
 WIDTHS_INVALID = "widths_invalid"
+LINK_REFUSED = "link_refused"
 
 #: One severity per code, in one place.
 WARNING_SEVERITY: dict[str, str] = {
@@ -47,6 +48,7 @@ WARNING_SEVERITY: dict[str, str] = {
     STYLE_MISSING: SEVERITY_WARNING,
     STYLE_FALLBACK_MISSING: SEVERITY_WARNING,
     WIDTHS_INVALID: SEVERITY_WARNING,
+    LINK_REFUSED: SEVERITY_WARNING,
 }
 
 

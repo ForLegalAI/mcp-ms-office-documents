@@ -71,6 +71,9 @@ backend → URL string or LibreChat artifact dict. Details:
   `docs/configuration.md`; `tests/test_config_docs.py` enforces it.
 - Templates: resolve through `template_utils`; never hard-code a path.
 - Images: `image_utils.load_image()`; never `requests` directly.
+- Links: a renderer makes a hyperlink only when
+  `inline_markdown.is_safe_link_target()` allows it, and the build reports a
+  refusal from `refused_link_targets()`.
 - Logging: `logging.getLogger(__name__)`. Level comes from `DEBUG` only.
 
 **Errors**
