@@ -20,7 +20,9 @@ caller, which is fine on localhost and nowhere else.
 **Admin UI.** Opt-in, gated by `ADMIN_PASSWORD` (falling back to `API_KEY`),
 CSRF-protected, with a 10 MB upload cap. It writes files into
 `custom_templates/` and `config/`, so anyone with the password can change
-what the tools produce.
+what the tools produce. Enabled with neither variable set, it is locked: no
+login can succeed, the gate trusts no session cookie, and the cookie-signing
+secret is random per process rather than derived from an empty password.
 
 **Image fetching.** The Word and PowerPoint tools download images from
 caller-supplied URLs. Every hostname is resolved and rejected unless
@@ -42,6 +44,13 @@ LibreChat-mode server without one.
 **Generated files.** Cloud backends return time-limited signed URLs
 (`SIGNED_URL_EXPIRES_IN`). Filenames supplied by the caller are sanitised to
 word characters, hyphens, dots and underscores before use as object names.
+
+**Links in documents.** Markdown links in Word documents and slides become
+clickable only for `http`, `https`, `mailto` and `tel` targets. Anything
+else — `file:` and UNC or drive paths, custom protocol handlers, schemeless
+targets Office would resolve as a path — is kept as its label and reported
+as `link_refused`, so injected content cannot plant a link that launches a
+local handler or leaks credentials when a reader clicks it.
 
 **Not sanitised.** The HTML body of an email draft is inserted verbatim into
 the `.eml`. Markdown and slide text are rendered as document content, not

@@ -46,7 +46,7 @@ The Word and Excel tools accept Markdown documents; the PowerPoint tool takes st
 | `==highlight==` | Yellow highlight |
 | `` `code` `` | Monospace (Courier New) |
 | `^super^` · `~sub~` | Superscript (`x^2^`) / subscript (`H~2~O`) |
-| `[text](url)` | Hyperlink |
+| `[text](url)` | Hyperlink — `http`, `https`, `mailto` and `tel` only; any other target keeps its text and is reported as `link_refused` |
 | `\*` `\**` `` \` `` `\.` | Escaped literals (render the marker as text — e.g. `1\.` keeps a day-1 date from becoming a list) |
 
 Nesting and combinations work, e.g. `**bold with *italic* inside**`, `**~~bold strikethrough~~**`.
@@ -114,7 +114,7 @@ Each warning is an object rather than a sentence, so you can act on it without r
 | `line` | the line of `markdown_content` to look at, counting from 1; absent when the problem has no single line (a style name that came from configuration) |
 | `message` | the sentence, naming what to change |
 
-The codes are `block_failed`, `table_failed`, `table_cell_failed`, `image_failed`, `table_not_recognised` (pipe markup that is not a table at all, written as ordinary text instead), `table_separator_missing` (a table with no `|---|---|` row directly under its first row — that row was used as the header), `style_missing`, `style_fallback_missing` and `widths_invalid`. So `any(w["severity"] == "error" for w in warnings)` answers "did the document lose anything". A document with nothing to report comes back exactly as before — the bare link, no `warnings` key.
+The codes are `block_failed`, `table_failed`, `table_cell_failed`, `image_failed`, `table_not_recognised` (pipe markup that is not a table at all, written as ordinary text instead), `table_separator_missing` (a table with no `|---|---|` row directly under its first row — that row was used as the header), `style_missing`, `style_fallback_missing`, `widths_invalid` and `link_refused` (a link whose scheme is not `http`, `https`, `mailto` or `tel`, kept as plain text). So `any(w["severity"] == "error" for w in warnings)` answers "did the document lose anything". A document with nothing to report comes back exactly as before — the bare link, no `warnings` key.
 
 ## Excel
 

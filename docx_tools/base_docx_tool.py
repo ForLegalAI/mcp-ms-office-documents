@@ -14,11 +14,13 @@ from typing import List, Tuple
 
 from docx import Document
 
+from inline_markdown import refused_link_targets, refused_links_message
 from upload_tools import upload_file
 from warning_channel import DocumentWarning
 from .document_features import load_templates, set_header_footer, add_toc
 from .markdown_processor import process_markdown_content
 from .style_map import load_global_style_map
+from . import warnings as W
 from .warnings import channel as warning_channel
 
 logger = logging.getLogger(__name__)
@@ -115,6 +117,11 @@ def _markdown_to_word_buffer(markdown_content, title=None, author=None, subject=
         style_map=style_map,
         warnings=warnings,
     )
+    # The renderer refuses an unsafe link scheme without a channel of its own
+    # (add_hyperlink keeps the label as text); the caller hears it here.
+    refused = refused_link_targets(markdown_content or "")
+    if refused:
+        warnings.add(W.LINK_REFUSED, refused_links_message(refused))
 
     try:
         logger.info("Saving Word document to memory buffer")

@@ -260,3 +260,25 @@ class TestToolBoundary:
         result, _ = await self.call(monkeypatch, slides=[{"type": "bullets", "title": "x"}])
         assert result.is_error
         assert "Valid slide types" in result.content[0].text
+
+
+class TestHeadingParseIsLinear:
+    """Regression: the heading pattern "(.*?)\\s*#*$" retried its lazy group
+    at every character of a blank run — 20k characters took 4 s, on the event
+    loop, inside the argument validator. The closing hashes are now stripped
+    in code; the result must be the same."""
+
+    @pytest.mark.parametrize("text, title", [
+        ("## Title ##", "Title"), ("# C#", "C"), ("# a # #", "a #"),
+        ("###  spaced  ", "spaced"), ("####### seven", "####### seven"),
+    ])
+    def test_titles_are_unchanged(self, text, title):
+        assert slide_from_text(text + "\n- a")["title"] == title
+
+    def test_a_long_blank_run_is_cheap(self):
+        import time
+
+        start = time.perf_counter()
+        slide = slide_from_text("# a" + " " * 50_000 + "b\n- x")
+        assert time.perf_counter() - start < 0.5
+        assert slide["title"].startswith("a") and slide["title"].endswith("b")

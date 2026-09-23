@@ -180,3 +180,24 @@ class TestIntegration:
     def test_blank_lands_on_the_blank_layout(self):
         _, slide = build([{"kind": "text", "text": "x", "x": 0, "y": 0, "w": 1}])
         assert slide.slide_layout.name == "Prázdný"
+
+
+class TestPositionParseIsLinear:
+    """Regression: "^\\s*(\\d+…)\\s*(%|in)?\\s*$" could split a long blank run
+    between its two optional whitespace groups every way there is; 20k
+    characters took 1.6 s to reject. The string is stripped and fullmatched."""
+
+    @pytest.mark.parametrize("value", ["40%", " 1.5in ", "2", "40 %", "1.5 in"])
+    def test_valid_positions_still_pass(self, value):
+        coerce_slides([{"type": "blank", "elements": [
+            {"kind": "text", "text": "x", "x": value, "y": 1, "w": 2, "h": 1}]}])
+
+    def test_a_long_padded_invalid_position_is_rejected_quickly(self):
+        import time
+
+        start = time.perf_counter()
+        with pytest.raises(ValueError):
+            coerce_slides([{"type": "blank", "elements": [
+                {"kind": "text", "text": "x", "x": "1" + " " * 50_000 + "x",
+                 "y": 1, "w": 2, "h": 1}]}])
+        assert time.perf_counter() - start < 0.5

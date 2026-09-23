@@ -21,7 +21,7 @@ contain, [`dynamic-templates.md`](dynamic-templates.md).
 | `admin/store.py` | persistence: `config/<kind>_templates.d/<name>.yaml` + the asset |
 | `admin/analysis.py` | what is inside an uploaded `.docx` / `.html` / `.pptx` |
 | `admin/preview.py` | rendering a template without touching the upload backend |
-| `admin/auth.py` | the shared-password gate and CSRF tokens |
+| `admin/auth.py` | the shared-password gate (locked outright when no password is configured) and CSRF tokens |
 
 ### Sections, tabs and panels
 

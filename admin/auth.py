@@ -7,7 +7,8 @@ that, ``API_KEY``). Comparison is constant-time.
 
 The gate is a FastHTML ``before`` callable: it lets the login route through and
 redirects everything else to the login page until the session is marked
-authenticated. Nothing else is public.
+authenticated. Nothing else is public. With no password configured the gate
+is locked: it ignores the session and admits nobody.
 """
 from __future__ import annotations
 
@@ -48,10 +49,16 @@ def valid_csrf(sess, supplied: Optional[str]) -> bool:
     return hmac.compare_digest(str(token), str(supplied))
 
 
-def make_before(login_path: str):
+def make_before(login_path: str, *, locked: bool = False):
     """Return a FastHTML ``before`` callable gating everything but login/static.
 
     *login_path* is the absolute (mount-prefixed) login URL, e.g. ``/admin/login``.
+
+    *locked* is for a UI with no password configured: nobody can have logged
+    in, so the gate trusts no session at all and sends every request to the
+    login page. The session secret is random in that case too, but the gate
+    does not rely on it — a cookie is never proof of a login that cannot
+    happen.
     """
     allowed = {login_path, login_path + "/"}
 
@@ -64,7 +71,7 @@ def make_before(login_path: str):
         # (#159). If static files are added, exempt their mount prefix here.
         if path in allowed:
             return None
-        if sess.get(SESSION_KEY):
+        if not locked and sess.get(SESSION_KEY):
             ensure_csrf(sess)  # make a token available to rendered forms
             return None
         return RedirectResponse(login_path, status_code=303)

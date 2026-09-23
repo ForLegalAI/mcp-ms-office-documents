@@ -24,6 +24,8 @@ from pptx.util import Inches, Pt
 from pptx.oxml.ns import qn
 from pptx.oxml import parse_xml
 
+from inline_markdown import refused_link_targets, refused_links_message
+
 from .constants import (
     MARGIN_LEFT, TABLE_ALT_ROW_FILL,
     DEFAULT_BODY_FONT_SIZE, DEFAULT_SUBTITLE_FONT_SIZE,
@@ -36,7 +38,8 @@ from .constants import (
 )
 from .helpers import (
     SlideHelpers,
-    apply_autofit, body_to_bullets, estimate_text_fill, parse_table_data,
+    apply_autofit, body_to_bullets, clean_control_chars, estimate_text_fill,
+    caller_strings, parse_table_data, scrub_control_chars,
     resolve_fill, set_runs_language, table_overflows,
 )
 from .inline_formatting import write_text
@@ -57,6 +60,12 @@ from .warnings import SlideWarning, make_warning
 from .templates import TemplateSpec, open_template, select_template
 
 logger = logging.getLogger(__name__)
+
+
+def _blocks_overlap(a, b) -> bool:
+    """True when two ``(row, col, row_span, col_span)`` blocks share a cell."""
+    return (a[0] < b[0] + b[2] and b[0] < a[0] + a[2]
+            and a[1] < b[1] + b[3] and b[1] < a[1] + a[3])
 
 
 class PowerpointPresentation(SlideHelpers):
@@ -129,6 +138,7 @@ class PowerpointPresentation(SlideHelpers):
         self._language = language if language is not None else defaults.get("language")
         self._table_defaults = defaults.get("table") or {}
         self._chart_defaults = defaults.get("chart") or {}
+        author = self._scrub_caller_text(author)
 
         self._remove_template_slides()
         self._build_slides(self.slides)
@@ -148,6 +158,35 @@ class PowerpointPresentation(SlideHelpers):
     def _warn(self, slide_index: int, code: str, message: str) -> None:
         """Record a caller-visible warning about one slide."""
         self._record(make_warning(code, message, slide=slide_index))
+
+    def _scrub_caller_text(self, author: Optional[str]) -> Optional[str]:
+        """Remove XML-invalid characters from everything the caller wrote, and
+        report links whose scheme the renderer will refuse.
+
+        Runs once over the validated slides, the footer and the author, so no
+        builder has to remember it. Returns the cleaned *author*; the slides
+        and ``self._footer_text`` are cleaned in place.
+        """
+        _, removed = scrub_control_chars(self.slides)
+        if self._footer_text:
+            self._footer_text, n = clean_control_chars(str(self._footer_text))
+            removed += n
+        if author:
+            author, n = clean_control_chars(author)
+            removed += n
+        if removed:
+            self._warn_deck(
+                W.CONTROL_CHARS_REMOVED,
+                f"{removed} control character(s) a PowerPoint file cannot hold were "
+                "removed from the text; vertical tabs and form feeds became line breaks.",
+            )
+        # write_text() refuses an unsafe link scheme without a channel of its
+        # own (it keeps the label as text); the caller hears it here, once.
+        refused = [target for text in caller_strings(self.slides)
+                   for target in refused_link_targets(text)]
+        if refused:
+            self._warn_deck(W.LINK_REFUSED, refused_links_message(refused))
+        return author
 
     def _warn_deck(self, code: str, message: str) -> None:
         """Record a warning about the deck rather than any one slide."""
@@ -514,9 +553,16 @@ class PowerpointPresentation(SlideHelpers):
             try:
                 logger.debug("Building slide %d: type=%s", i, slide.type)
                 builder(slide, i)
-            except Exception as e:
+            except ValueError as e:
+                # The caller's input, found wanting while building: the handler
+                # reports it as invalid input the caller can fix.
                 logger.error("Failed to create slide %d: %s", i, e)
-                raise ValueError(f"Error creating slide {i} ({slide.type}): {e}")
+                raise ValueError(f"Error creating slide {i} ({slide.type}): {e}") from e
+            except Exception as e:
+                # Anything else is this server's bug, not the caller's: wrapping
+                # it as ValueError blamed the caller for it and lost the stack.
+                logger.exception("Internal error creating slide %d (%s)", i, slide.type)
+                raise RuntimeError(f"Error creating slide {i} ({slide.type}): {e}") from e
 
     # -------------------------------------------------------------------------
     # Slide Builders
@@ -676,20 +722,18 @@ class PowerpointPresentation(SlideHelpers):
         if not merges:
             return None
 
-        claimed = set()
         applied, skipped = [], []
         for merge in merges:
-            cells = {
-                (row, col)
-                for row in range(merge.row, merge.row + merge.row_span)
-                for col in range(merge.col, merge.col + merge.col_span)
-            }
+            block = (merge.row, merge.col, merge.row_span, merge.col_span)
+            # Bounds first, and overlap by rectangle: the spans are the
+            # caller's numbers, and expanding a block into its cells before
+            # checking them let one 1000x1000 merge on a 2x2 table allocate a
+            # million-cell set.
             outside = merge.row + merge.row_span > num_rows or merge.col + merge.col_span > num_cols
-            if outside or cells & claimed:
+            if outside or any(_blocks_overlap(block, other) for other in applied):
                 skipped.append(merge)
                 continue
-            claimed |= cells
-            applied.append((merge.row, merge.col, merge.row_span, merge.col_span))
+            applied.append(block)
 
         if skipped:
             self._warn(
@@ -923,7 +967,8 @@ class PowerpointPresentation(SlideHelpers):
                 self._setting(slide_data, "data_labels", self._chart_defaults, "data_labels", False),
                 "chart data_labels", index, fallback=False,
             )
-            configure_data_labels(chart, data_labels, slide_data.number_format)
+            configure_data_labels(chart, data_labels, slide_data.number_format,
+                                  chart_type=slide_data.chart_type)
             set_axis_titles(chart, slide_data.x_title, slide_data.y_title)
             self._paint_chart(chart)
         except ChartDataError as e:

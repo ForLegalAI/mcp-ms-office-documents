@@ -270,7 +270,7 @@ async def create_word_document(
         "- `code` (Courier New font)\n"
         "- ^superscript^ (e.g. x^2^), ~subscript~ (e.g. H~2~O)\n"
         "- ==highlighted text== (yellow background)\n"
-        "- [link text](https://url)\n"
+        "- [link text](https://url) — http, https, mailto and tel only; any other target stays plain text\n"
         "- Nesting: **bold with *italic* inside**, *italic with **bold** inside*\n"
         "- Combinations: **~~bold strikethrough~~**, **__bold underline__**, *~~italic strikethrough~~*\n"
         "- Escaped literals: \\* \\** \\` \\. to render *, **, ` and a line-leading number's dot without formatting\n"
@@ -407,7 +407,8 @@ async def create_powerpoint_presentation(
             "typed slide whenever one fits.\n"
             "\n"
             "LINKS: [label](https://url) works in any text field except inside a chart, where "
-            "PowerPoint does not follow one: there the label is shown as written.\n"
+            "PowerPoint does not follow one: there the label is shown as written. Only http, https, "
+            "mailto and tel targets become links; any other is kept as its label and reported.\n"
             "\n"
             "Text that overflows its slide is shrunk to fit and reported in the result's 'warnings'; "
             "split the content across slides rather than relying on that. Each warning is an object "
@@ -662,7 +663,8 @@ if __name__ == "__main__":
         if not config.admin_password_effective:
             logger.warning(
                 "[admin] ADMIN_ENABLED is set but neither ADMIN_PASSWORD nor API_KEY "
-                "is configured — the admin UI will reject all logins."
+                "is configured — the admin UI is locked: no login can succeed and "
+                "every page redirects to the login form."
             )
         logger.info("[admin] Template-admin UI enabled at %s (port 8958)", config.admin.path)
         uvicorn.run(

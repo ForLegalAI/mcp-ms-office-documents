@@ -205,12 +205,26 @@ def _configure_title(chart, title: Optional[str]) -> None:
         chart.has_title = False
 
 
-def configure_data_labels(chart, enabled: bool, number_format: Optional[str] = None) -> None:
+# Chart types whose data labels PowerPoint accepts at the outside end. Every
+# other type either has no such position (stacked bars and columns stop at
+# the inside end, lines take top/bottom/left/right) or takes no position at
+# all (doughnut, area, radar); an "outEnd" there is a schema violation that
+# PowerPoint answers with its repair prompt. python-pptx writes whatever it is
+# given and never raises, so the list is the only guard.
+_OUTSIDE_END_LABEL_TYPES = frozenset({"bar", "column", "pie"})
+
+
+def configure_data_labels(chart, enabled: bool, number_format: Optional[str] = None,
+                          chart_type: Optional[str] = None) -> None:
     """Turn value labels on each point on or off.
 
     A number format without labels is still applied to the value axis, so
     "#,##0" or "0.0%" formats the tick labels even when the caller did not ask
     for per-point labels.
+
+    Labels sit at the outside end only on the chart types that allow it
+    (*chart_type* is the schema's name, e.g. ``"bar"``); everywhere else they
+    keep the chart type's default position.
     """
     plot = chart.plots[0]
     plot.has_data_labels = bool(enabled)
@@ -220,12 +234,8 @@ def configure_data_labels(chart, enabled: bool, number_format: Optional[str] = N
         if number_format:
             labels.number_format = number_format
             labels.number_format_is_linked = False
-        try:
+        if chart_type in _OUTSIDE_END_LABEL_TYPES:
             labels.position = XL_LABEL_POSITION.OUTSIDE_END
-        except (ValueError, NotImplementedError):
-            # Not valid for every chart type (pie/doughnut/stacked); the
-            # default position is fine there.
-            pass
     elif number_format:
         try:
             chart.value_axis.tick_labels.number_format = number_format

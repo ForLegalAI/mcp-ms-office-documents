@@ -15,7 +15,7 @@ span before any emphasis branch sees it.
 import logging
 from typing import Optional
 
-from inline_markdown import ESCAPE_RE, LINK_RE, build_inline_pattern
+from inline_markdown import ESCAPE_RE, LINK_RE, build_inline_pattern, is_safe_link_target
 
 logger = logging.getLogger(__name__)
 
@@ -255,9 +255,12 @@ def _parse_segment(text: str, paragraph, font_size=None, bold=False, italic=Fals
             first_new = len(paragraph.runs)
             _parse_segment(label, paragraph, font_size=font_size, hyperlinks=hyperlinks,
                            bold=bold, italic=italic, escape_ctx=escape_ctx)
-            if hyperlinks:
+            address = _restore_escapes(target, escape_ctx)
+            # A refused scheme keeps its label as plain text; the builder
+            # reports it once from a pre-scan (refused_link_targets).
+            if hyperlinks and is_safe_link_target(address):
                 for run in paragraph.runs[first_new:]:
-                    run.hyperlink.address = _restore_escapes(target, escape_ctx)
+                    run.hyperlink.address = address
 
         else:
             # Plain text

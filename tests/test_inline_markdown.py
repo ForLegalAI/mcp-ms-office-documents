@@ -113,6 +113,32 @@ class TestNesting:
         FULL.findall(hostile)
         assert time.perf_counter() - start < 1.0
 
+    @pytest.mark.parametrize("pattern", [FULL, PPTX], ids=["docx", "pptx"])
+    def test_unclosed_bold_with_stars_between_letters_is_linear(self, pattern):
+        """Regression: the spaced input above never reached the ambiguity.
+        With no space after each '*', every star could be a lone star or the
+        opener of a nested italic, and an unclosed span was exponential — 67
+        characters took 1.5 s and each two more multiplied it by ~2.6, all
+        under the GIL. Checks an absolute budget at a length the old grammar
+        could not finish, and near-linear growth."""
+        import time
+
+        def cost(n):
+            text = "**a" + "*b" * n
+            start = time.perf_counter()
+            pattern.split(text)
+            return time.perf_counter() - start
+
+        assert cost(5000) < 0.5
+        small, large = cost(2000), cost(8000)
+        assert large < max(small, 0.005) * 16
+
+    def test_nested_italic_mid_bold_still_one_token(self):
+        """The body no longer tries the nested-italic unit; the span must
+        still be a single bold token with the italic left for the renderer."""
+        assert tokens(FULL, "x **a *b* c** y") == ["x ", "**a *b* c**", " y"]
+        assert tokens(FULL, "**a *b* c *d***") == ["**a *b* c *d***"]
+
 
 class TestEscapes:
 

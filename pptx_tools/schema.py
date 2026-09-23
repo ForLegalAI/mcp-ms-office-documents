@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from functools import lru_cache
 from typing import Annotated, Any, Dict, List, Literal, Optional, Tuple, Union
@@ -39,6 +40,7 @@ from pydantic import (
     BeforeValidator,
     ConfigDict,
     Field,
+    FiniteFloat,
     TypeAdapter,
     ValidationError,
     WithJsonSchema,
@@ -156,7 +158,10 @@ class Series(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(description="Series name, shown in the legend.")
-    values: List[Optional[float]] = Field(
+    # Finite only: NaN and Infinity are valid JSON to pydantic but not to the
+    # chart workbook, which failed mid-build and lost the deck with an error
+    # naming no field. Rejected here, the message names the value's path.
+    values: List[Optional[FiniteFloat]] = Field(
         description="One number per category. Use null for a gap."
     )
 
@@ -167,7 +172,7 @@ class XySeries(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(description="Series name, shown in the legend.")
-    points: List[List[float]] = Field(
+    points: List[List[FiniteFloat]] = Field(
         description="List of [x, y] pairs, e.g. [[1, 4.5], [2, 6.1]]."
     )
 
@@ -255,7 +260,7 @@ class TableSlide(SlideBase):
         default=None, ge=TABLE_FONT_SIZE_RANGE[0], le=TABLE_FONT_SIZE_RANGE[1],
         description="Cell font size in points.",
     )
-    widths: Optional[List[Annotated[float, Field(gt=0)]]] = Field(
+    widths: Optional[List[Annotated[FiniteFloat, Field(gt=0)]]] = Field(
         default=None,
         description="Relative column widths, one per column: [3, 1, 1] gives the "
                     "first column three times the space of the others. Columns are "
@@ -356,7 +361,11 @@ class ClosingSlide(SlideBase):
 # Blank slide with positioned elements — the escape hatch
 # ---------------------------------------------------------------------------
 
-_POSITION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(%|in)?\s*$")
+# Matched with fullmatch() on the stripped string. The old form wrapped the
+# number in "^\s*…\s*(%|in)?\s*$", and the two optional whitespace runs
+# around an optional unit could split a long blank run every way there is:
+# 20k characters of padding took 1.6 s to reject.
+_POSITION_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(%|in)?")
 
 
 def _validate_position(value: Any) -> Any:
@@ -368,10 +377,12 @@ def _validate_position(value: Any) -> Any:
     if isinstance(value, bool):
         raise ValueError("position must be a number or a string, not a boolean")
     if isinstance(value, (int, float)):
+        if not math.isfinite(value):
+            raise ValueError("position must be a finite number")
         if value < 0:
             raise ValueError("position must not be negative")
         return float(value)
-    if isinstance(value, str) and _POSITION_RE.match(value):
+    if isinstance(value, str) and _POSITION_RE.fullmatch(value.strip()):
         return value.strip()
     raise ValueError(
         f"position {value!r} must be inches (2, 1.5, '1.5in') or a percentage ('40%')"
@@ -605,7 +616,13 @@ def migrate_legacy_slide(slide: Any, seen: Optional[set] = None) -> Any:
 # else is markdown for one slide. The published schema still asks for objects —
 # this is a fallback, not a documented second spelling.
 
-_MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*#*$")
+# The optional closing hashes ("## Title ##") are stripped in code, not by the
+# pattern: "(.*?)\s*#*$" retried the lazy group at every character of a long
+# blank run, which is quadratic — 20k characters took 4 s, and this runs on
+# the event loop, inside the argument validator. Removing the trailing "#" run
+# and then the whitespace before it yields exactly the shortest prefix the lazy
+# group found.
+_MD_HEADING_RE = re.compile(r"(#{1,6})\s+(.*)")
 _MD_BULLET_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
 
 
@@ -628,9 +645,9 @@ def slide_from_text(text: str) -> Dict[str, Any]:
         return {"type": "content", "body": "\n".join(lines[first_index:]).strip("\n")}
 
     first, rest = lines[first_index].strip(), lines[first_index + 1:]
-    heading = _MD_HEADING_RE.match(first)
+    heading = _MD_HEADING_RE.fullmatch(first)
     level = len(heading.group(1)) if heading else None
-    title = heading.group(2).strip() if heading else first
+    title = heading.group(2).rstrip("#").strip() if heading else first
 
     body = "\n".join(rest).strip("\n")
     if level == 1 and not any(_MD_BULLET_RE.match(line) for line in rest):

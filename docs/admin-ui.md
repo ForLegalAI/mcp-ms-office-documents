@@ -21,7 +21,9 @@ as the MCP endpoint:
 http://localhost:8958/admin
 ```
 
-**3.** Log in with your `ADMIN_PASSWORD`.
+**3.** Log in with your `ADMIN_PASSWORD`. If neither `ADMIN_PASSWORD` nor `API_KEY` is
+set, the UI is locked: every page redirects to the login form and no password
+opens it, so set one before enabling the UI.
 
 ## How it is organised
 

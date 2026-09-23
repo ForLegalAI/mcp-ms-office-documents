@@ -113,6 +113,18 @@ only ASCII punctuation so `C:\new` survives. The module docstring records
 the drift that motivated unifying the two copies. Change the grammar here
 and nowhere else; `tests/test_inline_markdown.py` covers it.
 
+Every branch must have one reading per character. The bold span's body once
+allowed both a lone `*` and a nested-italic unit starting with `*`, so an
+unclosed span had exponentially many parses to reject (1.5 s for a
+67-character title, under the GIL); the nested unit now sits only in the
+closer. `test_unclosed_bold_with_stars_between_letters_is_linear` guards it.
+
+The module also owns the link-scheme rule: `is_safe_link_target()` allows
+`http`, `https`, `mailto` and `tel` (`SAFE_LINK_SCHEMES`), and both renderers
+keep any other link as its label. They have no warnings channel of their own,
+so each build pre-scans its caller text with `refused_link_targets()` and
+reports `link_refused` once, worded by `refused_links_message()`.
+
 ## `image_utils.py`
 
 `load_image(source)` returns `(BytesIO, extension)` for an `https` URL or a
