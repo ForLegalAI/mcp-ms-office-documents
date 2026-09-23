@@ -37,9 +37,16 @@ class TestTheRule:
     def test_refused(self, target):
         assert not is_safe_link_target(target)
 
-    def test_the_scan_skips_images_and_code_spans(self):
-        text = "![img](data:image/png;base64,xx) `[c](file:x)` [bad](file:y) [ok](https://z)"
+    def test_the_scan_skips_code_spans(self):
+        text = "`[c](file:x)` [bad](file:y) [ok](https://z)"
         assert refused_link_targets(text) == ["file:y"]
+
+    def test_the_scan_counts_image_shaped_text(self):
+        """Review finding on #198: the scan skipped every "![alt](src)", but
+        the inline renderers have no image branch — they draw "!" and a link,
+        refused or not — so a refusal there went unreported. Only Word's
+        whole-line image is an image, and Word removes those lines itself."""
+        assert refused_link_targets("see ![x](file:y) here") == ["file:y"]
 
 
 def _pptx_links(title):
@@ -81,6 +88,29 @@ def _docx_links(markdown):
                if rel.reltype == RELATIONSHIP_TYPE.HYPERLINK]
     refused = [w for w in warnings if w.code == W.LINK_REFUSED]
     return doc, targets, refused
+
+
+class TestImageShapedLinks:
+    """Review finding on #198: see test_the_scan_counts_image_shaped_text."""
+
+    def test_pptx_reports_one_in_a_bullet(self):
+        _, refused = _pptx_links("see ![here](file:///x)")
+        assert len(refused) == 1
+
+    def test_word_reports_one_mid_paragraph(self):
+        _, targets, refused = _docx_links("See ![here](file:///x) for details.")
+        assert targets == []
+        assert len(refused) == 1
+
+    def test_word_does_not_report_a_whole_line_image(self):
+        _, _, refused = _docx_links("Text\n\n![alt](file:///x)\n\nMore")
+        assert refused == []
+
+    def test_word_does_not_report_a_link_inside_a_code_fence(self):
+        _, targets, refused = _docx_links("```\n[a](file:///x)\n```\n\n[b](file:///y)")
+        assert targets == []
+        assert len(refused) == 1
+        assert "file:///y" in refused[0].message and "file:///x" not in refused[0].message
 
 
 class TestWord:

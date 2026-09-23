@@ -19,6 +19,7 @@ from upload_tools import upload_file
 from warning_channel import DocumentWarning
 from .document_features import load_templates, set_header_footer, add_toc
 from .markdown_processor import process_markdown_content
+from .patterns import CODE_FENCE_PATTERN, IMAGE_PATTERN
 from .style_map import load_global_style_map
 from . import warnings as W
 from .warnings import channel as warning_channel
@@ -89,6 +90,31 @@ def _markdown_to_doc(markdown_content, title=None, author=None, subject=None,
     return doc
 
 
+def _inline_text(markdown_content: str) -> str:
+    """The lines of *markdown_content* the inline renderer will see.
+
+    For the link-refusal pre-scan: a line that is nothing but ``![alt](src)``
+    becomes an image block, and a fenced code block is rendered verbatim, so
+    neither makes a link and neither may be reported as a refused one. The
+    fence rule mirrors ``_render_code_block``: the same character, at least
+    as long, and nothing else on the line.
+    """
+    kept, fence = [], None
+    for line in markdown_content.splitlines():
+        stripped = line.strip()
+        if fence:
+            if stripped and set(stripped) == {fence[0]} and len(stripped) >= len(fence):
+                fence = None
+            continue
+        opener = CODE_FENCE_PATTERN.match(stripped)
+        if opener:
+            fence = opener.group(1)
+            continue
+        if not IMAGE_PATTERN.match(stripped):
+            kept.append(line)
+    return "\n".join(kept)
+
+
 def _markdown_to_word_buffer(markdown_content, title=None, author=None, subject=None,
                              header_text=None, footer_text=None, include_toc=False,
                              style_map=None) -> Tuple[io.BytesIO, List[DocumentWarning]]:
@@ -119,7 +145,7 @@ def _markdown_to_word_buffer(markdown_content, title=None, author=None, subject=
     )
     # The renderer refuses an unsafe link scheme without a channel of its own
     # (add_hyperlink keeps the label as text); the caller hears it here.
-    refused = refused_link_targets(markdown_content or "")
+    refused = refused_link_targets(_inline_text(markdown_content or ""))
     if refused:
         warnings.add(W.LINK_REFUSED, refused_links_message(refused))
 

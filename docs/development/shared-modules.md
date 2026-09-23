@@ -123,7 +123,10 @@ The module also owns the link-scheme rule: `is_safe_link_target()` allows
 `http`, `https`, `mailto` and `tel` (`SAFE_LINK_SCHEMES`), and both renderers
 keep any other link as its label. They have no warnings channel of their own,
 so each build pre-scans its caller text with `refused_link_targets()` and
-reports `link_refused` once, worded by `refused_links_message()`.
+reports `link_refused` once, worded by `refused_links_message()`. The scan
+counts `![alt](src)` as a link, because that is how the inline renderers draw
+it; a caller that turns some of that shape into something else removes it
+first (Word's `_inline_text()` drops whole-line images and fenced code).
 
 ## `image_utils.py`
 

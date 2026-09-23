@@ -50,8 +50,11 @@ LINK_RE = re.compile(r"^\[([^\]\n]+)\]\(([^)\s]+)\)$")
 SAFE_LINK_SCHEMES = frozenset({"http", "https", "mailto", "tel"})
 
 # A link token anywhere in a string, for counting refusals before rendering.
-# Not an image ("![alt](src)"): that is a block the renderer loads, not a link.
-_LINK_ANYWHERE_RE = re.compile(r"(?<!!)\[[^\]\n]+\]\(([^)\s]+)\)")
+# "![alt](src)" counts too: the inline renderers have no image branch, so they
+# draw "!" and then a link. Only a caller that turns some of that shape into
+# an image block (Word, for a line that is nothing but the image) removes
+# those lines before scanning.
+_LINK_ANYWHERE_RE = re.compile(r"\[[^\]\n]+\]\(([^)\s]+)\)")
 _CODE_SPAN_RE = re.compile(r"`[^`]+`")
 
 
