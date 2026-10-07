@@ -86,8 +86,12 @@ drops anything `is_enabled()` rejects unless `include_disabled=True`.
 absent means enabled, so every spec written before #165 stays live. It also
 accepts the string forms PyYAML leaves uncoerced (`n`, `disable`, `disabled`)
 and logs anything it recognises in neither direction. `safe_remove_tool(mcp, name)` removes a live
-tool across FastMCP versions. It lives at the root so the core tool modules
-never import the optional `admin` package.
+tool across FastMCP versions. `arg_field(default, description)` is the
+pydantic `Field` every dynamic-template argument is built with: a `None`
+default publishes no `"default": null` (see
+[dynamic-templates.md](dynamic-templates.md#the-argument-schema-rules)). It
+lives at the root so the core tool modules never import the optional `admin`
+package.
 
 `global_config(master_yaml, spec_dir)` is the same idea for the master file's
 *top-level* keys (for Word, `style_mapping`): the parsed master under a

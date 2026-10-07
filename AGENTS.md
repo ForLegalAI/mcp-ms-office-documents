@@ -174,7 +174,10 @@ backend → URL string or LibreChat artifact dict. Details:
 
 **Dynamic tools and schemas**
 - Never `Optional[...]` on a dynamic-tool argument; optionality is the
-  default alone. Descriptions must be siblings of a flat type.
+  default alone. Descriptions must be siblings of a flat type. Build every
+  argument field with `template_registry.arg_field()`, which publishes no
+  `"default": null` — the schema must not offer null, which the plain type
+  refuses.
 - Do not give `add_unique_prefix` a default in a dynamic tool body; it must
   reach `upload_file()` as `None`.
 - A disabled template (`enabled: false`) is filtered in

@@ -270,13 +270,21 @@ declared arguments only, `None` flattened to `""`.
 
 ## The argument-schema rules
 
-Three rules exist because of how MCP clients read schemas. They are tested
-by `tests/test_dynamic_args_schema.py`.
+Four rules exist because of how MCP clients and models read schemas. They
+are tested by `tests/test_dynamic_args_schema.py`.
 
 - **Never `Optional[...]`.** An optional argument keeps its plain type and is
   simply absent from `required`. `anyOf: [type, null]` puts the description
   beside the `anyOf`, and several clients drop it.
 - **A description is a sibling of a flat type.** Same reason.
+- **No `"default": null`.** Every argument field comes from
+  `template_registry.arg_field()`. An optional argument with no declared
+  default keeps `None` as its Python default — omitted, it reaches the tool
+  body as `None` — but publishes no `default` key. `null` would tell the model
+  it may send null, which the plain type refuses (the explicit-null test), and
+  it cost one key per optional argument in the model's context: about 13 % of
+  the schema of a template with 75 optional fields. A real default (`""`,
+  `false`, an enum value) is still published.
 - **`add_unique_prefix` has no default in the tool body.** The payload is
   built only from declared args, so `payload.get("add_unique_prefix")` yields
   `None` for a template that does not declare it, and `upload_file()` then
