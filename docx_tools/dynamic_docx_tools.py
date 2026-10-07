@@ -7,8 +7,9 @@ Placeholders in DOCX templates use Mustache syntax:
   - {{placeholder}} - replaced with markdown-formatted text
   - Text supports inline markdown: **bold**, *italic*, `code`, [links](url)
 
-Word content controls (check boxes, drop-down lists, plain text) are filled by
-their Tag instead of a placeholder; see ``content_controls``.
+Word content controls (check boxes, drop-down lists, plain text, combo boxes,
+date pickers) are filled by their Tag instead of a placeholder; see
+``content_controls``.
 
 YAML configuration example:
 ```yaml
@@ -31,6 +32,7 @@ templates:
 """
 from __future__ import annotations
 
+import datetime
 import io
 import re
 import copy
@@ -89,6 +91,9 @@ TYPE_MAP = {
     "float": float,
     "bool": bool, "boolean": bool,
     "list": list[str], "list[str]": list[str], "list[string]": list[str],
+    # An ISO date (published as {"type": "string", "format": "date"}); what a
+    # date-picker content control binds to. A placeholder shows it as ISO.
+    "date": datetime.date,
 }
 
 # Regex to find Mustache-style placeholders: {{name}} or {{{name}}}
@@ -799,8 +804,8 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
                 # substitution, since this prunes whole block elements.
                 resolve_conditionals(doc, payload)
 
-                # Fill tagged Word content controls (check boxes, drop-downs,
-                # plain text) — after the conditionals, so a control in a
+                # Fill tagged Word content controls (see content_controls.FILLERS)
+                # — after the conditionals, so a control in a
                 # pruned block is never touched, and before placeholders.
                 resolve_content_controls(doc, payload, warnings)
 

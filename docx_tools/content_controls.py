@@ -16,6 +16,13 @@ Supported kinds (``FILLERS``):
   equals the argument is selected (content text + ``w:lastValue``).
 - plain text (``w:text``): the content becomes the value, in the control's own
   run formatting; a multi-line control gets line breaks.
+- combo box (``w:comboBox``): an item whose value or display text matches is
+  shown as that item; any other value is written as free text — a combo box
+  allows it.
+- date picker (``w:date``): the value is an ISO date (``2026-10-06``). It is
+  stored in ``w:fullDate`` and shown in the control's own ``w:dateFormat``,
+  numerically: a format that spells out month or day names, or has a time,
+  is replaced by the numeric default for the control's language (``w:lid``).
 
 Rules shared by every kind:
 
@@ -29,10 +36,12 @@ Rules shared by every kind:
 - A filled control stays a content control; its ``w:dataBinding`` is dropped,
   or Word would overwrite the new content from the document's XML data store.
 - A value the document could not take — a drop-down with no such item, a tag
-  on a kind that is not filled, ``=option`` on a non-check box — is reported
-  on the build's warning channel (``control_item_missing`` /
-  ``control_not_filled``, located by ``tag``), so the caller learns it from the
-  tool result, not from the server log.
+  on a kind that is not filled, ``=option`` on a non-check box, a date that is
+  not an ISO date — is reported on the build's warning channel
+  (``control_item_missing`` / ``control_not_filled`` / ``control_value_invalid``,
+  located by ``tag``), so the caller learns it from the tool result, not from
+  the server log. A date shown in a numeric format other than the control's
+  own is reported as ``control_date_format_simplified`` (info).
 
 ``dynamic_docx_tools`` calls :func:`resolve_content_controls` after the
 conditionals and before placeholder substitution; the admin preview calls the
@@ -41,7 +50,9 @@ same function, and the admin analyser reads :func:`describe_content_controls`.
 from __future__ import annotations
 
 import copy
+import datetime as dt
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional, Tuple
 
@@ -173,6 +184,7 @@ def describe_content_controls(doc: "DocxDocument") -> List[Dict[str, Any]]:
     return [
         {"tag": cc.tag, "name": cc.name, "option": cc.option, "kind": cc.kind,
          "alias": cc.alias, "items": [v for v, _ in cc.items],
+         "labels": [d for _, d in cc.items],
          "supported": cc.kind in FILLERS}
         for cc in iter_content_controls(doc)
     ]
@@ -312,12 +324,118 @@ def _fill_text(cc: ContentControl, value: Any, warnings=None) -> bool:
     return True
 
 
+def _fill_combobox(cc: ContentControl, value: Any, warnings=None) -> bool:
+    text = ", ".join(map(str, value)) if isinstance(value, (list, tuple)) else str(value)
+    for item_value, display in cc.items:
+        if _matches(text, item_value) or _matches(text, display):
+            text, last = display, item_value
+            break
+    else:
+        last = text  # free text is a valid combo-box value, not a miss
+    _set_text(cc, text)
+    cc.properties.find(qn("w:comboBox")).set(qn("w:lastValue"), last)
+    return True
+
+
+# --- date picker ----------------------------------------------------------------
+
+#: The numeric format a date is shown in when the control's own cannot be used
+#: (it names months or days, has a time, or is missing), by language of w:lid.
+_DEFAULT_DATE_FORMATS = {
+    "cs": "d. M. yyyy", "sk": "d. M. yyyy",
+    "de": "dd.MM.yyyy", "pl": "dd.MM.yyyy",
+    "en-us": "M/d/yyyy", "en": "dd/MM/yyyy",
+}
+_ISO_FORMAT = "yyyy-MM-dd"
+_DATE_TOKEN = re.compile(r"'[^']*'|\"[^\"]*\"|y+|M+|d+|[HhmsAaPpt]+|.", re.S)
+
+
+def _default_date_format(lid: str) -> str:
+    lid = (lid or "").casefold()
+    return (_DEFAULT_DATE_FORMATS.get(lid) or _DEFAULT_DATE_FORMATS.get(lid.split("-")[0])
+            or _ISO_FORMAT)
+
+
+def _format_date(day: dt.date, fmt: str) -> Optional[str]:
+    """*day* in Word date-format codes, or None when *fmt* is not numeric-only.
+
+    ``d dd M MM yy yyyy`` and quoted literals are rendered; names (``MMM``,
+    ``ddd`` and longer) and any time code make the format unusable here.
+    """
+    out = []
+    for token in _DATE_TOKEN.findall(fmt):
+        if token[0] in "'\"" and len(token) >= 2:
+            out.append(token[1:-1])
+        elif token in ("d", "dd"):
+            out.append(f"{day.day:0{len(token)}d}")
+        elif token in ("M", "MM"):
+            out.append(f"{day.month:0{len(token)}d}")
+        elif token == "yy":
+            out.append(f"{day.year % 100:02d}")
+        elif token == "yyyy":
+            out.append(f"{day.year:04d}")
+        elif token[0] in "dMyHhmsAaPpt":
+            return None  # a name, a time, or a year code Word does not define
+
+        else:
+            out.append(token)
+    return "".join(out)
+
+
+def _parse_iso_date(value: Any) -> Optional[dt.date]:
+    """A ``date``, or an ISO date / date-time string; anything else is None."""
+    if isinstance(value, dt.datetime):
+        return value.date()
+    if isinstance(value, dt.date):
+        return value
+    text = str(value).strip()
+    try:
+        return dt.date.fromisoformat(text)
+    except ValueError:
+        pass
+    try:
+        return dt.datetime.fromisoformat(text).date()  # "2026-10-06T09:30:00"
+    except ValueError:
+        return None
+
+
+def _fill_date(cc: ContentControl, value: Any, warnings=None) -> bool:
+    day = _parse_iso_date(value)
+    if day is None:
+        logger.warning("[dynamic-docx] Date control '%s': %r is not an ISO date; leaving "
+                       "it.", cc.tag, value)
+        if warnings is not None:
+            warnings.add(W.CONTROL_VALUE_INVALID,
+                         f"{value!r} is not a date in ISO form (YYYY-MM-DD), so the date "
+                         "control was left as the template has it.", tag=cc.tag)
+        return False
+    date_el = cc.properties.find(qn("w:date"))
+    own = _attr(date_el.find(qn("w:dateFormat")), "w:val")
+    lid = _attr(date_el.find(qn("w:lid")), "w:val")
+    text = _format_date(day, own) if own else None
+    if text is None:
+        fallback = _default_date_format(lid)
+        text = _format_date(day, fallback)
+        if own:
+            logger.info("[dynamic-docx] Date control '%s': format %r is not numeric; "
+                        "shown as %r.", cc.tag, own, fallback)
+            if warnings is not None:
+                warnings.add(W.CONTROL_DATE_FORMAT_SIMPLIFIED,
+                             f"The date was shown as {text!r} (numeric) instead of the "
+                             f"control's format {own!r}.", tag=cc.tag)
+    date_el.set(qn("w:fullDate"), f"{day.isoformat()}T00:00:00Z")
+    _set_text(cc, text)
+    return True
+
+
 #: kind -> filler ``(control, value, warnings) -> filled``. A kind missing here
 #: is left as the template has it.
 FILLERS: Dict[str, Callable[..., bool]] = {
     CHECKBOX: _fill_checkbox,
     DROPDOWN: _fill_dropdown,
     TEXT: _fill_text,
+    COMBO_BOX: _fill_combobox,
+    DATE: _fill_date,
 }
 
 

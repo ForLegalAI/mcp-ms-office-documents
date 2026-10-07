@@ -234,7 +234,7 @@ Subject: {{subject}}
 - The placeholder's own formatting — font, size, colour, **bold, italic, underline, highlight** — is captured and applied to the replacement text (markdown in the value, e.g. `**bold**`, still wins where it sets formatting)
 - Formatting of the surrounding text in the same paragraph (before/after the placeholder) is preserved
 
-### Word content controls (check boxes, drop-down lists, text fields)
+### Word content controls (check boxes, lists, text and date fields)
 
 A form built with Word's own controls (Developer ▸ Controls) is filled without
 any `{{placeholder}}`: each control is bound to an argument by its **Tag**
@@ -248,6 +248,8 @@ still a form the client can edit.
 | Check box | `channels=email` | `list` with `enum` | ticked when the list contains `email` |
 | Drop-down list | `plan` | string, usually with `enum` | the item whose value or display text matches is selected |
 | Plain text | `full_name` | string | the text replaces the prompt, in the control's own formatting; a multi-line control keeps line breaks, a single-line one joins the lines with spaces |
+| Combo box | `country` | string | an item whose value or display text matches is shown as that item; any other text is written as typed (a combo box allows it) |
+| Date picker | `signed` | `date` | the AI sends an ISO date (`2026-10-06`); it is shown in the control's own format, numerically (see below) |
 
 ```yaml
 args:
@@ -290,12 +292,24 @@ args:
   `{"file": "…", "warnings": [{"code": "control_item_missing", "severity":
   "error", "tag": "plan", "message": "…"}]}`. A build with nothing to report
   returns the plain link, as before.
-- **Not filled yet:** rich text, combo box, date picker, picture and repeating
-  section controls are left as they are. A `{{placeholder}}` typed *inside* a
+- **Dates are numbers.** A `date` argument only accepts `YYYY-MM-DD`. The
+  picker shows it in its own format (Developer ▸ Properties ▸ Display the date
+  like this), using only `d`, `dd`, `M`, `MM`, `yy`, `yyyy` and quoted text. A
+  format with month or day names, or with a time, is replaced by the numeric
+  default for the control's language — Czech/Slovak `d. M. yyyy`, German/Polish
+  `dd.MM.yyyy`, US English `M/d/yyyy`, other English `dd/MM/yyyy`, otherwise
+  `yyyy-MM-dd` — and the result says so (`control_date_format_simplified`). A
+  value that is not an ISO date leaves the picker as the template has it and
+  is reported
+  (`control_value_invalid`). In a `{{placeholder}}` a `date` prints as ISO.
+- **Not filled yet:** rich text, picture and repeating section controls are
+  left as they are. A `{{placeholder}}` typed *inside* a
   control is not replaced either — tag the control instead.
 - The admin UI lists the controls it finds and proposes the arguments for you:
   a group of tagged boxes becomes a choice of their options, a drop-down a
-  choice of its items, the control's Title the description.
+  choice of its items, a combo box a text argument whose description lists its
+  items as suggestions, a date picker a `date`; the control's Title becomes
+  the description.
 
 ### Word style requirements for custom templates
 

@@ -70,11 +70,13 @@ adds to:
 - **Options** (comma-separated) make an argument a choice the AI must pick
   from; with type `list` it may pick several. Options written in YAML
   (`enum:`) show here and are kept when you save.
-- Word **content controls** (check boxes, drop-down lists, plain text fields)
+- Word **content controls** (check boxes, drop-down lists, plain text fields,
+  combo boxes, date pickers)
   are listed with their tags, and each tag pre-fills an argument: a group of
   boxes tagged `size=small`, `size=medium` becomes `size` with those
-  options. Tags that cannot fill are explained. See
-  [Templates](templates.md#word-content-controls-check-boxes-drop-down-lists-text-fields).
+  options; a combo box becomes text with its items listed as suggestions and
+  a date picker a `date` argument. Tags that cannot fill are explained. See
+  [Templates](templates.md#word-content-controls-check-boxes-lists-text-and-date-fields).
 - **Preview** with sample values (generates a real file; never uploaded anywhere).
 - **Preview with my values…** — a form with one control per argument,
   pre-filled with those same samples, so it stays one click if you do not care.

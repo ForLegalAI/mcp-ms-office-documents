@@ -81,3 +81,25 @@ def content_text(sdt):
         elif el.tag == f"{{{W}}}br":
             out.append("\n")
     return "".join(out)
+
+
+def combobox(tag=None, items=(("de", "Germany"), ("at", "Austria")), sdt_id=5, alias=None,
+             prompt="Choose or type."):
+    list_xml = "".join(f'<w:listItem w:displayText="{d}" w:value="{v}"/>' for v, d in items)
+    extra = f'<w:showingPlcHdr/><w:comboBox>{list_xml}</w:comboBox>'
+    return parse_xml(
+        f'<w:sdt {_NS}>{_pr(tag, alias, sdt_id, extra)}<w:sdtContent><w:r><w:rPr>'
+        f'<w:rStyle w:val="PlaceholderText"/></w:rPr><w:t>{prompt}</w:t></w:r>'
+        '</w:sdtContent></w:sdt>')
+
+
+def date_picker(tag=None, fmt="d. M. yyyy", lid="cs-CZ", sdt_id=6, alias=None,
+                prompt="Enter a date."):
+    fmt_xml = f'<w:dateFormat w:val="{fmt}"/>' if fmt is not None else ""
+    lid_xml = f'<w:lid w:val="{lid}"/>' if lid is not None else ""
+    extra = (f'<w:showingPlcHdr/><w:date>{fmt_xml}{lid_xml}'
+             '<w:storeMappedDataAs w:val="dateTime"/><w:calendar w:val="gregorian"/></w:date>')
+    return parse_xml(
+        f'<w:sdt {_NS}>{_pr(tag, alias, sdt_id, extra)}<w:sdtContent><w:r><w:rPr>'
+        f'<w:rStyle w:val="PlaceholderText"/></w:rPr><w:t>{prompt}</w:t></w:r>'
+        '</w:sdtContent></w:sdt>')
