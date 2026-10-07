@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
+from pydantic import Field
 
 logger = logging.getLogger(__name__)
 
@@ -283,3 +284,26 @@ def gather_specs(
         merged = [spec for spec in merged if is_enabled(spec)]
 
     return merged, overlay_global(master_cfg, read_global_settings(spec_dir))
+
+
+def _drop_null_default(schema: Dict[str, Any]) -> None:
+    """Remove ``"default": null`` from one argument's JSON schema, in place."""
+    if "default" in schema and schema["default"] is None:
+        del schema["default"]
+
+
+def arg_field(default: Any, description: Optional[str] = None):
+    """The pydantic ``Field`` for one dynamic-template argument.
+
+    An optional argument with no declared default keeps ``None`` as its Python
+    default — omitted, it reaches the tool body as ``None`` — but publishes *no*
+    ``default`` in the schema. ``"default": null`` would tell the model null is
+    a valid value, and the plain (never ``Optional``) type refuses an explicit
+    null, so the schema contradicted itself; it also cost every optional
+    argument a key in the model's context. A real default (``""``, ``false``,
+    an enum value) is published as before.
+    """
+    extra = _drop_null_default if default is None else None
+    if description is None:
+        return Field(default, json_schema_extra=extra)
+    return Field(default, description=description, json_schema_extra=extra)

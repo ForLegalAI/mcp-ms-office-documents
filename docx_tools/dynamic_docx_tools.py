@@ -45,12 +45,12 @@ from docx import Document as DocxDocument
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
 from docx.table import Table
-from pydantic import Field, create_model
+from pydantic import create_model
 from fastmcp import FastMCP
 
 from upload_tools import upload_file
 from template_utils import find_file_in_template_dirs
-from template_registry import gather_specs, safe_remove_tool
+from template_registry import arg_field, gather_specs, safe_remove_tool
 from async_runner import run_blocking
 import metrics
 from .conditionals import resolve_conditionals
@@ -749,7 +749,7 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
                 default = ... if required else None
             desc = arg.get("description") or (
                 f"{'Any of' if multi else 'One of'}: {', '.join(map(str, lit_values))}")
-            fields[arg_name] = (py_type, Field(default, description=desc))
+            fields[arg_name] = (py_type, arg_field(default, desc))
             continue
 
         # Handle regular types
@@ -764,7 +764,7 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
         # way that silently drops the sibling description, so optional args
         # would reach the model with no description at all. Pydantic does not
         # validate defaults, so a None default with a plain type is fine.
-        fields[arg_name] = (py_type, Field(default, description=desc) if desc else default)
+        fields[arg_name] = (py_type, arg_field(default, desc or None))
 
     # Create the Pydantic model
     model = create_model(f"{name}_DocxArgs", **fields)  # type: ignore

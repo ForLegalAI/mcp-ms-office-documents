@@ -111,3 +111,33 @@ def test_explicit_null_for_optional_arg_is_rejected():
     # ...but explicit null is rejected instead of silently accepted.
     with pytest.raises(pydantic.ValidationError):
         model(req_arg="x", opt_default=None)
+
+
+def test_an_optional_arg_without_default_publishes_no_null_default():
+    """``"default": null`` told the model null was valid while validation refuses
+    it, and cost a key per optional argument; it is not published. A real
+    default still is, and omitting the argument still yields None."""
+    import asyncio
+    import json
+
+    from fastmcp import Client
+
+    docx = _model_schema(register_docx_template, DOCX_SPEC, "req_arg")["properties"]
+    assert "default" not in docx["opt_nodefault"]
+    assert docx["opt_default"]["default"] == " " and docx["opt_bool"]["default"] is True
+
+    email = _model_schema(register_email_template, EMAIL_SPEC, "req_arg")["properties"]
+    for name in ("opt_nodefault", "to", "cc", "bcc"):
+        assert "default" not in email[name], name
+
+    import docx_tools.dynamic_docx_tools as ddt
+    model = getattr(ddt, f"{DOCX_SPEC['name']}_DocxArgs")
+    assert model(req_arg="x").opt_nodefault is None
+
+    mcp = FastMCP("wire")
+    assert register_docx_template(mcp, DOCX_SPEC)
+
+    async def listed():
+        async with Client(mcp) as c:
+            return (await c.list_tools())[0].inputSchema
+    assert '"default": null' not in json.dumps(asyncio.run(listed()))

@@ -20,7 +20,7 @@ from pydantic import Field, create_model
 from fastmcp import FastMCP
 from upload_tools import upload_file
 from template_utils import find_email_template
-from template_registry import gather_specs, safe_remove_tool
+from template_registry import arg_field, gather_specs, safe_remove_tool
 from async_runner import run_blocking
 import metrics
 from fastmcp.exceptions import ToolError
@@ -53,9 +53,9 @@ TYPE_MAP = {
 # anyOf[type, null] schemas lose their description in some MCP clients.
 BASE_FIELDS: Dict[str, Any] = {
     "subject": (str, Field(..., description="Email subject line (also sets Subject header)")),
-    "to": (list[str], Field(None, description="List of recipient email addresses")),
-    "cc": (list[str], Field(None, description="List of CC recipient email addresses")),
-    "bcc": (list[str], Field(None, description="List of BCC recipient email addresses")),
+    "to": (list[str], arg_field(None, "List of recipient email addresses")),
+    "cc": (list[str], arg_field(None, "List of CC recipient email addresses")),
+    "bcc": (list[str], arg_field(None, "List of BCC recipient email addresses")),
 }
 
 
@@ -156,7 +156,7 @@ def _register_single_email_template(mcp: FastMCP, spec: Dict[str, Any]) -> bool:
                 logger.warning(f"[dynamic-email] Default '{default}' not in enum for {arg_name}; ignoring default.")
                 default = Ellipsis if required else None
             desc = arg.get("description") or f"One of: {', '.join(map(str, lit_values))}"
-            fields[arg_name] = (py_type, Field(default, description=desc))
+            fields[arg_name] = (py_type, arg_field(default, desc))
             continue
 
         py_type = TYPE_MAP.get(str(arg.get("type", "string")).lower(), str)
@@ -166,7 +166,7 @@ def _register_single_email_template(mcp: FastMCP, spec: Dict[str, Any]) -> bool:
         # Plain type always (no Optional/anyOf): optionality comes from the
         # default alone, so the description stays a sibling of a flat type and
         # survives MCP clients that drop descriptions when normalizing anyOf.
-        fields[arg_name] = (py_type, Field(default, description=desc) if desc is not None else default)
+        fields[arg_name] = (py_type, arg_field(default, desc))
 
     model = create_model(f"{name}_Args", **fields)  # type: ignore
     # See dynamic_docx_tools: the tool annotation is resolved by name against this
