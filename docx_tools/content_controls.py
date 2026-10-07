@@ -125,15 +125,17 @@ def _list_items(sdt_pr, kind: str) -> List[Tuple[str, str]]:
     items = []
     for item in container.findall(qn("w:listItem")) if container is not None else []:
         value = _attr(item, "w:value")
-        display = _attr(item, "w:displayText") or value
-        items.append((value or display, display))
+        if not value:
+            continue  # Word's own "Choose an item." entry: a prompt, not a choice
+        items.append((value, _attr(item, "w:displayText") or value))
     return items
 
 
 def _roots(doc: "DocxDocument") -> Iterator[Any]:
     """The body plus every header/footer part the document really owns."""
     yield doc.element.body
-    seen: set[int] = set()
+    # Elements, not their id(): an id is only unique while its object lives.
+    seen: List[Any] = []
     for section in doc.sections:
         for part in (section.header, section.footer,
                      section.first_page_header, section.first_page_footer,
@@ -141,8 +143,8 @@ def _roots(doc: "DocxDocument") -> Iterator[Any]:
             if part is None or part.is_linked_to_previous:
                 continue  # a linked part belongs to an earlier section; don't create one
             element = part._element
-            if id(element) not in seen:
-                seen.add(id(element))
+            if not any(element is s for s in seen):
+                seen.append(element)
                 yield element
 
 

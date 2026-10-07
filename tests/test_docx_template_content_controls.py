@@ -135,3 +135,33 @@ def test_a_plain_list_without_enum_is_unchanged():
             return (await c.list_tools())[0].inputSchema
     prop = asyncio.run(go())["properties"]["data"]["properties"]["tags"]
     assert prop["type"] == "array" and prop["items"] == {"type": "string"}
+
+
+def test_a_value_written_into_a_control_is_not_expanded_as_a_placeholder(tmp_path):
+    """The placeholder pass reads paragraph runs, never a control's content, so
+    a value that looks like ``{{other}}`` stays literal (PR #200 review)."""
+    doc = Document()
+    cc.add_inline(doc.add_paragraph("Inline: "), cc.text("first", sdt_id=1))
+    cc.add_block(doc, cc.text("second", sdt_id=2, block=True))
+    cc.add_inline(doc.add_table(rows=1, cols=1).cell(0, 0).paragraphs[0], cc.text("third", sdt_id=3))
+    doc.add_paragraph("Other: {{other}}")
+    template = tmp_path / "t.docx"
+    doc.save(template)
+    args = [{"name": n, "type": "string", "required": False, "description": n}
+            for n in ("first", "second", "third", "other")]
+    out = {}
+
+    def fake_upload(buf, kind, filename=None, add_unique_prefix=None, **kw):
+        out["doc"] = Document(io.BytesIO(buf.getvalue()))
+        return "ok"
+
+    mcp = FastMCP("t3")
+    with patch.object(dd, "find_docx_template_by_name", lambda f: str(template)), \
+            patch.object(dd, "upload_file", fake_upload):
+        assert dd._register_single_template(
+            mcp, {"name": "cc_probe", "docx_path": "t.docx", "args": args})
+        _call(mcp, {"first": "{{other}}", "second": "{{other}}", "third": "{{other}}",
+                    "other": "EXPANDED"})
+    controls = _controls(out["doc"])
+    assert [cc.content_text(c) for c in controls] == ["{{other}}"] * 3
+    assert "Other: EXPANDED" in [p.text for p in out["doc"].paragraphs]

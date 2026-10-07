@@ -157,7 +157,8 @@ How each kind is filled:
   own `checkedState`/`uncheckedState` (and its font). The box stays a box.
 - **Drop-down list** (`w:dropDownList`): the item whose value or display text
   matches (case-insensitive) is shown and recorded in `w:lastValue`. No match
-  leaves the control and logs.
+  leaves the control and logs. An item with an empty value (Word's own
+  "Choose an item.") is a prompt and never offered or matched.
 - **Plain text** (`w:text`): one run in the control's own formatting; a
   `multiLine` control gets `w:br` per line, a single-line one spaces.
 
@@ -167,6 +168,9 @@ Invariants:
   argument and a kind without a filler (rich text, combo box, date, picture,
   repeating section, building blocks) are left exactly as the template has
   them.
+- **The placeholder pass never sees a control's content.** It reads paragraph
+  runs, and a control's runs sit inside `w:sdt`; a value that looks like
+  `{{other}}` stays literal (tested).
 - **Unset is not a value.** `None` or a blank string leaves the control alone,
   so a form keeps its "click here" prompt for the client to finish by hand —
   unlike a `{{placeholder}}`, which renders blank. `False` and `[]` are values

@@ -208,3 +208,25 @@ def test_the_document_still_saves_and_reopens_with_its_controls(tmp_path):
     xml = Document(out).element.xml
     assert xml.count("<w:sdt>") == 3
     assert "Basic plan" in xml and "Jan" in xml
+
+
+def test_controls_in_distinct_headers_of_two_sections_are_all_filled():
+    """Each unlinked header is its own part; none may be skipped (PR #200 review)."""
+    from docx.enum.section import WD_SECTION
+
+    doc = Document()
+    first = cc.add_inline(doc.sections[0].header.paragraphs[0], cc.text("full_name", sdt_id=1))
+    second_section = doc.add_section(WD_SECTION.NEW_PAGE)
+    second_section.header.is_linked_to_previous = False
+    second = cc.add_inline(second_section.header.paragraphs[0], cc.text("full_name", sdt_id=2))
+    assert resolve_content_controls(doc, {"full_name": "Jane"}) == 2
+    assert cc.content_text(first) == cc.content_text(second) == "Jane"
+
+
+def test_the_choose_an_item_prompt_is_not_a_choice():
+    dd = cc.dropdown("plan", items=(("", "Choose an item."), ("basic", "Basic plan")))
+    doc = _doc(dd)
+    assert describe_content_controls(doc)[0]["items"] == ["basic"]
+    assert resolve_content_controls(doc, {"plan": "Choose an item."}) == 0
+    assert resolve_content_controls(doc, {"plan": "basic"}) == 1
+    assert cc.content_text(dd) == "Basic plan"

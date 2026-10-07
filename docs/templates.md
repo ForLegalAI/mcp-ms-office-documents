@@ -270,7 +270,13 @@ args:
   "click here" prompt stays for the client to fill by hand. `false` or an empty
   list unticks.
 - **Only tags naming a declared argument are filled.** Controls without a tag,
-  or with any other tag, are left alone. Matching ignores upper/lower case.
+  or with any other tag, are left alone. The tag must spell the argument name
+  exactly (`Consent` does not bind `consent`); the *values* compared after `=`
+  and in drop-down items ignore upper/lower case.
+- **A default is a value.** A `bool` argument with `default: false` unticks its
+  box when the AI leaves it out, even if the template ships the box ticked.
+- A drop-down's empty-value entry (Word's own "Choose an item.") is a prompt,
+  never a choice.
 - **Where:** body, tables, headers and footers. A control inside a
   `{{#if}}` block that is dropped is dropped with it.
 - **Not filled yet:** rich text, combo box, date picker, picture and repeating
