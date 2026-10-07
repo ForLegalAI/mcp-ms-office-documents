@@ -36,12 +36,19 @@ STYLE_FALLBACK_MISSING = "style_fallback_missing"
 WIDTHS_INVALID = "widths_invalid"
 LINK_REFUSED = "link_refused"
 
+# Dynamic templates: a Word content control the caller sent a value for, that
+# the document could not take (see content_controls). Located by ``tag``.
+CONTROL_ITEM_MISSING = "control_item_missing"
+CONTROL_NOT_FILLED = "control_not_filled"
+
 #: One severity per code, in one place.
 WARNING_SEVERITY: dict[str, str] = {
     BLOCK_FAILED: SEVERITY_ERROR,
     TABLE_FAILED: SEVERITY_ERROR,
     TABLE_CELL_FAILED: SEVERITY_ERROR,
     IMAGE_FAILED: SEVERITY_ERROR,
+    CONTROL_ITEM_MISSING: SEVERITY_ERROR,
+    CONTROL_NOT_FILLED: SEVERITY_ERROR,
 
     TABLE_NOT_RECOGNISED: SEVERITY_WARNING,
     TABLE_SEPARATOR_MISSING: SEVERITY_WARNING,

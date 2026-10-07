@@ -39,7 +39,7 @@ chain as an argument — never a module-level list.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterator, List, Mapping, Tuple
+from typing import Any, Dict, Iterable, Iterator, List, Mapping, Tuple
 
 SEVERITY_ERROR = "error"
 SEVERITY_WARNING = "warning"
@@ -159,3 +159,24 @@ class WarningChannel:
 
     def __bool__(self) -> bool:
         return bool(self._warnings)
+
+
+def attach(result: Any, warnings: Iterable[DocumentWarning], **extra: Any) -> Any:
+    """The tool result with *warnings* riding alongside it.
+
+    A build with nothing to report returns exactly what it always returned — a
+    bare URL string, or the LibreChat artifact dict — so existing clients see
+    no change. With warnings, a dict result gains a ``warnings`` key and a
+    string becomes ``{"file": …, **extra, "warnings": […]}``. *extra* keys are
+    added only when the string form is widened; an artifact dict carries its
+    own metadata.
+
+    ``main._with_warnings()`` (static tools) and the dynamic Word template
+    tools both shape their response here, so the two cannot drift.
+    """
+    reported = [warning.as_dict() for warning in warnings]
+    if not reported:
+        return result
+    if isinstance(result, dict):
+        return {**result, "warnings": reported}
+    return {"file": result, **extra, "warnings": reported}

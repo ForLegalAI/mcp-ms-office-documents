@@ -99,6 +99,9 @@ backend → URL string or LibreChat artifact dict. Details:
   function; `main.py` attaches them with `_with_warnings()`, passing the
   tool's `kind` and `name` — that call also records them for the admin Status
   page, and the arguments are required so a new tool cannot go uncounted.
+  A dynamic Word template tool does not return through `main.py`: its body
+  creates the channel, calls `metrics.record_warnings()` and shapes the result
+  with `warning_channel.attach()`, the same function `_with_warnings()` uses.
   PowerPoint keeps its own `SlideWarning` record and shares the severities.
 
 **Word**
@@ -179,6 +182,12 @@ backend → URL string or LibreChat artifact dict. Details:
   path uses — never at a call site. A new consumer of `gather_specs()` gets
   the filtering for free; only the admin UI passes `include_disabled=True`.
   Absent means enabled, so specs written before #165 stay live.
+- A Word content control is filled by its **Tag** through
+  `content_controls.resolve_content_controls()` — after the conditionals,
+  before placeholder substitution, and from the admin preview by the same call.
+  A new control kind is a filler in `FILLERS`, never a branch elsewhere. Never
+  swap a control for text to "fill" it, and never fill one whose value is unset:
+  a form keeps its prompt for the client.
 - Kind-wide settings (a master file's *top-level* keys, e.g. Word's
   `style_mapping`) merge in `template_registry.global_config()` — the one
   merge point, as `gather_specs()` is for templates. A `*.d/_global.yaml` key

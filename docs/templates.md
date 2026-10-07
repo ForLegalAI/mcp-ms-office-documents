@@ -234,6 +234,69 @@ Subject: {{subject}}
 - The placeholder's own formatting — font, size, colour, **bold, italic, underline, highlight** — is captured and applied to the replacement text (markdown in the value, e.g. `**bold**`, still wins where it sets formatting)
 - Formatting of the surrounding text in the same paragraph (before/after the placeholder) is preserved
 
+### Word content controls (check boxes, drop-down lists, text fields)
+
+A form built with Word's own controls (Developer ▸ Controls) is filled without
+any `{{placeholder}}`: each control is bound to an argument by its **Tag**
+(Developer ▸ Properties ▸ Tag). The generated file keeps the controls, so it is
+still a form the client can edit.
+
+| Control | Tag | Argument | Result |
+|---|---|---|---|
+| Check box | `consent` | `bool` | ticked when true |
+| Check box | `size=small` | string with `enum` | ticked when the value is `small` |
+| Check box | `channels=email` | `list` with `enum` | ticked when the list contains `email` |
+| Drop-down list | `plan` | string, usually with `enum` | the item whose value or display text matches is selected |
+| Plain text | `full_name` | string | the text replaces the prompt, in the control's own formatting; a multi-line control keeps line breaks, a single-line one joins the lines with spaces |
+
+```yaml
+args:
+  - name: size                    # three boxes: size=small / =medium / =large
+    type: string
+    enum: [small, medium, large]
+    required: false
+    description: Size
+  - name: channels                # several boxes may apply
+    type: list
+    enum: [email, phone, post]
+    required: false
+    description: Channels the customer agreed to
+```
+
+- **A group of check boxes is one argument.** `type: list` with `enum` lets the
+  AI pick several options; a plain `string` with `enum` picks one.
+- **Nothing sent, nothing changed.** An argument the AI leaves out (or sends
+  blank) leaves its controls exactly as the template has them — the grey
+  "click here" prompt stays for the client to fill by hand. `false` or an empty
+  list unticks.
+- **Only tags naming a declared argument are filled.** Controls without a tag,
+  or with any other tag, are left alone. The tag must spell the argument name
+  exactly (`Consent` does not bind `consent`); the *values* compared after `=`
+  and in drop-down items ignore upper/lower case.
+- **A default is a value.** A `bool` argument with `default: false` unticks its
+  box when the AI leaves it out, even if the template ships the box ticked.
+- A bare-tag check box bound to a *text* argument is ticked by `true`, `yes`,
+  `y`, `1`, `x` or `ano` (any case); any other text unticks it. Bind it to a
+  `bool` argument instead where you can.
+- A `{{placeholder}}` and content controls may share a paragraph or table
+  cell; replacing the placeholder leaves the controls where they are.
+- A drop-down's empty-value entry (Word's own "Choose an item.") is a prompt,
+  never a choice.
+- **Where:** body, tables, headers and footers. A control inside a
+  `{{#if}}` block that is dropped is dropped with it.
+- **The AI is told what did not fit.** A value a control cannot take — a
+  drop-down with no such item, or a value for a control of a kind that is not
+  filled — leaves the control as it is and comes back in the tool result:
+  `{"file": "…", "warnings": [{"code": "control_item_missing", "severity":
+  "error", "tag": "plan", "message": "…"}]}`. A build with nothing to report
+  returns the plain link, as before.
+- **Not filled yet:** rich text, combo box, date picker, picture and repeating
+  section controls are left as they are. A `{{placeholder}}` typed *inside* a
+  control is not replaced either — tag the control instead.
+- The admin UI lists the controls it finds and proposes the arguments for you:
+  a group of tagged boxes becomes a choice of their options, a drop-down a
+  choice of its items, the control's Title the description.
+
 ### Word style requirements for custom templates
 
 For proper formatting, make sure these styles exist in your `.docx` template:

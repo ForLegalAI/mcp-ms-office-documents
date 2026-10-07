@@ -7,6 +7,9 @@ Placeholders in DOCX templates use Mustache syntax:
   - {{placeholder}} - replaced with markdown-formatted text
   - Text supports inline markdown: **bold**, *italic*, `code`, [links](url)
 
+Word content controls (check boxes, drop-down lists, plain text) are filled by
+their Tag instead of a placeholder; see ``content_controls``.
+
 YAML configuration example:
 ```yaml
 templates:
@@ -34,7 +37,7 @@ import copy
 import logging
 import threading
 from pathlib import Path
-from typing import Any, Dict, Optional, Literal
+from typing import Any, Dict, Optional, Literal, Union
 
 from docx import Document as DocxDocument
 from docx.oxml.ns import qn
@@ -49,6 +52,9 @@ from template_registry import gather_specs, safe_remove_tool
 from async_runner import run_blocking
 import metrics
 from .conditionals import resolve_conditionals
+from .content_controls import resolve_content_controls
+from . import warnings as W
+from warning_channel import attach as attach_warnings
 from .inline_formatting import parse_inline_formatting
 from .patterns import (
     contains_block_markdown, normalize_newlines, expand_br_to_block_breaks,
@@ -209,6 +215,24 @@ def _propagate_format_to_block(doc, inserted, src_ppr, fmt) -> None:
             _apply_placeholder_format(run, fmt)
 
 
+#: Paragraph children a whole-paragraph replacement may drop with the paragraph.
+_PLAIN_PARAGRAPH_CHILDREN = {qn('w:pPr'), qn('w:r'), qn('w:proofErr'),
+                             qn('w:bookmarkStart'), qn('w:bookmarkEnd')}
+
+
+def _restore_position(p_element, kept: int, anchor) -> None:
+    """Move what was appended after the first *kept* children back before *anchor*.
+
+    The replacement is built with python-docx's append-only API; *anchor* is the
+    element that followed the replaced runs (None when they ended the paragraph,
+    where appending is already the right place).
+    """
+    if anchor is None or anchor.getparent() is not p_element:
+        return
+    for element in list(p_element)[kept:]:
+        anchor.addprevious(element)
+
+
 def _segments_for_range(run_info, lo: int, hi: int):
     """Return ``(text, run)`` pairs for the part of each run within ``[lo, hi)``.
 
@@ -341,11 +365,19 @@ def _replace_placeholder_in_paragraph(
         # 2. Get replacement content (parsed markdown)
         # 3. Get text after placeholder
 
-        # Slice the surrounding text at the placeholder boundaries, remembering
-        # each slice's source run so its formatting can be restored (rather than
-        # flattening before/after text to plain runs).
-        before_segments = _segments_for_range(run_info, 0, placeholder_start)
-        after_segments = _segments_for_range(run_info, placeholder_end, len(combined_text))
+        # Only the runs the placeholder spans are rebuilt. Everything else in the
+        # paragraph keeps its place — other runs, and content that is not a run
+        # at all (a content control, a hyperlink), which rebuilding the whole
+        # paragraph at its end would have moved to the front.
+        spanned = [(start, end, run) for start, end, run in run_info
+                   if start < placeholder_end and end > placeholder_start]
+        anchor = spanned[-1][2]._r.getnext()  # the new content goes back before this
+
+        # Slice the spanned runs' surrounding text at the placeholder boundaries,
+        # remembering each slice's source run so its formatting can be restored
+        # (rather than flattening before/after text to plain runs).
+        before_segments = _segments_for_range(spanned, spanned[0][0], placeholder_start)
+        after_segments = _segments_for_range(spanned, placeholder_end, spanned[-1][1])
 
         # Check if the value contains block-level content (lists, headings)
         has_block_content = contains_block_markdown(value)
@@ -357,7 +389,13 @@ def _replace_placeholder_in_paragraph(
         # single-line value, a placeholder in the MIDDLE of a paragraph, or one in a
         # table/header (doc is None) stays inline (soft breaks only) — a single line
         # needs no splitting and a sentence cannot be split into separate paragraphs.
-        is_whole_paragraph = not before_segments and not after_segments
+        # "Whole paragraph" is about the paragraph, not the spanned runs: no text
+        # around the placeholder, and nothing that is not a run (a content
+        # control), since a whole-paragraph block value removes the paragraph.
+        is_whole_paragraph = (
+            not combined_text[:placeholder_start] and not combined_text[placeholder_end:]
+            and not any(child.tag not in _PLAIN_PARAGRAPH_CHILDREN for child in paragraph._p)
+        )
         use_block = (
             doc is not None
             and value.strip() != ""
@@ -369,10 +407,12 @@ def _replace_placeholder_in_paragraph(
         existing_ppr = paragraph._p.find(qn('w:pPr'))
         src_ppr = copy.deepcopy(existing_ppr) if existing_ppr is not None else None
 
-        # Clear all existing runs
+        # Clear the spanned runs; what follows is appended to the paragraph and
+        # moved back to their position at the end (_restore_position).
         p_element = paragraph._p
-        for run in runs:
+        for _, _, run in spanned:
             p_element.remove(run._r)
+        kept = len(p_element)
 
         # Re-add the text before the placeholder, preserving its formatting.
         _add_formatted_segments(paragraph, before_segments)
@@ -385,6 +425,7 @@ def _replace_placeholder_in_paragraph(
 
             # Re-add the text after the placeholder, preserving its formatting.
             _add_formatted_segments(paragraph, after_segments)
+            _restore_position(p_element, kept, anchor)
 
             # If the placeholder occupied the whole paragraph it is now empty –
             # remove it so the produced paragraphs take its place cleanly.
@@ -401,6 +442,7 @@ def _replace_placeholder_in_paragraph(
 
             # Re-add the text after the placeholder, preserving its formatting.
             _add_formatted_segments(paragraph, after_segments)
+            _restore_position(p_element, kept, anchor)
 
         return True
 
@@ -683,12 +725,25 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
             py_type = Literal[lit_values]  # type: ignore[index]
             required = bool(arg.get("required", True))
             default = arg.get("default", (... if required else None))
-            if default is not ... and default is not None and default not in lit_values:
+            # `type: list` with an enum is a multi-choice: any number of the
+            # options (a group of check boxes where several may apply).
+            multi = str(arg.get("type", "string")).lower() in ("list", "list[str]", "list[string]")
+            if multi:
+                py_type = list[py_type]  # type: ignore[valid-type]
+                if default not in (..., None) and not (
+                        isinstance(default, list) and all(d in lit_values for d in default)):
+                    logger.warning(
+                        f"[dynamic-docx] Default '{default}' not a list of enum values for "
+                        f"{arg_name}; ignoring default."
+                    )
+                    default = ... if required else None
+            elif default is not ... and default is not None and default not in lit_values:
                 logger.warning(
                     f"[dynamic-docx] Default '{default}' not in enum for {arg_name}; ignoring default."
                 )
                 default = ... if required else None
-            desc = arg.get("description") or f"One of: {', '.join(map(str, lit_values))}"
+            desc = arg.get("description") or (
+                f"{'Any of' if multi else 'One of'}: {', '.join(map(str, lit_values))}")
             fields[arg_name] = (py_type, Field(default, description=desc))
             continue
 
@@ -733,6 +788,9 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
             try:
                 # Load the template document
                 doc = DocxDocument(_template_path)
+                # What the build could not do as asked comes back in the result
+                # (attach_warnings below), not only in the server log.
+                warnings = W.channel()
 
                 # Build context from input data
                 payload = data.model_dump()
@@ -740,6 +798,11 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
                 # Resolve conditional blocks ({{#if flag}} ... {{/if}}) before
                 # substitution, since this prunes whole block elements.
                 resolve_conditionals(doc, payload)
+
+                # Fill tagged Word content controls (check boxes, drop-downs,
+                # plain text) — after the conditionals, so a control in a
+                # pruned block is never touched, and before placeholders.
+                resolve_content_controls(doc, payload, warnings)
 
                 context = {k: ("" if v is None else str(v)) for k, v in payload.items()}
 
@@ -767,18 +830,20 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
 
                 logger.info(f"[dynamic-docx] Document generated from template {_name}")
                 metrics.record_call("docx", _name)
-                return result
+                metrics.record_warnings("docx", _name, warnings)
+                return attach_warnings(result, warnings)
 
             except Exception as e:
                 metrics.record_error("docx", _name, str(e))
                 logger.error(f"[dynamic-docx] Error generating document from {_name}: {e}", exc_info=True)
                 raise ToolError(f"Error generating document from template {_name}: {e}")
 
-        async def tool_impl(data: _model) -> str:  # type: ignore
+        async def tool_impl(data: _model) -> Union[str, dict]:  # type: ignore
             return await run_blocking(_sync_impl, data)
 
         tool_impl.__annotations__['data'] = _model  # type: ignore[index]
-        tool_impl.__annotations__['return'] = str  # type: ignore[index]
+        # A bare URL string, or {"file", "warnings"} when the build reports any.
+        tool_impl.__annotations__['return'] = Union[str, dict]  # type: ignore[index]
         return tool_impl
 
     # Register the tool

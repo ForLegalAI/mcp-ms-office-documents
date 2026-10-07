@@ -5,7 +5,8 @@ to an in-memory buffer and returns the bytes, so an admin can sanity-check a
 template even on a server configured for S3/GCS/etc.
 
 The docx path reuses the exact production substitution pipeline
-(``resolve_conditionals`` + ``_replace_placeholders_in_document``) so what the
+(``resolve_conditionals`` + ``resolve_content_controls`` +
+``_replace_placeholders_in_document``) so what the
 preview shows matches what the live tool produces. The email path mirrors the
 dynamic email tool's pystache rendering.
 """
@@ -19,6 +20,7 @@ import pystache
 from docx import Document as DocxDocument
 
 from docx_tools.conditionals import resolve_conditionals
+from docx_tools.content_controls import resolve_content_controls
 from docx_tools.dynamic_docx_tools import replace_placeholders_in_document
 from docx_tools.style_map import build_style_map
 
@@ -27,7 +29,10 @@ def sample_values(args: List[Dict[str, Any]], conditionals: List[str] = None) ->
     """Build a plausible sample value for each declared arg.
 
     Strings use their declared default when non-empty, else a bracketed name
-    like ``[recipient_name]`` so the placeholder is obvious in the output.
+    like ``[recipient_name]`` so the placeholder is obvious in the output. An
+    argument with options samples as its default or first option instead: a
+    bracketed name is not a valid choice, so a check box or drop-down bound to
+    it would never show filled.
 
     A boolean uses its declared default, and only falls back to True when it
     has none — which is the case for a required flag and for a conditional
@@ -46,7 +51,13 @@ def sample_values(args: List[Dict[str, Any]], conditionals: List[str] = None) ->
             continue
         atype = str(arg.get("type", "string")).lower()
         default = arg.get("default")
-        if atype in ("bool", "boolean"):
+        enum = arg.get("enum") or []
+        if enum and atype == "list":
+            # A multi-choice samples as its default, else its first option.
+            values[name] = default if isinstance(default, list) and default else [enum[0]]
+        elif enum:
+            values[name] = default if default in enum else enum[0]
+        elif atype in ("bool", "boolean"):
             values[name] = True if default in (None, "") else bool(default)
         elif atype in ("int", "integer"):
             values[name] = default if isinstance(default, int) else 1
@@ -112,6 +123,11 @@ def values_from_form(form, args: List[Dict[str, Any]],
             values[name] = str(form.get(key) or "").lower() in (
                 "1", "true", "yes", "on")
             continue
+        if atype == "list" and arg.get("enum"):
+            # A multi-select sends one value per choice, and nothing at all
+            # when none is chosen — which is a choice too, not "use a sample".
+            values[name] = [str(v) for v in form.getlist(key)]
+            continue
         if key not in form:
             continue
         raw = form.get(key)
@@ -144,6 +160,7 @@ def render_docx_preview(
     style_map = build_style_map(global_style_mapping, spec.get("style_mapping"))
 
     resolve_conditionals(doc, values)
+    resolve_content_controls(doc, values)
     context = {k: ("" if v is None else str(v)) for k, v in values.items()}
     replace_placeholders_in_document(doc, context, style_map)
 

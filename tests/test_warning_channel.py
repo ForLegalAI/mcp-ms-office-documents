@@ -185,3 +185,20 @@ class TestTheChannel:
 @pytest.mark.parametrize("severity", SEVERITIES)
 def test_severities_are_plain_strings_a_client_can_compare(severity):
     assert isinstance(severity, str)
+
+
+def test_attach_leaves_a_clean_result_alone_and_widens_one_with_warnings():
+    """The one result shape the static tools (via main._with_warnings) and the
+    dynamic Word template tools share."""
+    from warning_channel import WarningChannel, attach
+
+    clean = WarningChannel({})
+    assert attach("https://x/f.docx", clean) == "https://x/f.docx"
+    assert attach({"artifact": 1}, clean) == {"artifact": 1}
+
+    noisy = WarningChannel({"c": "error"})
+    noisy.add("c", "m", tag="t")
+    expected = [{"code": "c", "severity": "error", "message": "m", "tag": "t"}]
+    assert attach("https://x/f.docx", noisy, slide_count=2) == {
+        "file": "https://x/f.docx", "slide_count": 2, "warnings": expected}
+    assert attach({"artifact": 1}, noisy, slide_count=2) == {"artifact": 1, "warnings": expected}
