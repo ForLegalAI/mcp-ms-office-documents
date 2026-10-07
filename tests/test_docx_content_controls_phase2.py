@@ -111,7 +111,8 @@ def test_a_control_without_a_format_uses_the_language_default_silently():
     assert warnings.as_dicts() == []
 
 
-@pytest.mark.parametrize("value", ["6. 10. 2026", "tomorrow", "2026-13-01"])
+@pytest.mark.parametrize("value", ["6. 10. 2026", "tomorrow", "2026-13-01",
+                                   "2026-10-06 garbage"])
 def test_a_non_iso_date_is_refused_and_reported(value):
     picker, warnings = cc.date_picker("signed"), channel()
     assert resolve_content_controls(_doc(picker), {"signed": value}, warnings) == 0
@@ -171,3 +172,17 @@ def test_a_date_argument_is_an_iso_date_in_the_schema_and_fills_end_to_end(tmp_p
     picker = next(out["doc"].element.body.iter(f"{{{W}}}sdt"))
     assert cc.content_text(picker) == "6. 10. 2026"
     assert "ISO: 2026-10-06" in [p.text for p in out["doc"].paragraphs]
+
+
+def test_an_iso_date_time_string_is_accepted_as_its_date():
+    picker = cc.date_picker("signed")
+    assert resolve_content_controls(_doc(picker), {"signed": "2026-10-06T09:30:00"}) == 1
+    assert cc.content_text(picker) == "6. 10. 2026"
+
+
+@pytest.mark.parametrize("fmt", ["d.M.y", "d.M.yyy"])
+def test_a_year_code_word_does_not_define_falls_back(fmt):
+    picker, warnings = cc.date_picker("signed", fmt=fmt), channel()
+    resolve_content_controls(_doc(picker), {"signed": "2026-10-06"}, warnings)
+    assert cc.content_text(picker) == "6. 10. 2026"
+    assert [w["code"] for w in warnings.as_dicts()] == ["control_date_format_simplified"]

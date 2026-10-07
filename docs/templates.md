@@ -299,7 +299,8 @@ args:
   default for the control's language — Czech/Slovak `d. M. yyyy`, German/Polish
   `dd.MM.yyyy`, US English `M/d/yyyy`, other English `dd/MM/yyyy`, otherwise
   `yyyy-MM-dd` — and the result says so (`control_date_format_simplified`). A
-  value that is not an ISO date leaves the picker empty and is reported
+  value that is not an ISO date leaves the picker as the template has it and
+  is reported
   (`control_value_invalid`). In a `{{placeholder}}` a `date` prints as ISO.
 - **Not filled yet:** rich text, picture and repeating section controls are
   left as they are. A `{{placeholder}}` typed *inside* a

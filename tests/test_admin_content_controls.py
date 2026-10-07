@@ -189,3 +189,12 @@ def test_preview_samples_and_renders_a_date():
         _phase2_template(), {"name": "t", "args": args}, {"signed": "2026-10-06"})))
     sdts = list(out.element.body.iter(f"{{{cc.W}}}sdt"))
     assert cc.content_text(sdts[1]) == "6. 10. 2026"
+
+
+def test_a_title_ending_in_a_period_does_not_double_it():
+    doc = Document()
+    cc.add_inline(doc.add_paragraph(), cc.combobox("country", alias="Country."))
+    buf = io.BytesIO()
+    doc.save(buf)
+    proposals = propose_args_from_controls(analyze_docx(buf.getvalue()))
+    assert proposals["country"]["description"] == "Country. Suggestions: Germany, Austria"

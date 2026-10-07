@@ -660,8 +660,8 @@ def propose_args_from_controls(analysis: Analysis) -> Dict[str, Dict[str, Any]]:
             arg["enum"] = list(cc["items"])
         elif kind == COMBO_BOX and cc.get("labels"):
             suggestions = "Suggestions: " + ", ".join(cc["labels"])
-            arg["description"] = (f"{arg['description']}. {suggestions}"
-                                  if arg["description"] else suggestions)
+            title = arg["description"].rstrip().rstrip(".")
+            arg["description"] = f"{title}. {suggestions}" if title else suggestions
         elif kind == DATE:
             arg["type"] = "date"
         elif kind == TEXT:

@@ -343,7 +343,7 @@ def _fill_combobox(cc: ContentControl, value: Any, warnings=None) -> bool:
 #: (it names months or days, has a time, or is missing), by language of w:lid.
 _DEFAULT_DATE_FORMATS = {
     "cs": "d. M. yyyy", "sk": "d. M. yyyy",
-    "de": "dd.MM.yyyy", "pl": "dd.MM.yyyy", "hu": "yyyy.MM.dd.",
+    "de": "dd.MM.yyyy", "pl": "dd.MM.yyyy",
     "en-us": "M/d/yyyy", "en": "dd/MM/yyyy",
 }
 _ISO_FORMAT = "yyyy-MM-dd"
@@ -372,22 +372,29 @@ def _format_date(day: dt.date, fmt: str) -> Optional[str]:
             out.append(f"{day.month:0{len(token)}d}")
         elif token == "yy":
             out.append(f"{day.year % 100:02d}")
-        elif token in ("yyyy", "y", "yyy"):
+        elif token == "yyyy":
             out.append(f"{day.year:04d}")
         elif token[0] in "dMyHhmsAaPpt":
-            return None  # a name or a time: not shown here
+            return None  # a name, a time, or a year code Word does not define
+
         else:
             out.append(token)
     return "".join(out)
 
 
 def _parse_iso_date(value: Any) -> Optional[dt.date]:
+    """A ``date``, or an ISO date / date-time string; anything else is None."""
     if isinstance(value, dt.datetime):
         return value.date()
     if isinstance(value, dt.date):
         return value
+    text = str(value).strip()
     try:
-        return dt.date.fromisoformat(str(value).strip()[:10])
+        return dt.date.fromisoformat(text)
+    except ValueError:
+        pass
+    try:
+        return dt.datetime.fromisoformat(text).date()  # "2026-10-06T09:30:00"
     except ValueError:
         return None
 
@@ -400,7 +407,7 @@ def _fill_date(cc: ContentControl, value: Any, warnings=None) -> bool:
         if warnings is not None:
             warnings.add(W.CONTROL_VALUE_INVALID,
                          f"{value!r} is not a date in ISO form (YYYY-MM-DD), so the date "
-                         "control was left empty.", tag=cc.tag)
+                         "control was left as the template has it.", tag=cc.tag)
         return False
     date_el = cc.properties.find(qn("w:date"))
     own = _attr(date_el.find(qn("w:dateFormat")), "w:val")

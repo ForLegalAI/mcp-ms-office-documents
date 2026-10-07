@@ -171,11 +171,13 @@ How each kind is filled:
   text shown, `w:lastValue` = item value); otherwise the value is written as
   free text and becomes `w:lastValue`. Free text is valid here, so no warning.
 - **Date picker** (`w:date`): `_parse_iso_date()` takes a `datetime.date` (the
-  `date` argument type) or an ISO string; anything else is
+  `date` argument type) or a whole ISO date or date-time string (a time part
+  is dropped); anything else, including trailing text, is
   `control_value_invalid`. `w:fullDate` is set to `YYYY-MM-DDT00:00:00Z` and
   the text is `_format_date()` of the control's `w:dateFormat`, numeric codes
   only (`d dd M MM yy yyyy`, quoted literals). A format with names (`MMM`,
-  `ddd` and longer) or a time code returns `None`, and the numeric default for
+  `ddd` and longer), a time code, or a year code Word does not define (`y`,
+  `yyy`) returns `None`, and the numeric default for
   `w:lid` (`_DEFAULT_DATE_FORMATS`) is used instead, reported as
   `control_date_format_simplified` (info); a control with no format uses that
   default silently. No month or day names are ever produced, so there is no
