@@ -659,6 +659,9 @@ def _value_control(arg: Dict[str, Any], value: Any, is_cond: bool):
         multi = atype == "list"
         return c.field(name, Select(*options, name=field, multiple=multi),
                        hint=desc or ("Pick any number." if multi else None))
+    if atype == "date":
+        return c.field(name, Input(name=field, value=str(value or ""), type="date"),
+                       hint=desc or "An ISO date (YYYY-MM-DD).")
     if atype in ("int", "integer", "float"):
         return c.field(name, Input(name=field, value=str(value), type="number",
                                    step="any" if atype == "float" else "1"),

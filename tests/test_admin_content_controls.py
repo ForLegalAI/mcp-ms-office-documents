@@ -153,3 +153,39 @@ def test_preview_fills_the_controls_like_a_real_build():
     assert cc.content_text(sdts[3]) == "Pro plan"
     assert cc.content_text(sdts[4]) == "Jan"
     assert "today" in [p.text for p in out.paragraphs]
+
+
+# --- phase 2: combo box and date picker -------------------------------------------
+
+def _phase2_template():
+    doc = Document()
+    cc.add_inline(doc.add_paragraph(), cc.combobox("country", alias="Country"))
+    cc.add_inline(doc.add_paragraph(), cc.date_picker("signed", alias="Signing date"))
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def test_proposals_for_combo_box_and_date_picker():
+    proposals = propose_args_from_controls(analyze_docx(_phase2_template()))
+    assert proposals["country"] == {"name": "country", "type": "string", "required": False,
+                                    "description": "Country. Suggestions: Germany, Austria"}
+    assert proposals["signed"]["type"] == "date"
+    assert proposals["signed"]["description"] == "Signing date"
+
+
+def test_a_date_control_bound_to_a_string_is_flagged():
+    args = [{"name": "country", "type": "string"}, {"name": "signed", "type": "string"}]
+    issues = reconcile(analyze_docx(_phase2_template()), args).control_issues
+    assert any("signed" in i and "type 'date'" in i for i in issues)
+    args[1]["type"] = "date"
+    assert reconcile(analyze_docx(_phase2_template()), args).control_issues == []
+
+
+def test_preview_samples_and_renders_a_date():
+    args = [{"name": "signed", "type": "date"}]
+    assert len(sample_values(args)["signed"]) == 10  # today, ISO
+    out = Document(io.BytesIO(render_docx_preview(
+        _phase2_template(), {"name": "t", "args": args}, {"signed": "2026-10-06"})))
+    sdts = list(out.element.body.iter(f"{{{cc.W}}}sdt"))
+    assert cc.content_text(sdts[1]) == "6. 10. 2026"

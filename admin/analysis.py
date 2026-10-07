@@ -32,7 +32,7 @@ from lxml import etree
 from docx_tools.dynamic_docx_tools import PLACEHOLDER_PATTERN
 from docx_tools.conditionals import parse_marker
 from docx_tools.content_controls import (
-    CHECKBOX, DROPDOWN, TEXT, describe_content_controls,
+    CHECKBOX, COMBO_BOX, DATE, DROPDOWN, TEXT, describe_content_controls,
 )
 
 logger = logging.getLogger(__name__)
@@ -610,6 +610,11 @@ def _control_issues(analysis: Analysis, arg_by_name: Dict[str, Dict[str, Any]]) 
         if cc.get("option") is not None and cc["kind"] != CHECKBOX:
             issues.append(f"'{tag}': '=option' only works on check boxes.")
             continue
+        declared_type = str(arg_by_name.get(name, {}).get("type", "")).lower()
+        if cc["kind"] == DATE and name in arg_by_name and declared_type != "date":
+            issues.append(f"Date control '{tag}' is bound to '{name}' of type "
+                          f"'{declared_type or 'string'}'; make it type 'date' so the "
+                          "AI is asked for an ISO date.")
         enum = [str(v) for v in (arg_by_name.get(name, {}).get("enum") or [])]
         if not enum:
             continue
@@ -633,8 +638,10 @@ def propose_args_from_controls(analysis: Analysis) -> Dict[str, Dict[str, Any]]:
     A group of check boxes (``size=small``, ``size=medium``) becomes one
     choice with those options — switch it to ``list`` when several may apply; a
     bare-tag check box a ``bool``; a drop-down a choice of its item values; a
-    plain-text control a string. The control's Title becomes the description,
-    except on an option box, whose title names the option rather than the group.
+    plain-text control a string; a combo box a string whose description lists
+    its items as suggestions (free text stays allowed); a date picker a
+    ``date``. The control's Title becomes the description, except on an option
+    box, whose title names the option rather than the group.
     """
     proposals: Dict[str, Dict[str, Any]] = {}
     for cc in _bound_controls(analysis):
@@ -651,6 +658,12 @@ def propose_args_from_controls(analysis: Analysis) -> Dict[str, Dict[str, Any]]:
             arg["type"] = "bool"
         elif kind == DROPDOWN and cc.get("items"):
             arg["enum"] = list(cc["items"])
+        elif kind == COMBO_BOX and cc.get("labels"):
+            suggestions = "Suggestions: " + ", ".join(cc["labels"])
+            arg["description"] = (f"{arg['description']}. {suggestions}"
+                                  if arg["description"] else suggestions)
+        elif kind == DATE:
+            arg["type"] = "date"
         elif kind == TEXT:
             pass  # a string, as set above
     return proposals

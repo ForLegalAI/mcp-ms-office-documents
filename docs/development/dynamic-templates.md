@@ -153,7 +153,7 @@ contains it. The module is the whole feature:
 | `iter_content_controls()` | Every `w:sdt` in the body, tables, headers and footers (linked headers skipped, never created), as a `ContentControl` |
 | `classify()` | The kind, from the one typing element of `w:sdtPr`; none means rich text |
 | `parse_tag()` | `"size=small"` → `("size", "small")` |
-| `FILLERS` | kind → filler. Phase 1: check box, drop-down list, plain text |
+| `FILLERS` | kind → filler: check box, drop-down list, plain text, combo box, date picker |
 | `resolve_content_controls()` | The entry point the tool body and the admin preview call |
 | `describe_content_controls()` | What the admin analyser shows and proposes arguments from |
 
@@ -167,13 +167,25 @@ How each kind is filled:
   "Choose an item.") is a prompt and never offered or matched.
 - **Plain text** (`w:text`): one run in the control's own formatting; a
   `multiLine` control gets `w:br` per line, a single-line one spaces.
+- **Combo box** (`w:comboBox`): like a drop-down when an item matches (display
+  text shown, `w:lastValue` = item value); otherwise the value is written as
+  free text and becomes `w:lastValue`. Free text is valid here, so no warning.
+- **Date picker** (`w:date`): `_parse_iso_date()` takes a `datetime.date` (the
+  `date` argument type) or an ISO string; anything else is
+  `control_value_invalid`. `w:fullDate` is set to `YYYY-MM-DDT00:00:00Z` and
+  the text is `_format_date()` of the control's `w:dateFormat`, numeric codes
+  only (`d dd M MM yy yyyy`, quoted literals). A format with names (`MMM`,
+  `ddd` and longer) or a time code returns `None`, and the numeric default for
+  `w:lid` (`_DEFAULT_DATE_FORMATS`) is used instead, reported as
+  `control_date_format_simplified` (info); a control with no format uses that
+  default silently. No month or day names are ever produced, so there is no
+  locale table to keep.
 
 Invariants:
 
 - **Only a declared argument binds.** An untagged control, a tag naming no
-  argument and a kind without a filler (rich text, combo box, date, picture,
-  repeating section, building blocks) are left exactly as the template has
-  them.
+  argument and a kind without a filler (rich text, picture, repeating
+  section, building blocks) are left exactly as the template has them.
 - **The placeholder pass never sees a control's content.** It reads paragraph
   runs, and a control's runs sit inside `w:sdt`; a value that looks like
   `{{other}}` stays literal (tested).
@@ -188,7 +200,8 @@ Invariants:
   from the document's custom XML store on open and would overwrite the value.
 - **The caller is told.** A value sent for a control that could not take it
   — a drop-down with no such item (`control_item_missing`), a tag on a kind
-  without a filler or `=option` on a non-check box (`control_not_filled`) — is
+  without a filler or `=option` on a non-check box (`control_not_filled`), a
+  date that is not ISO (`control_value_invalid`) — is
   added to the build's `WarningChannel` with the control's `tag`. `_sync_impl`
   records the warnings with `metrics` and returns them through
   `warning_channel.attach()`: a clean build still returns the bare URL, one
@@ -276,7 +289,7 @@ template name, for the filename.
 
 | | Word | Email |
 |-|------|-------|
-| `TYPE_MAP` | string, int, float, bool, list | the same plus `dict`/`object` |
+| `TYPE_MAP` | string, int, float, bool, list, `date` (ISO, `format: date`) | string, int, float, bool, list, `dict`/`object`; `date` falls back to string |
 | `type: list` + `enum` | multi-choice (`list[Literal]`) | a single choice, as before |
 | Content controls | filled by Tag | n/a |
 | Base fields | none | `subject`, `to`, `cc`, `bcc` |
@@ -297,8 +310,9 @@ template name, for the filename.
 - **A `{{placeholder}}` typed inside a content control is not replaced.** The
   placeholder scan reads paragraph runs, which do not include a control's
   content. Bind the control by its Tag instead.
-- **Content controls, phase 1:** rich text, combo box, date picker, picture
-  and repeating sections are detected but not filled yet.
+- **Content controls:** rich text, picture and repeating sections are
+  detected but not filled yet. A date picker shows dates numerically only, and
+  never a time.
 - **Only content controls report warnings in dynamic Word templates.** The
   tool body has a `WarningChannel`, but placeholder Markdown rendering and the
   conditionals (an unknown name) still only log. Email templates have no
@@ -312,6 +326,7 @@ template name, for the filename.
 | `tests/test_docx_templates.py` | Registration from YAML, placeholder replacement across runs, block content insertion |
 | `tests/test_docx_placeholder_formatting.py` | Run formatting preserved through replacement |
 | `tests/test_docx_conditionals.py` | Marker parsing, balance, nesting, unknown names |
+| `tests/test_docx_content_controls_phase2.py` | Combo box and date picker: items vs free text, numeric date formats and their fallback, ISO validation, the `date` schema end to end |
 | `tests/test_docx_content_controls.py` | Each control kind, tags, unset values, prompt and data-binding removal, tables and headers |
 | `tests/test_docx_template_content_controls.py` | Controls through a registered tool: order against conditionals and placeholders, `list` + `enum` schema |
 | `tests/test_admin_content_controls.py` | Analysis, proposals, reconcile issues, the Options column round trip, preview |

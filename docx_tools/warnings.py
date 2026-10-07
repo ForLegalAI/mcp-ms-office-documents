@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from warning_channel import (
     SEVERITY_ERROR,
+    SEVERITY_INFO,
     SEVERITY_WARNING,
     WarningChannel,
 )
@@ -40,6 +41,8 @@ LINK_REFUSED = "link_refused"
 # the document could not take (see content_controls). Located by ``tag``.
 CONTROL_ITEM_MISSING = "control_item_missing"
 CONTROL_NOT_FILLED = "control_not_filled"
+CONTROL_VALUE_INVALID = "control_value_invalid"
+CONTROL_DATE_FORMAT_SIMPLIFIED = "control_date_format_simplified"
 
 #: One severity per code, in one place.
 WARNING_SEVERITY: dict[str, str] = {
@@ -49,6 +52,7 @@ WARNING_SEVERITY: dict[str, str] = {
     IMAGE_FAILED: SEVERITY_ERROR,
     CONTROL_ITEM_MISSING: SEVERITY_ERROR,
     CONTROL_NOT_FILLED: SEVERITY_ERROR,
+    CONTROL_VALUE_INVALID: SEVERITY_ERROR,
 
     TABLE_NOT_RECOGNISED: SEVERITY_WARNING,
     TABLE_SEPARATOR_MISSING: SEVERITY_WARNING,
@@ -56,6 +60,8 @@ WARNING_SEVERITY: dict[str, str] = {
     STYLE_FALLBACK_MISSING: SEVERITY_WARNING,
     WIDTHS_INVALID: SEVERITY_WARNING,
     LINK_REFUSED: SEVERITY_WARNING,
+
+    CONTROL_DATE_FORMAT_SIMPLIFIED: SEVERITY_INFO,
 }
 
 

@@ -31,7 +31,7 @@ from typing import Any, Dict, Tuple
 from admin.store import KIND_DOCX, KIND_EMAIL, KIND_PPTX, kind_meta
 
 # Argument types offered in the argument editor.
-ARG_TYPES = ("string", "int", "float", "bool", "list")
+ARG_TYPES = ("string", "int", "float", "bool", "list", "date")
 
 # Every style-mapping key docx_tools.style_map recognises, grouped so the
 # editor stays scannable. Keep in step with style_map's _HEADING_KEYS /

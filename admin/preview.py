@@ -13,6 +13,7 @@ dynamic email tool's pystache rendering.
 from __future__ import annotations
 
 import io
+from datetime import date as _date
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -57,6 +58,8 @@ def sample_values(args: List[Dict[str, Any]], conditionals: List[str] = None) ->
             values[name] = default if isinstance(default, list) and default else [enum[0]]
         elif enum:
             values[name] = default if default in enum else enum[0]
+        elif atype == "date":
+            values[name] = default if default not in (None, "") else _date.today().isoformat()
         elif atype in ("bool", "boolean"):
             values[name] = True if default in (None, "") else bool(default)
         elif atype in ("int", "integer"):
