@@ -1,14 +1,16 @@
 """Analyse uploaded template assets to drive the admin UI.
 
 For a ``.docx`` we report the ``{{placeholders}}`` and ``{{#if}}`` conditionals
-the renderer will act on, the paragraph styles the document actually defines
+the renderer will act on, the Word content controls and the tags that bind
+them, the paragraph styles the document actually defines
 (so the style-mapping dropdowns can be populated), and which of the styles the
 renderer relies on are missing. For an email ``.html`` we report the Mustache
 variables and sections.
 
-The reconciliation helper compares detected placeholders/conditionals against a
-template's declared ``args`` so the UI can offer to add missing args and warn
-about orphans.
+The reconciliation helper compares detected placeholders/conditionals/controls
+against a template's declared ``args`` so the UI can offer to add missing args
+and warn about orphans; :func:`propose_args_from_controls` turns tagged
+controls into the argument rows the editor pre-fills.
 
 This module is import-light and has no FastHTML dependency so it can be unit
 tested on its own.
@@ -29,6 +31,9 @@ from lxml import etree
 
 from docx_tools.dynamic_docx_tools import PLACEHOLDER_PATTERN
 from docx_tools.conditionals import parse_marker
+from docx_tools.content_controls import (
+    CHECKBOX, DROPDOWN, TEXT, describe_content_controls,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +64,9 @@ class Analysis:
     styles_present: List[str] = field(default_factory=list)
     missing_required_styles: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
+    # Word content controls, as docx_tools.content_controls.describe_content_controls
+    # reports them: tag, name, option, kind, alias, items, supported.
+    content_controls: List[Dict[str, Any]] = field(default_factory=list)
 
 
 def _ordered_unique(items) -> List[str]:
@@ -119,6 +127,7 @@ def analyze_docx(data: bytes) -> Analysis:
         if "{{" in text:
             placeholders.extend(PLACEHOLDER_PATTERN.findall(text))
     analysis.placeholders = _ordered_unique(placeholders)
+    analysis.content_controls = describe_content_controls(doc)
 
     # Conditionals + balance (body-level, matching the renderer's scope).
     conditionals: List[str] = []
@@ -556,21 +565,92 @@ class Reconciliation:
     missing_args: List[str] = field(default_factory=list)      # placeholder, no arg
     orphan_args: List[str] = field(default_factory=list)       # arg, no placeholder
     non_bool_conditions: List[str] = field(default_factory=list)  # condition arg not bool
+    control_issues: List[str] = field(default_factory=list)    # a tag that will not fill
+
+
+def _bound_controls(analysis: Analysis) -> List[Dict[str, Any]]:
+    """Tagged controls of a kind the renderer fills."""
+    return [cc for cc in analysis.content_controls if cc.get("name") and cc.get("supported")]
 
 
 def reconcile(analysis: Analysis, args: List[Dict[str, Any]]) -> Reconciliation:
     """Compare an :class:`Analysis` with a template's declared ``args``."""
     arg_by_name = {a.get("name"): a for a in (args or []) if isinstance(a, dict) and a.get("name")}
     arg_names = set(arg_by_name)
+    controls = _bound_controls(analysis)
 
-    detected = set(analysis.placeholders) | set(analysis.conditionals)
+    detected = (set(analysis.placeholders) | set(analysis.conditionals)
+                | {cc["name"] for cc in controls})
     rec = Reconciliation()
     rec.missing_args = [p for p in analysis.placeholders if p not in arg_names]
     # Conditionals also need a (bool) arg.
     rec.missing_args += [c for c in analysis.conditionals if c not in arg_names and c not in rec.missing_args]
+    rec.missing_args += [cc["name"] for cc in controls
+                         if cc["name"] not in arg_names and cc["name"] not in rec.missing_args]
     rec.orphan_args = [n for n in arg_by_name if n not in detected and n not in EMAIL_RESERVED_VARS]
     rec.non_bool_conditions = [
         c for c in analysis.conditionals
         if c in arg_by_name and str(arg_by_name[c].get("type", "string")).lower() not in ("bool", "boolean")
     ]
+    rec.control_issues = _control_issues(analysis, arg_by_name)
     return rec
+
+
+def _control_issues(analysis: Analysis, arg_by_name: Dict[str, Dict[str, Any]]) -> List[str]:
+    """Tags that will not do what they say, worded for the template author."""
+    issues: List[str] = []
+    for cc in analysis.content_controls:
+        name, tag = cc.get("name"), cc.get("tag")
+        if not name:
+            continue
+        if not cc.get("supported"):
+            issues.append(f"'{tag}' is a {cc['kind']} control, which is not filled yet "
+                          "— it stays as the template has it.")
+            continue
+        if cc.get("option") is not None and cc["kind"] != CHECKBOX:
+            issues.append(f"'{tag}': '=option' only works on check boxes.")
+            continue
+        enum = [str(v) for v in (arg_by_name.get(name, {}).get("enum") or [])]
+        if not enum:
+            continue
+        folded = {v.casefold() for v in enum}
+        if cc["kind"] == CHECKBOX and cc.get("option") is not None \
+                and cc["option"].casefold() not in folded:
+            issues.append(f"Check box '{tag}' can never be ticked: '{cc['option']}' is not "
+                          f"one of the options of '{name}'.")
+        if cc["kind"] == DROPDOWN:
+            items = {str(i).casefold() for i in cc.get("items") or []}
+            missing = [v for v in enum if v.casefold() not in items]
+            if missing:
+                issues.append(f"Drop-down '{tag}' has no item for: {', '.join(missing)} "
+                              "— those values would leave it unchanged.")
+    return issues
+
+
+def propose_args_from_controls(analysis: Analysis) -> Dict[str, Dict[str, Any]]:
+    """An argument row for each argument the tagged controls name, in document order.
+
+    A group of check boxes (``size=small``, ``size=medium``) becomes one
+    choice with those options — switch it to ``list`` when several may apply; a
+    bare-tag check box a ``bool``; a drop-down a choice of its item values; a
+    plain-text control a string. The control's Title becomes the description,
+    except on an option box, whose title names the option rather than the group.
+    """
+    proposals: Dict[str, Dict[str, Any]] = {}
+    for cc in _bound_controls(analysis):
+        name, kind, option = cc["name"], cc["kind"], cc.get("option")
+        arg = proposals.setdefault(name, {"name": name, "type": "string", "required": False,
+                                          "description": ""})
+        if not arg["description"] and cc.get("alias") and option is None:
+            arg["description"] = cc["alias"]
+        if kind == CHECKBOX and option is not None:
+            options = arg.setdefault("enum", [])
+            if option not in options:
+                options.append(option)
+        elif kind == CHECKBOX:
+            arg["type"] = "bool"
+        elif kind == DROPDOWN and cc.get("items"):
+            arg["enum"] = list(cc["items"])
+        elif kind == TEXT:
+            pass  # a string, as set above
+    return proposals

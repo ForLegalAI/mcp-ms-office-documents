@@ -67,6 +67,14 @@ adds to:
 - The UI **auto-detects** every placeholder and conditional and pre-builds the
   argument form. Fill in each argument's type, whether it's required, a default,
   and the description the AI sees.
+- **Options** (comma-separated) make an argument a choice the AI must pick
+  from; with type `list` it may pick several. Options written in YAML
+  (`enum:`) show here and are kept when you save.
+- Word **content controls** (check boxes, drop-down lists, plain text fields)
+  are listed with their tags, and each tag pre-fills an argument: a group of
+  boxes tagged `size=small`, `size=medium` becomes `size` with those
+  options. Tags that cannot fill are explained. See
+  [Templates](templates.md#word-content-controls-check-boxes-drop-down-lists-text-fields).
 - **Preview** with sample values (generates a real file; never uploaded anywhere).
 - **Preview with my values…** — a form with one control per argument,
   pre-filled with those same samples, so it stays one click if you do not care.

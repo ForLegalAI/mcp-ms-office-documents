@@ -243,7 +243,8 @@ tbody tr:last-child td{border-bottom:none}
 .args-table th{padding-bottom:var(--sp-1)}
 .args-table input,.args-table select{padding:.35rem .5rem;font-size:var(--fs-sm)}
 .args-table tbody tr:hover td{background:transparent}
-.col-name{width:22%}.col-type{width:12%}.col-req{width:13%}.col-def{width:16%}
+.col-name{width:18%}.col-type{width:11%}.col-req{width:12%}.col-def{width:13%}
+.col-opt{width:15%}
 .col-x{width:38px}
 
 /* ---- Badges, chips ---------------------------------------------------- */

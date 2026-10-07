@@ -17,7 +17,7 @@ from fasthtml.common import (
 )
 
 from admin import components as c
-from admin.analysis import Analysis, PptxAnalysis, reconcile
+from admin.analysis import Analysis, PptxAnalysis, propose_args_from_controls, reconcile
 from admin.kinds import ARG_TYPES, STYLE_GROUPS, descriptor
 from admin.sections import section_for_kind
 from admin.store import KIND_DOCX, KIND_PPTX
@@ -146,7 +146,10 @@ def arg_row(arg: Optional[Dict[str, Any]] = None, cond: bool = False):
     atype = str(arg.get("type", "string")).lower()
     required = bool(arg.get("required", True))
     default = arg.get("default", "")
+    if isinstance(default, list):  # a multi-choice default, shown like its options
+        default = ", ".join(map(str, default))
     desc = arg.get("description", "")
+    options = ", ".join(map(str, arg.get("enum") or []))
 
     type_opts = [Option(t, value=t, selected=(t == atype)) for t in ARG_TYPES]
     req_opts = [
@@ -162,6 +165,7 @@ def arg_row(arg: Optional[Dict[str, Any]] = None, cond: bool = False):
         Td(Select(*req_opts, name="arg_required"), cls="col-req"),
         Td(Input(name="arg_default", value="" if default in (None,) else str(default),
                  placeholder="optional"), cls="col-def"),
+        Td(Input(name="arg_enum", value=options, placeholder="a, b, c"), cls="col-opt"),
         Td(Input(name="arg_desc", value=desc, placeholder="what this is, for the AI")),
         Td(Button("✕", type="button", cls="btn-icon", title="Remove",
                   onclick="adminRemoveRow(this)"), cls="col-x"),
@@ -191,6 +195,11 @@ def _arg_rows(spec: Dict[str, Any], analysis: Optional[Analysis]):
                 rows.append(arg_row({"name": cond, "type": "bool", "required": False,
                                      "description": ""}, cond=True))
                 existing_names.add(cond)
+        # Tagged content controls: the control says what the argument is.
+        for name, proposal in propose_args_from_controls(analysis).items():
+            if name not in existing_names:
+                rows.append(arg_row(proposal))
+                existing_names.add(name)
     return rows or [arg_row()]
 
 
@@ -320,8 +329,46 @@ def analysis_report(analysis, spec: Dict[str, Any]):
     if rec.non_bool_conditions:
         items.append(c.flash("Conditional flags should be type 'bool': "
                              + ", ".join(rec.non_bool_conditions), "warn"))
+    if any(cc.get("tag") or cc.get("supported") for cc in analysis.content_controls):
+        items.append(c.static_row("Content controls", _content_controls_table(analysis)))
+    for issue in rec.control_issues:
+        items.append(c.flash("⚠ " + issue, "warn"))
     return c.card(*[i for i in items if i is not None],
                   title="What we found in the document")
+
+
+#: How a control kind reads in the admin (docx_tools.content_controls kinds).
+_CONTROL_KIND_LABELS = {
+    "checkbox": "check box", "dropdown": "drop-down list", "text": "plain text",
+    "richtext": "rich text", "combobox": "combo box", "date": "date picker",
+    "picture": "picture", "repeating": "repeating section", "other": "other",
+}
+
+
+def _content_controls_table(analysis):
+    """Each Word content control: its tag, kind, title and what it will do.
+
+    An untagged control of a kind that is never filled (a page-number field in
+    a footer, a building block) is left out: it is noise, not a missing tag.
+    """
+    rows = []
+    for cc in analysis.content_controls:
+        if not cc.get("tag") and not cc.get("supported"):
+            continue
+        if not cc.get("tag"):
+            status = Span("no tag — left as is", cls="muted")
+        elif not cc.get("supported"):
+            status = Span("not filled yet", cls="muted")
+        else:
+            status = "filled from " + cc["name"]
+        rows.append(Tr(
+            Td(Code(cc["tag"]) if cc.get("tag") else Span("—", cls="muted")),
+            Td(_CONTROL_KIND_LABELS.get(cc.get("kind"), cc.get("kind", ""))),
+            Td(cc.get("alias") or Span("—", cls="muted")),
+            Td(", ".join(cc.get("items") or []) or Span("—", cls="muted")),
+            Td(status),
+        ))
+    return c.data_table(["Tag", "Kind", "Title", "Items", "Effect"], rows)
 
 
 def pptx_analysis_report(analysis: PptxAnalysis):
@@ -419,13 +466,14 @@ def _document_edit_form(ctx, kind: str, spec: Dict[str, Any],
     )
 
     args = c.card(
-        P("Every placeholder and conditional in your document needs an argument. "
-          "We pre-filled them from the document — adjust types and descriptions, "
-          "then save.", cls="muted"),
+        P("Every placeholder, conditional and tagged content control in your "
+          "document needs an argument. We pre-filled them from the document — adjust "
+          "types and descriptions, then save. Options (comma-separated) make the "
+          "argument a choice; with type list, several may be chosen.", cls="muted"),
         c.data_table(
             [Th("Name", cls="col-name"), Th("Type", cls="col-type"),
              Th("Required", cls="col-req"), Th("Default", cls="col-def"),
-             Th("Description"), Th("", cls="col-x")],
+             Th("Options", cls="col-opt"), Th("Description"), Th("", cls="col-x")],
             _arg_rows(spec, analysis),
             cls="args-table", body_id="argrows",
         ),
@@ -605,6 +653,12 @@ def _value_control(arg: Dict[str, Any], value: Any, is_cond: bool):
             field, f"{name} — show this block", checked=bool(value),
             hint=desc or ("Untick it to see the document with this "
                           "conditional off."))
+    if arg.get("enum"):
+        chosen = {str(v) for v in (value if isinstance(value, list) else [value])}
+        options = [Option(str(o), value=str(o), selected=str(o) in chosen) for o in arg["enum"]]
+        multi = atype == "list"
+        return c.field(name, Select(*options, name=field, multiple=multi),
+                       hint=desc or ("Pick any number." if multi else None))
     if atype in ("int", "integer", "float"):
         return c.field(name, Input(name=field, value=str(value), type="number",
                                    step="any" if atype == "float" else "1"),
@@ -681,11 +735,12 @@ def _readonly_args_table(spec: Dict[str, Any]):
             Td("required" if a.get("required", True) else "optional"),
             Td(Code(str(a["default"])) if a.get("default") not in (None, "")
                else Span("—", cls="muted")),
+            Td(", ".join(map(str, a.get("enum") or [])) or Span("—", cls="muted")),
             Td(a.get("description", "") or Span("—", cls="muted")),
         )
         for a in args if isinstance(a, dict)
     ]
-    return c.data_table(["Name", "Type", "Required", "Default", "Description"], rows)
+    return c.data_table(["Name", "Type", "Required", "Default", "Options", "Description"], rows)
 
 
 def _readonly_style_mapping(spec: Dict[str, Any]):

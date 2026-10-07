@@ -91,6 +91,7 @@ line by line and paragraphs are appended as they are recognised.
 | `warnings.py` | The Word warning codes and their severities; `channel()` builds the per-build collector |
 | `document_features.py` | Template resolution, header/footer with PAGE/NUMPAGES fields, TOC field |
 | `conditionals.py` | `{{#if}}`/`{{^if}}`/`{{/if}}` marker paragraphs for dynamic templates |
+| `content_controls.py` | Fills Word content controls (check box, drop-down, plain text) bound by their Tag, for dynamic templates. See [`../dynamic-templates.md`](../dynamic-templates.md#content-controls-word) |
 | `dynamic_docx_tools.py` | YAML-driven template tools, placeholder replacement across split runs, live registration. See [`../dynamic-templates.md`](../dynamic-templates.md) |
 
 Three root modules are part of this pipeline:
@@ -410,6 +411,7 @@ it on open.
 | `tests/test_docx_escaped_newlines.py` | Literal `\n` and backslash escapes |
 | `tests/test_docx_soft_breaks.py` | The line-break model: `<br>`, trailing spaces, CR, runs stopping before blocks, quotes, cells, headers |
 | `tests/test_docx_templates.py`, `test_docx_placeholder_formatting.py`, `test_docx_conditionals.py` | Dynamic templates: placeholder replacement across runs, formatting preservation, conditionals |
+| `tests/test_docx_content_controls.py`, `test_docx_template_content_controls.py` | Dynamic templates: content controls filled by Tag |
 | `tests/test_docx_warnings.py` | The warnings channel: every code, the source line, de-duplication, the tool-boundary response shape |
 | `tests/test_inline_markdown.py` | The shared inline grammar |
 | `tests/test_warning_channel.py` | The shared record and collector the channel is built on |

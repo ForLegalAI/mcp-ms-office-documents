@@ -41,6 +41,23 @@ def coerce_default(atype: str, raw: str) -> Any:
     return raw
 
 
+def parse_enum(atype: str, raw: str) -> List[Any]:
+    """The "Options" column: comma-separated choices, coerced like a default.
+
+    Empty means no options. Numbers stay numbers for an ``int``/``float``
+    argument, so a YAML-written ``enum: [1, 2]`` survives a save unchanged.
+    """
+    options: List[Any] = []
+    for part in (raw or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        option = coerce_default(atype, part) if atype in ("int", "integer", "float") else part
+        if option not in options:
+            options.append(option)
+    return options
+
+
 def parse_args_from_form(form) -> List[Dict[str, Any]]:
     """Build the ``args`` list from the parallel-indexed form fields."""
     names = form.getlist("arg_name")
@@ -48,6 +65,7 @@ def parse_args_from_form(form) -> List[Dict[str, Any]]:
     reqs = form.getlist("arg_required")
     defs = form.getlist("arg_default")
     descs = form.getlist("arg_desc")
+    enums = form.getlist("arg_enum")
     args: List[Dict[str, Any]] = []
     for i, raw_name in enumerate(names):
         name = (raw_name or "").strip()
@@ -60,7 +78,15 @@ def parse_args_from_form(form) -> List[Dict[str, Any]]:
         arg: Dict[str, Any] = {
             "name": name, "type": atype, "required": required, "description": desc,
         }
-        if not required or (default_raw or "").strip():
+        enum = parse_enum(atype, enums[i] if i < len(enums) else "")
+        if enum:
+            arg["enum"] = enum
+            # A blank default is no default: "" is not one of the options. A
+            # multi-choice (list) default is comma-separated like the options.
+            if (default_raw or "").strip():
+                arg["default"] = (parse_enum("string", default_raw) if atype == "list"
+                                  else coerce_default(atype, default_raw))
+        elif not required or (default_raw or "").strip():
             arg["default"] = coerce_default(atype, default_raw)
         args.append(arg)
     return args

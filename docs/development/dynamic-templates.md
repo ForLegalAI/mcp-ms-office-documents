@@ -86,7 +86,9 @@ follow the same steps:
    directory first. A missing file skips the template with an error log.
 2. **Build the argument model.** Each entry in `args` becomes a field on a
    Pydantic model created with `create_model()`. `TYPE_MAP` translates the
-   YAML `type` string to a Python type; `enum` produces a `Literal`.
+   YAML `type` string to a Python type; `enum` produces a `Literal`, and
+   `type: list` with an `enum` (Word only) a `list[Literal]` — a multi-choice
+   that a group of check boxes binds to.
    `required` and `default` decide optionality. The email model starts from
    `BASE_FIELDS` (`subject` required, `to`, `cc`, `bcc` optional); the Word
    model starts empty.
@@ -103,9 +105,14 @@ follow the same steps:
 
 ### Rendering, Word
 
-The `_sync_impl` body opens the template with python-docx, runs
-`conditionals.resolve_conditionals()` with the argument payload, then
-`_replace_placeholders_in_document()` with every value stringified.
+The `_sync_impl` body opens the template with python-docx and runs, in order:
+
+1. `conditionals.resolve_conditionals()` with the argument payload — it
+   deletes whole blocks, so it goes first and nothing inside a pruned block
+   is filled;
+2. `content_controls.resolve_content_controls()` with the same payload — see
+   below;
+3. `_replace_placeholders_in_document()` with every value stringified.
 
 Placeholder replacement is the intricate part. Word splits text across runs
 as it is edited, so `{{name}}` is often three runs. `_replace_placeholder_in_paragraph()`
@@ -127,6 +134,50 @@ Conditionals are block markers on their own paragraphs (`{{#if flag}}`,
 `{{^if flag}}`, `{{/if}}`) evaluated against argument truthiness. Unbalanced
 markers keep all content and strip the markers; an unknown name keeps its
 content. Body only.
+
+### Content controls, Word
+
+`docx_tools/content_controls.py` fills Word content controls (`<w:sdt>`)
+bound by their **Tag**: `name` takes the argument's value, `name=option`
+(check boxes only) ticks when the value equals the option or a list value
+contains it. The module is the whole feature:
+
+| Piece | Role |
+|---|---|
+| `iter_content_controls()` | Every `w:sdt` in the body, tables, headers and footers (linked headers skipped, never created), as a `ContentControl` |
+| `classify()` | The kind, from the one typing element of `w:sdtPr`; none means rich text |
+| `parse_tag()` | `"size=small"` → `("size", "small")` |
+| `FILLERS` | kind → filler. Phase 1: check box, drop-down list, plain text |
+| `resolve_content_controls()` | The entry point the tool body and the admin preview call |
+| `describe_content_controls()` | What the admin analyser shows and proposes arguments from |
+
+How each kind is filled:
+
+- **Check box** (`w14:checkbox`): `w14:checked` and the glyph from the box's
+  own `checkedState`/`uncheckedState` (and its font). The box stays a box.
+- **Drop-down list** (`w:dropDownList`): the item whose value or display text
+  matches (case-insensitive) is shown and recorded in `w:lastValue`. No match
+  leaves the control and logs.
+- **Plain text** (`w:text`): one run in the control's own formatting; a
+  `multiLine` control gets `w:br` per line, a single-line one spaces.
+
+Invariants:
+
+- **Only a declared argument binds.** An untagged control, a tag naming no
+  argument and a kind without a filler (rich text, combo box, date, picture,
+  repeating section, building blocks) are left exactly as the template has
+  them.
+- **Unset is not a value.** `None` or a blank string leaves the control alone,
+  so a form keeps its "click here" prompt for the client to finish by hand —
+  unlike a `{{placeholder}}`, which renders blank. `False` and `[]` are values
+  and untick.
+- **A control that showed its prompt** (`w:showingPlcHdr`) loses that flag and
+  its run's character style (the "Placeholder Text" style), or the value
+  would print grey.
+- **A filled control drops `w:dataBinding`.** Word re-reads a bound control
+  from the document's custom XML store on open and would overwrite the value.
+- **Extension point:** a new kind is a new function in `FILLERS`; nothing else
+  dispatches on kind.
 
 ### Rendering, email
 
@@ -162,11 +213,12 @@ admin to type them:
 
 | Function | Reports |
 |---|---|
-| `analyze_docx()` | `{{placeholders}}`, `{{#if}}` conditionals, the paragraph styles the file defines (for the style-mapping dropdowns) and which styles the renderer expects but the file lacks |
+| `analyze_docx()` | `{{placeholders}}`, `{{#if}}` conditionals, the content controls (`describe_content_controls()`), the paragraph styles the file defines (for the style-mapping dropdowns) and which styles the renderer expects but the file lacks |
 | `analyze_html()` | Mustache variables and sections |
 | `analyze_pptx()` | Layouts, their placeholders, theme fonts and colours, plus warnings from `_add_pptx_warnings()` |
 | `analyze()` | Dispatches on kind |
-| `reconcile()` | Compares what was detected against the spec's declared `args`, so the UI can offer to add the missing ones and flag orphans |
+| `reconcile()` | Compares what was detected against the spec's declared `args`, so the UI can offer to add the missing ones and flag orphans; a tagged control counts as a use, and `control_issues` explains tags that will not fill (an option outside the enum, a drop-down missing an item, an unsupported kind) |
+| `propose_args_from_controls()` | An argument row per tag: a check-box group → a choice of its options, a bare check box → `bool`, a drop-down → a choice of its items, plain text → string; the control's Title becomes the description |
 
 It shares `PLACEHOLDER_PATTERN` with `dynamic_docx_tools`, so detection and
 substitution cannot disagree about what a placeholder looks like.
@@ -177,7 +229,8 @@ with `sample_values()` inventing plausible values from the declared args.
 Two properties matter. It **never touches the upload backend** — the bytes
 are returned, so a preview works on a server configured for S3 — and the Word
 path goes through the *production* substitution pipeline
-(`resolve_conditionals` + `replace_placeholders_in_document`), so the preview
+(`resolve_conditionals` + `resolve_content_controls` +
+`replace_placeholders_in_document`), so the preview
 cannot drift from what the live tool produces. The email path mirrors the
 dynamic email tool's pystache rendering, building the context the same way:
 declared arguments only, `None` flattened to `""`.
@@ -206,6 +259,8 @@ template name, for the filename.
 | | Word | Email |
 |-|------|-------|
 | `TYPE_MAP` | string, int, float, bool, list | the same plus `dict`/`object` |
+| `type: list` + `enum` | multi-choice (`list[Literal]`) | a single choice, as before |
+| Content controls | filled by Tag | n/a |
 | Base fields | none | `subject`, `to`, `cc`, `bcc` |
 | Global config | `style_mapping` from `global_config()`, merged with a per-template one | none |
 | Escaping | Markdown rendering, no HTML | Mustache HTML escaping on `{{x}}` |
@@ -221,6 +276,14 @@ template name, for the filename.
 - **Single instance.** Live registration assumes one process owns the
   template files. With replicas, use shared storage and restart.
 - **Block content is body-only** in Word templates; see rendering above.
+- **A `{{placeholder}}` typed inside a content control is not replaced.** The
+  placeholder scan reads paragraph runs, which do not include a control's
+  content. Bind the control by its Tag instead.
+- **Content controls, phase 1:** rich text, combo box, date picker, picture
+  and repeating sections are detected but not filled yet.
+- **Dynamic templates have no warning channel.** A tag that cannot fill (a
+  drop-down without the item) is logged and shown by the admin analyser, not
+  returned to the caller.
 
 ## Tests
 
@@ -230,6 +293,9 @@ template name, for the filename.
 | `tests/test_docx_templates.py` | Registration from YAML, placeholder replacement across runs, block content insertion |
 | `tests/test_docx_placeholder_formatting.py` | Run formatting preserved through replacement |
 | `tests/test_docx_conditionals.py` | Marker parsing, balance, nesting, unknown names |
+| `tests/test_docx_content_controls.py` | Each control kind, tags, unset values, prompt and data-binding removal, tables and headers |
+| `tests/test_docx_template_content_controls.py` | Controls through a registered tool: order against conditionals and placeholders, `list` + `enum` schema |
+| `tests/test_admin_content_controls.py` | Analysis, proposals, reconcile issues, the Options column round trip, preview |
 | `tests/test_dynamic_args_schema.py` | The flat-schema rules for both kinds |
 | `tests/test_template_registry.py` | `gather_specs()` merging and live (un)registration |
 | `tests/test_admin_template_lifecycle.py` | `enabled: false` across the merge, the loaders and a restart |

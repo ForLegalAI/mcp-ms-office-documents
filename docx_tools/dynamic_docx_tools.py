@@ -7,6 +7,9 @@ Placeholders in DOCX templates use Mustache syntax:
   - {{placeholder}} - replaced with markdown-formatted text
   - Text supports inline markdown: **bold**, *italic*, `code`, [links](url)
 
+Word content controls (check boxes, drop-down lists, plain text) are filled by
+their Tag instead of a placeholder; see ``content_controls``.
+
 YAML configuration example:
 ```yaml
 templates:
@@ -49,6 +52,7 @@ from template_registry import gather_specs, safe_remove_tool
 from async_runner import run_blocking
 import metrics
 from .conditionals import resolve_conditionals
+from .content_controls import resolve_content_controls
 from .inline_formatting import parse_inline_formatting
 from .patterns import (
     contains_block_markdown, normalize_newlines, expand_br_to_block_breaks,
@@ -683,12 +687,25 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
             py_type = Literal[lit_values]  # type: ignore[index]
             required = bool(arg.get("required", True))
             default = arg.get("default", (... if required else None))
-            if default is not ... and default is not None and default not in lit_values:
+            # `type: list` with an enum is a multi-choice: any number of the
+            # options (a group of check boxes where several may apply).
+            multi = str(arg.get("type", "string")).lower() in ("list", "list[str]", "list[string]")
+            if multi:
+                py_type = list[py_type]  # type: ignore[valid-type]
+                if default not in (..., None) and not (
+                        isinstance(default, list) and all(d in lit_values for d in default)):
+                    logger.warning(
+                        f"[dynamic-docx] Default '{default}' not a list of enum values for "
+                        f"{arg_name}; ignoring default."
+                    )
+                    default = ... if required else None
+            elif default is not ... and default is not None and default not in lit_values:
                 logger.warning(
                     f"[dynamic-docx] Default '{default}' not in enum for {arg_name}; ignoring default."
                 )
                 default = ... if required else None
-            desc = arg.get("description") or f"One of: {', '.join(map(str, lit_values))}"
+            desc = arg.get("description") or (
+                f"{'Any of' if multi else 'One of'}: {', '.join(map(str, lit_values))}")
             fields[arg_name] = (py_type, Field(default, description=desc))
             continue
 
@@ -740,6 +757,11 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
                 # Resolve conditional blocks ({{#if flag}} ... {{/if}}) before
                 # substitution, since this prunes whole block elements.
                 resolve_conditionals(doc, payload)
+
+                # Fill tagged Word content controls (check boxes, drop-downs,
+                # plain text) — after the conditionals, so a control in a
+                # pruned block is never touched, and before placeholders.
+                resolve_content_controls(doc, payload)
 
                 context = {k: ("" if v is None else str(v)) for k, v in payload.items()}
 

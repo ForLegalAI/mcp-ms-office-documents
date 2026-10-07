@@ -15,11 +15,11 @@ contain, [`dynamic-templates.md`](dynamic-templates.md).
 | `admin/sections.py` | one `Section` per product area (Word, PowerPoint, Excel, Email, XML, Server) and its tabs — the top-level navigation |
 | `admin/kinds.py` | one `KindDescriptor` per *dynamic* template kind: label, icon, wording, `has_args` |
 | `admin/base_templates.py` | one `BaseSlot` per *static* base template (fixed filename, one of each) |
-| `admin/forms.py` | reading a submitted form back into a spec dict |
+| `admin/forms.py` | reading a submitted form back into a spec dict (the Options column is `parse_enum()`) |
 | `admin/assets.py` | what is in `custom_templates/` and what still references it |
 | `admin/views/` | the pages — `shell`, `sections`, `templates`, `base`, `assets`, `settings`, `status`, `login` |
 | `admin/store.py` | persistence: `config/<kind>_templates.d/<name>.yaml` + the asset |
-| `admin/analysis.py` | what is inside an uploaded `.docx` / `.html` / `.pptx` |
+| `admin/analysis.py` | what is inside an uploaded `.docx` / `.html` / `.pptx`, including Word content controls and the arguments their tags propose |
 | `admin/preview.py` | rendering a template without touching the upload backend |
 | `admin/auth.py` | the shared-password gate (locked outright when no password is configured) and CSRF tokens |
 
@@ -602,6 +602,7 @@ the generic ones and `tests/test_admin_global_styles.py` pins it.
 | `tests/test_admin_source_files.py` | the reference map, and that only an orphan can be deleted |
 | `tests/test_admin_clone.py` | what a clone carries, what it drops, and that the asset is copied |
 | `tests/test_admin_master_templates.py` | inspecting a master-YAML entry, and adopting it without touching the file |
+| `tests/test_admin_content_controls.py` | content controls in the editor: analysis, proposals, reconcile issues, the Options column, preview |
 | `tests/test_admin_preview_values.py` | previewing with your own values: Markdown through a placeholder, conditionals off |
 | `tests/test_admin_content_area.py` | the pptx content area: agreeing with the tool, and the cases worth warning about |
 | `tests/test_admin_config.py` | `ADMIN_*` settings |
