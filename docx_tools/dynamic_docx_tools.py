@@ -215,6 +215,24 @@ def _propagate_format_to_block(doc, inserted, src_ppr, fmt) -> None:
             _apply_placeholder_format(run, fmt)
 
 
+#: Paragraph children a whole-paragraph replacement may drop with the paragraph.
+_PLAIN_PARAGRAPH_CHILDREN = {qn('w:pPr'), qn('w:r'), qn('w:proofErr'),
+                             qn('w:bookmarkStart'), qn('w:bookmarkEnd')}
+
+
+def _restore_position(p_element, kept: int, anchor) -> None:
+    """Move what was appended after the first *kept* children back before *anchor*.
+
+    The replacement is built with python-docx's append-only API; *anchor* is the
+    element that followed the replaced runs (None when they ended the paragraph,
+    where appending is already the right place).
+    """
+    if anchor is None or anchor.getparent() is not p_element:
+        return
+    for element in list(p_element)[kept:]:
+        anchor.addprevious(element)
+
+
 def _segments_for_range(run_info, lo: int, hi: int):
     """Return ``(text, run)`` pairs for the part of each run within ``[lo, hi)``.
 
@@ -347,11 +365,19 @@ def _replace_placeholder_in_paragraph(
         # 2. Get replacement content (parsed markdown)
         # 3. Get text after placeholder
 
-        # Slice the surrounding text at the placeholder boundaries, remembering
-        # each slice's source run so its formatting can be restored (rather than
-        # flattening before/after text to plain runs).
-        before_segments = _segments_for_range(run_info, 0, placeholder_start)
-        after_segments = _segments_for_range(run_info, placeholder_end, len(combined_text))
+        # Only the runs the placeholder spans are rebuilt. Everything else in the
+        # paragraph keeps its place — other runs, and content that is not a run
+        # at all (a content control, a hyperlink), which rebuilding the whole
+        # paragraph at its end would have moved to the front.
+        spanned = [(start, end, run) for start, end, run in run_info
+                   if start < placeholder_end and end > placeholder_start]
+        anchor = spanned[-1][2]._r.getnext()  # the new content goes back before this
+
+        # Slice the spanned runs' surrounding text at the placeholder boundaries,
+        # remembering each slice's source run so its formatting can be restored
+        # (rather than flattening before/after text to plain runs).
+        before_segments = _segments_for_range(spanned, spanned[0][0], placeholder_start)
+        after_segments = _segments_for_range(spanned, placeholder_end, spanned[-1][1])
 
         # Check if the value contains block-level content (lists, headings)
         has_block_content = contains_block_markdown(value)
@@ -363,7 +389,13 @@ def _replace_placeholder_in_paragraph(
         # single-line value, a placeholder in the MIDDLE of a paragraph, or one in a
         # table/header (doc is None) stays inline (soft breaks only) — a single line
         # needs no splitting and a sentence cannot be split into separate paragraphs.
-        is_whole_paragraph = not before_segments and not after_segments
+        # "Whole paragraph" is about the paragraph, not the spanned runs: no text
+        # around the placeholder, and nothing that is not a run (a content
+        # control), since a whole-paragraph block value removes the paragraph.
+        is_whole_paragraph = (
+            not combined_text[:placeholder_start] and not combined_text[placeholder_end:]
+            and not any(child.tag not in _PLAIN_PARAGRAPH_CHILDREN for child in paragraph._p)
+        )
         use_block = (
             doc is not None
             and value.strip() != ""
@@ -375,10 +407,12 @@ def _replace_placeholder_in_paragraph(
         existing_ppr = paragraph._p.find(qn('w:pPr'))
         src_ppr = copy.deepcopy(existing_ppr) if existing_ppr is not None else None
 
-        # Clear all existing runs
+        # Clear the spanned runs; what follows is appended to the paragraph and
+        # moved back to their position at the end (_restore_position).
         p_element = paragraph._p
-        for run in runs:
+        for _, _, run in spanned:
             p_element.remove(run._r)
+        kept = len(p_element)
 
         # Re-add the text before the placeholder, preserving its formatting.
         _add_formatted_segments(paragraph, before_segments)
@@ -391,6 +425,7 @@ def _replace_placeholder_in_paragraph(
 
             # Re-add the text after the placeholder, preserving its formatting.
             _add_formatted_segments(paragraph, after_segments)
+            _restore_position(p_element, kept, anchor)
 
             # If the placeholder occupied the whole paragraph it is now empty –
             # remove it so the produced paragraphs take its place cleanly.
@@ -407,6 +442,7 @@ def _replace_placeholder_in_paragraph(
 
             # Re-add the text after the placeholder, preserving its formatting.
             _add_formatted_segments(paragraph, after_segments)
+            _restore_position(p_element, kept, anchor)
 
         return True
 
@@ -793,8 +829,6 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
                     buffer.close()
 
                 logger.info(f"[dynamic-docx] Document generated from template {_name}")
-                for line in warnings.messages:
-                    logger.warning(f"[dynamic-docx] {_name}: {line}")
                 metrics.record_call("docx", _name)
                 metrics.record_warnings("docx", _name, warnings)
                 return attach_warnings(result, warnings)

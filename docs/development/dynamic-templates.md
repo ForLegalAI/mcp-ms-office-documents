@@ -117,7 +117,13 @@ The `_sync_impl` body opens the template with python-docx and runs, in order:
 Placeholder replacement is the intricate part. Word splits text across runs
 as it is edited, so `{{name}}` is often three runs. `_replace_placeholder_in_paragraph()`
 joins the run texts, finds the placeholder, and captures the formatting of
-the run it starts in. Then:
+the run it starts in. Only the runs the placeholder spans are removed and
+rebuilt; the new runs are built with python-docx's append-only API and then
+moved back to where the removed runs stood (`_restore_position()`), so other
+runs and anything in the paragraph that is not a run — a content control, a
+hyperlink — keep their place (`tests/test_docx_placeholder_keeps_inline_content.py`).
+A paragraph holding such content is never "whole", so a block value does not
+delete it. Then:
 
 - a value with no block-level Markdown is rendered inline through
   `parse_inline_formatting()` into the paragraph, with the placeholder run's

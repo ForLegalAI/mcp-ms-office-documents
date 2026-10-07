@@ -247,7 +247,7 @@ still a form the client can edit.
 | Check box | `size=small` | string with `enum` | ticked when the value is `small` |
 | Check box | `channels=email` | `list` with `enum` | ticked when the list contains `email` |
 | Drop-down list | `plan` | string, usually with `enum` | the item whose value or display text matches is selected |
-| Plain text | `full_name` | string | the text replaces the prompt, in the control's own formatting; a multi-line control keeps line breaks |
+| Plain text | `full_name` | string | the text replaces the prompt, in the control's own formatting; a multi-line control keeps line breaks, a single-line one joins the lines with spaces |
 
 ```yaml
 args:
@@ -275,6 +275,11 @@ args:
   and in drop-down items ignore upper/lower case.
 - **A default is a value.** A `bool` argument with `default: false` unticks its
   box when the AI leaves it out, even if the template ships the box ticked.
+- A bare-tag check box bound to a *text* argument is ticked by `true`, `yes`,
+  `y`, `1`, `x` or `ano` (any case); any other text unticks it. Bind it to a
+  `bool` argument instead where you can.
+- A `{{placeholder}}` and content controls may share a paragraph or table
+  cell; replacing the placeholder leaves the controls where they are.
 - A drop-down's empty-value entry (Word's own "Choose an item.") is a prompt,
   never a choice.
 - **Where:** body, tables, headers and footers. A control inside a
