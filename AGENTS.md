@@ -99,6 +99,9 @@ backend → URL string or LibreChat artifact dict. Details:
   function; `main.py` attaches them with `_with_warnings()`, passing the
   tool's `kind` and `name` — that call also records them for the admin Status
   page, and the arguments are required so a new tool cannot go uncounted.
+  A dynamic Word template tool does not return through `main.py`: its body
+  creates the channel, calls `metrics.record_warnings()` and shapes the result
+  with `warning_channel.attach()`, the same function `_with_warnings()` uses.
   PowerPoint keeps its own `SlideWarning` record and shares the severities.
 
 **Word**

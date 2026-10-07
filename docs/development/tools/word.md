@@ -310,6 +310,8 @@ configuration and has no line to give.
 | `style_missing` | warning | The template has no such style; the fallback was used |
 | `style_fallback_missing` | warning | The fallback style is missing too |
 | `widths_invalid` | warning | A `<!-- widths -->` directive is not a list of numbers; it was ignored |
+| `control_item_missing` | error | Dynamic templates: a drop-down content control has no item for the value sent; it was left unselected. Located by `tag` |
+| `control_not_filled` | error | Dynamic templates: a value was sent for a tagged control the renderer does not fill (a kind without a filler, or `=option` on a non-check box). Located by `tag` |
 | `link_refused` | warning | A link target's scheme is not `http`, `https`, `mailto` or `tel`; `add_hyperlink()` kept the label as text. Reported from a pre-scan in `_markdown_to_word_buffer()`, since the inline renderer has no channel; `_inline_text()` leaves out whole-line images and fenced code, which make no link |
 
 Two properties of the channel matter here. It **de-duplicates** identical
@@ -344,8 +346,10 @@ caller's blank row was swallowed with the table counted as well formed. Excel's
 `_is_separator_row()` checks every cell; so does this.
 
 `process_markdown_content()` takes `warnings=None`, which discards them. The
-dynamic Word template tools render through that path and report nothing, as
-before; only the static tool has a response shape to put them in.
+dynamic Word template tools have a channel of their own (created in their
+`_sync_impl`, attached with `warning_channel.attach()`), but so far only
+`content_controls.resolve_content_controls()` writes to it: Markdown rendered
+through a placeholder still passes `warnings=None` and reports nothing.
 
 ### Headers, footers, TOC
 

@@ -28,6 +28,11 @@ Rules shared by every kind:
   untick.
 - A filled control stays a content control; its ``w:dataBinding`` is dropped,
   or Word would overwrite the new content from the document's XML data store.
+- A value the document could not take — a drop-down with no such item, a tag
+  on a kind that is not filled, ``=option`` on a non-check box — is reported
+  on the build's warning channel (``control_item_missing`` /
+  ``control_not_filled``, located by ``tag``), so the caller learns it from the
+  tool result, not from the server log.
 
 ``dynamic_docx_tools`` calls :func:`resolve_content_controls` after the
 conditionals and before placeholder substitution; the admin preview calls the
@@ -42,6 +47,8 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Optional,
 
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
+
+from . import warnings as W
 
 if TYPE_CHECKING:  # imported only for type hints
     from docx import Document as DocxDocument
@@ -246,7 +253,7 @@ def _set_text(cc: ContentControl, text: str, multiline: bool = False) -> None:
     target.append(run)
 
 
-def _fill_checkbox(cc: ContentControl, value: Any) -> bool:
+def _fill_checkbox(cc: ContentControl, value: Any, warnings=None) -> bool:
     if cc.option is None:
         on = (value.strip().casefold() in _TRUE_WORDS) if isinstance(value, str) else bool(value)
     else:
@@ -282,7 +289,7 @@ def _fill_checkbox(cc: ContentControl, value: Any) -> bool:
     return True
 
 
-def _fill_dropdown(cc: ContentControl, value: Any) -> bool:
+def _fill_dropdown(cc: ContentControl, value: Any, warnings=None) -> bool:
     for item_value, display in cc.items:
         if _matches(value, item_value) or _matches(value, display):
             _set_text(cc, display)
@@ -290,30 +297,40 @@ def _fill_dropdown(cc: ContentControl, value: Any) -> bool:
             return True
     logger.warning("[dynamic-docx] Drop-down '%s' has no item %r; leaving it as the "
                    "template has it.", cc.tag, value)
+    if warnings is not None:
+        choices = ", ".join(v for v, _ in cc.items) or "none"
+        warnings.add(W.CONTROL_ITEM_MISSING,
+                     f"The drop-down has no item {value!r}, so it was left unselected. "
+                     f"Its items are: {choices}.", tag=cc.tag)
     return False
 
 
-def _fill_text(cc: ContentControl, value: Any) -> bool:
+def _fill_text(cc: ContentControl, value: Any, warnings=None) -> bool:
     text = ", ".join(map(str, value)) if isinstance(value, (list, tuple)) else str(value)
     multiline = _attr(cc.properties.find(qn("w:text")), "w:multiLine") in ("1", "true", "on")
     _set_text(cc, text, multiline=multiline)
     return True
 
 
-#: kind -> filler. A kind missing here is left as the template has it.
-FILLERS: Dict[str, Callable[[ContentControl, Any], bool]] = {
+#: kind -> filler ``(control, value, warnings) -> filled``. A kind missing here
+#: is left as the template has it.
+FILLERS: Dict[str, Callable[..., bool]] = {
     CHECKBOX: _fill_checkbox,
     DROPDOWN: _fill_dropdown,
     TEXT: _fill_text,
 }
 
 
-def resolve_content_controls(doc: "DocxDocument", values: Dict[str, Any]) -> int:
+def resolve_content_controls(doc: "DocxDocument", values: Dict[str, Any],
+                             warnings=None) -> int:
     """Fill every tagged, supported control whose tag names a key of *values*.
 
     Args:
         doc: The Word document (mutated in place).
         values: Argument name -> validated value, as the tool received it.
+        warnings: The build's :class:`~warning_channel.WarningChannel`, or None
+            to discard them (the admin preview). A value the caller sent that a
+            control could not take is reported here.
 
     Returns:
         How many controls were filled.
@@ -322,19 +339,23 @@ def resolve_content_controls(doc: "DocxDocument", values: Dict[str, Any]) -> int
     for cc in list(iter_content_controls(doc)):
         if not cc.name or cc.name not in values:
             continue  # untagged, or a tag that names no argument of this template
-        filler = FILLERS.get(cc.kind)
-        if filler is None:
-            logger.info("[dynamic-docx] Content control '%s' is a %s control, which is "
-                        "not filled; leaving it.", cc.tag, cc.kind)
-            continue
-        if cc.option is not None and cc.kind != CHECKBOX:
-            logger.warning("[dynamic-docx] Tag '%s': '=option' only applies to check "
-                           "boxes; leaving the %s control.", cc.tag, cc.kind)
-            continue
         value = values[cc.name]
         if _is_unset(value):
             continue  # nothing sent: keep the template's prompt / state
-        if filler(cc, value):
+        filler = FILLERS.get(cc.kind)
+        reason = None
+        if filler is None:
+            reason = f"it is a {cc.kind} control, which is not filled yet"
+        elif cc.option is not None and cc.kind != CHECKBOX:
+            reason = "'=option' in a tag only works on check boxes"
+        if reason:
+            logger.warning("[dynamic-docx] Content control '%s' left as is: %s.", cc.tag, reason)
+            if warnings is not None:
+                warnings.add(W.CONTROL_NOT_FILLED,
+                             f"The value for '{cc.name}' was not written into this "
+                             f"control: {reason}. Fix the template.", tag=cc.tag)
+            continue
+        if filler(cc, value, warnings):
             _drop_binding(cc)
             filled += 1
     return filled

@@ -37,7 +37,7 @@ import copy
 import logging
 import threading
 from pathlib import Path
-from typing import Any, Dict, Optional, Literal
+from typing import Any, Dict, Optional, Literal, Union
 
 from docx import Document as DocxDocument
 from docx.oxml.ns import qn
@@ -53,6 +53,8 @@ from async_runner import run_blocking
 import metrics
 from .conditionals import resolve_conditionals
 from .content_controls import resolve_content_controls
+from . import warnings as W
+from warning_channel import attach as attach_warnings
 from .inline_formatting import parse_inline_formatting
 from .patterns import (
     contains_block_markdown, normalize_newlines, expand_br_to_block_breaks,
@@ -750,6 +752,9 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
             try:
                 # Load the template document
                 doc = DocxDocument(_template_path)
+                # What the build could not do as asked comes back in the result
+                # (attach_warnings below), not only in the server log.
+                warnings = W.channel()
 
                 # Build context from input data
                 payload = data.model_dump()
@@ -761,7 +766,7 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
                 # Fill tagged Word content controls (check boxes, drop-downs,
                 # plain text) — after the conditionals, so a control in a
                 # pruned block is never touched, and before placeholders.
-                resolve_content_controls(doc, payload)
+                resolve_content_controls(doc, payload, warnings)
 
                 context = {k: ("" if v is None else str(v)) for k, v in payload.items()}
 
@@ -788,19 +793,23 @@ def _register_single_template(mcp: FastMCP, spec: Dict[str, Any],
                     buffer.close()
 
                 logger.info(f"[dynamic-docx] Document generated from template {_name}")
+                for line in warnings.messages:
+                    logger.warning(f"[dynamic-docx] {_name}: {line}")
                 metrics.record_call("docx", _name)
-                return result
+                metrics.record_warnings("docx", _name, warnings)
+                return attach_warnings(result, warnings)
 
             except Exception as e:
                 metrics.record_error("docx", _name, str(e))
                 logger.error(f"[dynamic-docx] Error generating document from {_name}: {e}", exc_info=True)
                 raise ToolError(f"Error generating document from template {_name}: {e}")
 
-        async def tool_impl(data: _model) -> str:  # type: ignore
+        async def tool_impl(data: _model) -> Union[str, dict]:  # type: ignore
             return await run_blocking(_sync_impl, data)
 
         tool_impl.__annotations__['data'] = _model  # type: ignore[index]
-        tool_impl.__annotations__['return'] = str  # type: ignore[index]
+        # A bare URL string, or {"file", "warnings"} when the build reports any.
+        tool_impl.__annotations__['return'] = Union[str, dict]  # type: ignore[index]
         return tool_impl
 
     # Register the tool

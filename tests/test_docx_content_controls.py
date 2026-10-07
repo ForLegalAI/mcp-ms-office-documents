@@ -230,3 +230,34 @@ def test_the_choose_an_item_prompt_is_not_a_choice():
     assert resolve_content_controls(doc, {"plan": "Choose an item."}) == 0
     assert resolve_content_controls(doc, {"plan": "basic"}) == 1
     assert cc.content_text(dd) == "Basic plan"
+
+
+# --- what the caller is told ------------------------------------------------------
+
+def _channel():
+    from docx_tools.warnings import channel
+    return channel()
+
+
+def test_a_dropdown_without_the_item_is_reported_with_its_items():
+    warnings = _channel()
+    resolve_content_controls(_doc(cc.dropdown("plan")), {"plan": "enterprise"}, warnings)
+    [w] = warnings.as_dicts()
+    assert (w["code"], w["severity"], w["tag"]) == ("control_item_missing", "error", "plan")
+    assert "'enterprise'" in w["message"] and "basic, pro" in w["message"]
+
+
+def test_a_value_for_a_kind_that_is_not_filled_is_reported():
+    warnings = _channel()
+    resolve_content_controls(_doc(cc.rich_text("notes"), cc.text("size=small", sdt_id=9)),
+                             {"notes": "x", "size": "small"}, warnings)
+    assert [(w["code"], w["tag"]) for w in warnings.as_dicts()] == [
+        ("control_not_filled", "notes"), ("control_not_filled", "size=small")]
+
+
+def test_nothing_is_reported_for_unset_values_or_successful_fills():
+    warnings = _channel()
+    resolve_content_controls(_doc(cc.dropdown("plan"), cc.rich_text("notes", sdt_id=8)),
+                             {"plan": None, "notes": ""}, warnings)
+    resolve_content_controls(_doc(cc.dropdown("plan")), {"plan": "pro"}, warnings)
+    assert warnings.as_dicts() == []

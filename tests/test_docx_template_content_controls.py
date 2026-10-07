@@ -165,3 +165,50 @@ def test_a_value_written_into_a_control_is_not_expanded_as_a_placeholder(tmp_pat
     controls = _controls(out["doc"])
     assert [cc.content_text(c) for c in controls] == ["{{other}}"] * 3
     assert "Other: EXPANDED" in [p.text for p in out["doc"].paragraphs]
+
+
+def _register_dropdown_tool(tmp_path, out, enum=None):
+    doc = Document()
+    cc.add_inline(doc.add_paragraph("Plan: "), cc.dropdown("plan", sdt_id=1))
+    template = tmp_path / "dd.docx"
+    doc.save(template)
+    arg = {"name": "plan", "type": "string", "required": False, "description": "Plan"}
+    if enum:
+        arg["enum"] = enum
+
+    def fake_upload(buf, kind, filename=None, add_unique_prefix=None, **kw):
+        out["doc"] = Document(io.BytesIO(buf.getvalue()))
+        return "https://files.example/dd.docx"
+
+    mcp = FastMCP("dd")
+    p1 = patch.object(dd, "find_docx_template_by_name", lambda f: str(template))
+    p2 = patch.object(dd, "upload_file", fake_upload)
+    p1.start()
+    p2.start()
+    assert dd._register_single_template(mcp, {"name": "cc_probe", "docx_path": "dd.docx", "args": [arg]})
+    return mcp, (p1, p2)
+
+
+def test_an_unfillable_value_comes_back_as_a_warning_in_the_result(tmp_path):
+    out = {}
+    mcp, patches = _register_dropdown_tool(tmp_path, out)
+    try:
+        result = _call(mcp, {"plan": "enterprise"}).data
+    finally:
+        for p in patches:
+            p.stop()
+    assert result["file"] == "https://files.example/dd.docx"
+    [w] = result["warnings"]
+    assert (w["code"], w["severity"], w["tag"]) == ("control_item_missing", "error", "plan")
+
+
+def test_a_clean_build_still_returns_the_bare_url(tmp_path):
+    out = {}
+    mcp, patches = _register_dropdown_tool(tmp_path, out)
+    try:
+        result = _call(mcp, {"plan": "pro"}).data
+    finally:
+        for p in patches:
+            p.stop()
+    assert result == "https://files.example/dd.docx"
+    assert cc.content_text(_controls(out["doc"])[0]) == "Pro plan"

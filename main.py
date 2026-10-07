@@ -16,6 +16,7 @@ from config import get_config
 from xml_tools import _create_xml_buffer
 from middleware import ApiKeyAuthMiddleware
 from async_runner import run_blocking
+from warning_channel import attach as attach_warnings
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 from librechat_integration import extract_user_context_from_request, upload_and_format_response
@@ -178,13 +179,7 @@ def _with_warnings(result, warnings, kind, name, **extra):
     """
     metrics.record_call(kind, name)
     metrics.record_warnings(kind, name, warnings)
-
-    reported = [warning.as_dict() for warning in warnings]
-    if not reported:
-        return result
-    if isinstance(result, dict):
-        return {**result, "warnings": reported}
-    return {"file": result, **extra, "warnings": reported}
+    return attach_warnings(result, warnings, **extra)
 
 
 @mcp.tool(

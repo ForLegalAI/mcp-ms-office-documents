@@ -179,12 +179,16 @@ Each tool owns its codes and their severities: `docx_tools/warnings.py`,
 `xlsx_tools/warnings.py`. `pptx_tools/warnings.py` shares the severity
 vocabulary but keeps its own `SlideWarning` record — a slide index is not a
 line or a cell, and its published shape predates this module.
-`main._with_warnings()` is the one place a result is widened from a bare URL
-string into `{"file", …, "warnings"}` — and, because it is the one place every
-channel-carrying tool passes through on success, the one place those warnings
-are counted for the Status page. It takes the tool's `kind` and `name` as
-required arguments for that reason: a new tool that forgets them fails there
-rather than going silently uncounted.
+`attach()` is the one place a result is widened from a bare URL string into
+`{"file", …, "warnings"}` (or gains a `warnings` key, for a LibreChat artifact
+dict); a clean build returns its result unchanged. It has two callers.
+`main._with_warnings()` wraps it for the static tools and, because every
+channel-carrying static tool passes through it on success, also counts the
+warnings for the Status page — it takes the tool's `kind` and `name` as
+required arguments for that reason, so a new tool that forgets them fails
+there rather than going silently uncounted. The dynamic Word template tools
+call `metrics.record_warnings()` and `attach()` themselves in their offloaded
+body, since they do not return through `main.py`.
 
 `tests/test_warning_channel.py` covers the record and the collector; each
 tool's own codes are covered by `tests/test_<tool>_warnings.py`.

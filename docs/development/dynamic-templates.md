@@ -180,8 +180,16 @@ Invariants:
   would print grey.
 - **A filled control drops `w:dataBinding`.** Word re-reads a bound control
   from the document's custom XML store on open and would overwrite the value.
-- **Extension point:** a new kind is a new function in `FILLERS`; nothing else
-  dispatches on kind.
+- **The caller is told.** A value sent for a control that could not take it
+  — a drop-down with no such item (`control_item_missing`), a tag on a kind
+  without a filler or `=option` on a non-check box (`control_not_filled`) — is
+  added to the build's `WarningChannel` with the control's `tag`. `_sync_impl`
+  records the warnings with `metrics` and returns them through
+  `warning_channel.attach()`: a clean build still returns the bare URL, one
+  with warnings returns `{"file": …, "warnings": […]}`, the same shape as the
+  static tools. The admin preview passes no channel.
+- **Extension point:** a new kind is a new function in `FILLERS`
+  (`(control, value, warnings) -> filled`); nothing else dispatches on kind.
 
 ### Rendering, email
 
@@ -285,9 +293,10 @@ template name, for the filename.
   content. Bind the control by its Tag instead.
 - **Content controls, phase 1:** rich text, combo box, date picker, picture
   and repeating sections are detected but not filled yet.
-- **Dynamic templates have no warning channel.** A tag that cannot fill (a
-  drop-down without the item) is logged and shown by the admin analyser, not
-  returned to the caller.
+- **Only content controls report warnings in dynamic Word templates.** The
+  tool body has a `WarningChannel`, but placeholder Markdown rendering and the
+  conditionals (an unknown name) still only log. Email templates have no
+  channel.
 
 ## Tests
 

@@ -279,6 +279,12 @@ args:
   never a choice.
 - **Where:** body, tables, headers and footers. A control inside a
   `{{#if}}` block that is dropped is dropped with it.
+- **The AI is told what did not fit.** A value a control cannot take — a
+  drop-down with no such item, or a value for a control of a kind that is not
+  filled — leaves the control as it is and comes back in the tool result:
+  `{"file": "…", "warnings": [{"code": "control_item_missing", "severity":
+  "error", "tag": "plan", "message": "…"}]}`. A build with nothing to report
+  returns the plain link, as before.
 - **Not filled yet:** rich text, combo box, date picker, picture and repeating
   section controls are left as they are. A `{{placeholder}}` typed *inside* a
   control is not replaced either — tag the control instead.
