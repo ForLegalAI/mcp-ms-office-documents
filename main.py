@@ -274,7 +274,7 @@ async def create_word_document(
         "- <center>text</center> for a single line; for multiple lines put <center> and </center> each on their own line with the content on the lines between\n"
         "- <div align=\"right|center|justify|left\">text</div> (single or multi-line)\n"
         "\n"
-        "LINE BREAKS: Use real newlines in the text — separate paragraphs and blocks with a blank line. For a soft break (a new line inside the SAME paragraph, e.g. an address block) write <br>: Street<br>City. Ending a line with two trailing spaces does the same, but the spaces are invisible and many editors strip them, so prefer <br>. Both work anywhere text is written — prose, headings, list items, quotes, table cells. Do NOT type the two literal characters backslash-n to mean a newline.\n"
+        "LINE BREAKS: Use real newlines in the text — separate paragraphs and blocks with a blank line. For a soft break (a new line inside the SAME paragraph, e.g. an address block) write <br>: Street<br>City. Ending a line with two trailing spaces does the same, but the spaces are invisible and many editors strip them, so prefer <br>. Both work anywhere text is written — prose, headings, list items, quotes, table cells. A <br> at the end of a line followed by a newline is still ONE soft break (the next line stays in the same paragraph or list item); put a blank line after it to start a new paragraph instead. Do NOT type the two literal characters backslash-n to mean a newline.\n"
         "\n"
         "CONVENTIONS:\n"
         "- Do NOT confuse --- (page break) with *** (horizontal line).\n"

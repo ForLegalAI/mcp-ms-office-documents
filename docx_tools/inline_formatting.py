@@ -8,7 +8,7 @@ from docx.opc.constants import RELATIONSHIP_TYPE
 
 from inline_markdown import is_safe_link_target
 from .patterns import (
-    _INLINE_FORMAT_RE, _LINK_RE, _ESCAPE_RE, _BR_RE, normalize_newlines,
+    _INLINE_FORMAT_RE, _LINK_RE, _ESCAPE_RE, br_to_newlines, normalize_newlines,
 )
 
 logger = logging.getLogger(__name__)
@@ -108,9 +108,9 @@ def parse_inline_formatting(text, paragraph, bold=False, italic=False):
     # Fold every newline spelling (a literal "\n", a CR) into a real newline, and
     # <br> with them: by the time text reaches this layer the block parser has
     # already taken out the newlines that separate paragraphs, so every one left
-    # here is a soft break. One rule, one marker.
-    text = normalize_newlines(text)
-    text = _BR_RE.sub('\n', text)
+    # here is a soft break. One rule, one marker — and one break for a <br> the
+    # writer followed with a newline, not two.
+    text = br_to_newlines(normalize_newlines(text))
     escape_ctx = {"map": {}, "counter": 0}
     text = _handle_escapes(text, escape_ctx)
     segments = text.split('\n')

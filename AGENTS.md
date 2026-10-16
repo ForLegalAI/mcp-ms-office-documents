@@ -106,8 +106,11 @@ backend → URL string or LibreChat artifact dict. Details:
 
 **Word**
 - One line-break model: every newline reaching the inline layer is a soft
-  break; two-space runs are assembled by `_soft_break_run()` in the block
-  dispatcher and stop before any block. Never give `expand_br_to_block_breaks()`
+  break; a line ending in two spaces or a `<br>` (`ends_with_soft_break()`)
+  continues into the next one — runs are assembled by `_soft_break_run()` in
+  the block dispatcher and stop at a blank line and before any block. Turn
+  `<br>` into newlines with `br_to_newlines()`, which reads `<br>` + newline
+  as one break, never with a bare `_BR_RE.sub()`. Never give `expand_br_to_block_breaks()`
   the renderer's numbering state (#110). Details in
   [word.md](docs/development/tools/word.md#one-line-break-model).
 

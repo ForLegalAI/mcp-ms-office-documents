@@ -76,7 +76,10 @@ Nesting and combinations work, e.g. `**bold with *italic* inside**`, `**~~bold s
 | blank line | New paragraph / next block |
 | `<br>` | **Soft line break** — a new line inside the *same* paragraph (`Street<br>City`) |
 | two trailing spaces | The same soft break. Invisible, and many editors strip them — prefer `<br>` |
+| `<br>` at the end of a line | Still **one** soft break: the next line continues the same paragraph or list item (`Street<br>` ⏎ `City`). Follow the `<br>` with a blank line and the next line is a new paragraph |
 | a literal `\n` typed as text | Read as a real newline, but never write it deliberately |
+
+A heading is always one line: a `<br>` or two spaces at its end do not pull the next line into it.
 
 A soft break never swallows what follows it: a list, table, heading, quote or page break on the next line is still that block. A `<br>` written *before* a list (`Intro:<br>1. A<br>2. B`) is promoted to a real line break so the list renders as one — which is why a line-leading number that is really text (`1. máje 5`) needs the documented `1\.` escape.
 

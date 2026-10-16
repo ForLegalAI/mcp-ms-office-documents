@@ -12,7 +12,10 @@ from .patterns import (
     UNORDERED_LIST_CAPTURE_PATTERN,
     _ALIGN_INLINE_RE,
     _ALIGN_OPEN_RE,
+    _ALIGN_CLOSE_RE,
     _BR_PARAGRAPH_RE,
+    ends_with_soft_break,
+    line_starts_block,
 )
 from .inline_formatting import parse_inline_formatting
 from .numbering import (
@@ -227,6 +230,26 @@ def add_table_to_doc(table_data, doc, col_alignments=None, borderless=False,
 # ---------------------------------------------------------------------------
 # Lists
 # ---------------------------------------------------------------------------
+def _continues_item(lines, idx) -> bool:
+    """True if ``lines[idx]`` may continue the list item above it.
+
+    The item above ended in a soft-break marker; the next line joins it unless it
+    is blank, or starts something of its own — any list marker (a sibling or
+    nested item; in a list a number is never read as a date), any other block
+    (:func:`~docx_tools.patterns.line_starts_block`), a comment or directive, or
+    the close of an alignment block.
+    """
+    stripped = lines[idx].strip()
+    return bool(
+        stripped
+        and not ORDERED_LIST_PATTERN.match(stripped)
+        and not UNORDERED_LIST_PATTERN.match(stripped)
+        and not stripped.startswith('<!--')
+        and not _ALIGN_CLOSE_RE.match(stripped)
+        and not line_starts_block(lines, idx)
+    )
+
+
 def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
                        return_elements=False, number_styles=None, bullet_styles=None,
                        base_indent=None, ordered_run=None, warnings=None):
@@ -347,12 +370,18 @@ def process_list_items(lines, start_idx, doc, is_ordered=False, level=0,
                     style_ind_resolved = True
                 apply_style_indent(paragraph, style_ind_attrs)
             last_item_number = item_number
+        i += 1
+        # An item continues across soft breaks as a paragraph does: a line ending
+        # in two spaces or a <br> pulls the next line into this item.
+        while ends_with_soft_break(original_line) and i < n and _continues_item(lines, i):
+            item_text = item_text.rstrip() + '\n' + lines[i].strip()
+            original_line = lines[i]
+            i += 1
         parse_inline_formatting(item_text, paragraph)
         items_emitted += 1
         if return_elements:
             elements.append(paragraph._p)
             doc._body._body.remove(paragraph._p)
-        i += 1
         # Look ahead for nested items
         while i < n:
             next_original = lines[i]
