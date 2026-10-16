@@ -168,6 +168,17 @@ def test_ordered_item_continues_and_keeps_counting():
     ]
 
 
+@pytest.mark.parametrize("markdown, expected", [
+    ("Lead<br>1. A<br>\nB", [("Normal", "Lead"), ("List Number", "A\nB")]),
+    ("Intro:<br>- A<br>\nB", [("Normal", "Intro:"), ("List Bullet", "A\nB")]),
+    ("Intro:<br>- A<br>\n\nB", [("Normal", "Intro:"), ("List Bullet", "A"), ("Normal", "B")]),
+])
+def test_br_promoted_list_keeps_a_trailing_br_continuation(markdown, expected):
+    # expand_br_to_block_breaks() splits the line on <br> to expose the list; the
+    # <br> that ends the line is the marker for the next one, not a split point.
+    assert _signature(_render(markdown)) == expected
+
+
 def test_list_item_br_before_the_next_item_keeps_the_item():
     doc = _render("1. one<br>\n2. two")
     assert _signature(doc) == [("List Number", "one"), ("List Number", "two")]

@@ -258,8 +258,16 @@ def expand_br_to_block_breaks(text: str) -> str:
             out.append(line)
             continue
         segments = [seg.strip() for seg in _BR_RE.split(line)]
+        # A <br> that ends the line is the soft-break marker for the next line,
+        # not a split point: keep it on the last segment, or the split would turn
+        # it into a blank line and cut the next line off the last item.
+        trailing_br = len(segments) > 1 and not segments[-1]
+        if trailing_br:
+            segments.pop()
         if len(segments) > 1 and any(_segment_is_block(segments, idx)
                                      for idx in range(1, len(segments))):
+            if trailing_br:
+                segments[-1] += '<br>'
             out.extend(segments)
         else:
             out.append(line)

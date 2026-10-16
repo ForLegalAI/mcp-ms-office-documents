@@ -83,7 +83,7 @@ A heading is always one line: a `<br>` or two spaces at its end do not pull the 
 
 A soft break never swallows what follows it: a list, table, heading, quote or page break on the next line is still that block. A `<br>` written *before* a list (`Intro:<br>1. A<br>2. B`) is promoted to a real line break so the list renders as one — which is why a line-leading number that is really text (`1. máje 5`) needs the documented `1\.` escape.
 
-> ⚠️ **One thing `<br>` cannot do:** resume a numbered list that started earlier in the document. `Poznámka<br>3. Třetí`, after a list that reached `2.`, stays one paragraph with "3." as text. Write that continuation on its own line (a blank line, or a line ending in two spaces) and it becomes item 3 — [list continuation](#word) across intervening content is unaffected, it just needs a real line break rather than a `<br>`.
+> ⚠️ **One thing `<br>` cannot do:** resume a numbered list that started earlier in the document. `Poznámka<br>3. Třetí`, after a list that reached `2.`, stays one paragraph with "3." as text. Write that continuation on its own line (after a blank line, a line ending in two spaces, or a `<br>` followed by Enter) and it becomes item 3 — [list continuation](#word) across intervening content is unaffected, it just needs a real line break rather than a `<br>`.
 
 `header_text` / `footer_text` take `<br>` too; they are plain text, not markdown.
 
