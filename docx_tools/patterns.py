@@ -95,6 +95,12 @@ _BR_PARAGRAPH_RE = re.compile(r'(?:\s*<br\s*/?>\s*){2,}', re.IGNORECASE)
 # into the next line within the same paragraph.
 SOFT_BREAK_SUFFIX = '  '
 
+# A <br> that ends a line. Followed by a newline it is ONE soft break, not two:
+# the <br> says "break here" and the newline is only where the writer pressed
+# Enter.
+_TRAILING_BR_RE = re.compile(r'<br\s*/?>[ \t]*$', re.IGNORECASE)
+_BR_BEFORE_NEWLINE_RE = re.compile(r'<br\s*/?>[ \t]*\n', re.IGNORECASE)
+
 
 # ---------------------------------------------------------------------------
 # Utility
@@ -121,6 +127,25 @@ def normalize_newlines(text: str) -> str:
     if not text:
         return text
     return _NEWLINE_RE.sub('\n', text)
+
+
+def ends_with_soft_break(line: str) -> bool:
+    """True if *line* ends in a soft-break marker: two spaces, or a ``<br>``.
+
+    Such a line continues into the next one within the same paragraph (or list
+    item). Both spellings mean the same thing, so the block parser asks this one
+    question wherever it decides whether a newline ends the paragraph.
+    """
+    return line.endswith(SOFT_BREAK_SUFFIX) or bool(_TRAILING_BR_RE.search(line))
+
+
+def br_to_newlines(text: str) -> str:
+    """Turn every ``<br>`` in *text* into ``\\n``, once per break.
+
+    A ``<br>`` already followed by a newline is the same break written twice, so
+    the pair becomes one ``\\n``; every other ``<br>`` becomes its own.
+    """
+    return _BR_RE.sub('\n', _BR_BEFORE_NEWLINE_RE.sub('\n', text))
 
 
 def ordered_list_is_genuine(lines, idx) -> bool:
@@ -233,8 +258,16 @@ def expand_br_to_block_breaks(text: str) -> str:
             out.append(line)
             continue
         segments = [seg.strip() for seg in _BR_RE.split(line)]
+        # A <br> that ends the line is the soft-break marker for the next line,
+        # not a split point: keep it on the last segment, or the split would turn
+        # it into a blank line and cut the next line off the last item.
+        trailing_br = len(segments) > 1 and not segments[-1]
+        if trailing_br:
+            segments.pop()
         if len(segments) > 1 and any(_segment_is_block(segments, idx)
                                      for idx in range(1, len(segments))):
+            if trailing_br:
+                segments[-1] += '<br>'
             out.extend(segments)
         else:
             out.append(line)

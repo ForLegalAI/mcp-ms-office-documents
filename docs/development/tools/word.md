@@ -61,12 +61,13 @@ markdown_content
   ├─ <!-- directive --> → collected, then applied to the next block
   ├─ other <!-- -->     → skipped
   └─ anything else      → _soft_break_run() → paragraph + inline parse
-                          (a line ending in two spaces continues the paragraph,
-                           stopping before any line that starts a block)
+                          (a line ending in two spaces or a <br> continues the
+                           paragraph, stopping before any line that starts a block)
   ▼
   inline_formatting.parse_inline_formatting(text, paragraph)   every text span
   ├─ decode a fixed list of safe HTML entities
-  ├─ <br>, CR, literal "\n" → "\n"; split, rstrip, one <w:br/> per break
+  ├─ <br>, CR, literal "\n" → "\n" (a <br> + newline pair is one); split,
+  │  rstrip, one <w:br/> per break
   ├─ backslash escapes → private-use placeholders, restored after tokenising
   └─ inline_markdown.build_inline_pattern().split() → runs, hyperlinks
   ▼
@@ -83,7 +84,7 @@ line by line and paragraphs are appended as they are recognised.
 |--------|------|
 | `base_docx_tool.py` | Template load, metadata, TOC, header/footer, then hands off to the processor. The three entry points |
 | `markdown_processor.py` | Line walker (`process_markdown_content`), block dispatcher (`process_markdown_block`), soft breaks, code blocks, alignment blocks, comment directives, the running ordered-list count |
-| `patterns.py` | Every compiled regex for block detection, plus `ordered_list_is_genuine()`, `normalize_newlines()`, `expand_br_to_block_breaks()`, `line_starts_block()`, `contains_block_markdown()` |
+| `patterns.py` | Every compiled regex for block detection, plus `ordered_list_is_genuine()`, `normalize_newlines()`, `ends_with_soft_break()`, `br_to_newlines()`, `expand_br_to_block_breaks()`, `line_starts_block()`, `contains_block_markdown()` |
 | `inline_formatting.py` | `parse_inline_formatting()`: entities, escapes, soft breaks, run creation, hyperlinks |
 | `block_elements.py` | Tables, lists, images, horizontal lines, alignment detection |
 | `numbering.py` | Ordered-list restart through fresh `<w:num>` instances; style-aware numbering resolution; indent re-assertion |
@@ -253,11 +254,25 @@ Since #110 there is one rule for every entry point: the block layer decides
 which newlines separate blocks, and **every newline that reaches the inline
 layer is a soft break** (`<w:br/>`). `parse_inline_formatting()` folds
 `<br>`, a CR and a literal `\n` into `\n`, splits on it and strips the
-trailing-space marker from each segment. A line ending in two spaces is the
-source spelling of the same break: `_soft_break_run()` in the block
+trailing-space marker from each segment. A line ending in two spaces **or in
+a `<br>`** is the source spelling of the same break
+(`patterns.ends_with_soft_break()`): `_soft_break_run()` in the block
 dispatcher joins such lines with real newlines, for prose and for quotes,
-and stops before any line for which `patterns.line_starts_block()` is true
-so a list or table on the next line is never swallowed into the paragraph.
+and stops at a blank line and before any line for which
+`patterns.line_starts_block()` is true so a list or table on the next line is
+never swallowed into the paragraph. `process_list_items()` asks the same
+question of a list item and pulls a following line into the item unless it is
+blank, a list marker or another block (`_continues_item()`). A heading is
+always one line.
+
+A `<br>` that ends a line is left in the text the block layer joins, so the
+inline layer sees `<br>` followed by `\n` — the same break spelled twice.
+`patterns.br_to_newlines()`, which the inline layer and
+`set_header_footer()` both use, turns that pair into one `\n` and every
+other `<br>` into its own, so `<br><br>` plus Enter is still an empty line.
+Before this a line ending in `<br>` became its own paragraph, with the
+style's paragraph spacing after it, and the `<br>` vanished as a trailing
+break — the usual way a model writes a signature block.
 `line_starts_block()` is also the predicate behind `contains_block_markdown()`,
 which routes template placeholder values.
 
@@ -416,6 +431,7 @@ it on open.
 | `tests/test_docx_style_map.py`, `test_docx_style_numbering.py`, `test_docx_style_tag.py` | Style mapping, style-aware numbering, the `style` directive |
 | `tests/test_docx_escaped_newlines.py` | Literal `\n` and backslash escapes |
 | `tests/test_docx_soft_breaks.py` | The line-break model: `<br>`, trailing spaces, CR, runs stopping before blocks, quotes, cells, headers |
+| `tests/test_docx_br_before_newline.py` | A `<br>` ending a line is one soft break: paragraphs, quotes, list items, placeholders, headers; a blank line after it is a new paragraph |
 | `tests/test_docx_templates.py`, `test_docx_placeholder_formatting.py`, `test_docx_conditionals.py` | Dynamic templates: placeholder replacement across runs, formatting preservation, conditionals |
 | `tests/test_docx_content_controls.py`, `test_docx_content_controls_phase2.py`, `test_docx_template_content_controls.py` | Dynamic templates: content controls filled by Tag |
 | `tests/test_docx_warnings.py` | The warnings channel: every code, the source line, de-duplication, the tool-boundary response shape |

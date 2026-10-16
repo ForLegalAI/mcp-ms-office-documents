@@ -4,7 +4,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from template_utils import find_docx_template
-from .patterns import _BR_RE, _PAGE_TOKEN_RE, normalize_newlines
+from .patterns import _PAGE_TOKEN_RE, br_to_newlines, normalize_newlines
 logger = logging.getLogger(__name__)
 def load_templates():
     """Resolve Word template path from custom/default template directories.
@@ -50,8 +50,9 @@ def set_header_footer(doc, text, kind='header'):
     """
     _TOKEN_MAP = {'{page}': 'PAGE', '{pages}': 'NUMPAGES'}
     # python-docx turns a "\n" inside run text into a <w:br/>, so folding every
-    # break spelling into a newline is all this needs.
-    text = _BR_RE.sub('\n', normalize_newlines(text or ''))
+    # break spelling into a newline is all this needs (a <br> followed by a
+    # newline is one break, not two).
+    text = br_to_newlines(normalize_newlines(text or ''))
     def _fill_paragraph(p, content):
         """Clear existing runs/fields and write *content* into paragraph *p*."""
         existing_alignment = p.alignment

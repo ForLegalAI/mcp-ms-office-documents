@@ -18,7 +18,7 @@ from .patterns import (
     BLOCKQUOTE_PATTERN,
     COMMENT_DIRECTIVE_PATTERN,
     CODE_FENCE_PATTERN,
-    SOFT_BREAK_SUFFIX,
+    ends_with_soft_break,
     _ALIGN_CLOSE_RE,
     line_starts_block,
     ordered_list_is_genuine,
@@ -168,15 +168,21 @@ def _add_heading(doc, level, content, style_map, warnings=None):
 def _soft_break_run(lines, start_idx, ordered_run=None, strip_quote=False):
     """Collect the soft-break run that starts at ``lines[start_idx]``.
 
-    A line ending in two spaces continues into the next one *within the same
-    paragraph*. The run stops at a blank line, at a line that does not itself end
-    in the marker, and — crucially — before any line that begins a block element:
-    a list, table, heading, quote, image, page break, alignment tag or comment. Without
-    that guard the block would be swallowed into the paragraph and rendered as
-    literal text (its first list item, its header row, its ``---``).
+    A line ending in a soft-break marker — two spaces or a ``<br>``
+    (:func:`~docx_tools.patterns.ends_with_soft_break`) — continues into the next
+    one *within the same paragraph*. The run stops at a blank line (so
+    ``<br>`` followed by a blank line still starts a new paragraph), at a line
+    that does not itself end in a marker, and — crucially — before any line that
+    begins a block element: a list, table, heading, quote, image, page break,
+    alignment tag or comment. Without that guard the block would be swallowed
+    into the paragraph and rendered as literal text (its first list item, its
+    header row, its ``---``).
 
     The marker spaces are stripped from every line; the caller gets the lines
-    joined by plain newlines, which the inline layer renders as ``<w:br/>``.
+    joined by plain newlines, which the inline layer renders as ``<w:br/>``. A
+    trailing ``<br>`` is left in place: the inline layer reads ``<br>`` plus the
+    newline after it as one break, not two
+    (:func:`~docx_tools.patterns.br_to_newlines`).
 
     *strip_quote* drops the leading ``>`` of each line, for a block quote whose
     lines are joined by soft breaks. A continuation line may omit its ``>``
@@ -193,7 +199,7 @@ def _soft_break_run(lines, start_idx, ordered_run=None, strip_quote=False):
         line = raw.strip()
         collected.append(line.lstrip('>').strip() if strip_quote else line)
         idx += 1
-        if not raw.endswith(SOFT_BREAK_SUFFIX):
+        if not ends_with_soft_break(raw):
             break
         if idx >= n or not lines[idx].strip():
             break
