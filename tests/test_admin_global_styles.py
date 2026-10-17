@@ -16,6 +16,7 @@ What the tests here are really pinning:
 * the page tells the truth about which of the two layers is in force.
 """
 import io
+import os
 import re
 import sys
 from pathlib import Path
@@ -232,9 +233,14 @@ def test_editing_a_stored_mapping_in_place_is_picked_up(config_dir):
     invalidate_global_style_map()
     assert load_global_style_map().quote == "AAAA"
 
-    before = path.stat().st_size
+    first = path.stat()
     _write(path, {"style_mapping": {"quote": "BBBB"}})
-    assert path.stat().st_size == before, "same length, so only mtime differs"
+    assert path.stat().st_size == first.st_size, "same length, so only mtime differs"
+    # An edit made a second later, stamped explicitly. Two writes this close
+    # together can share one timestamp on a filesystem with coarse mtimes (the
+    # self-hosted CI runner has one), and that case is not the fingerprint's to
+    # catch: a writer calls invalidate_global_style_map() for it.
+    os.utime(path, ns=(first.st_atime_ns, first.st_mtime_ns + 1_000_000_000))
 
     assert load_global_style_map().quote == "BBBB"
 

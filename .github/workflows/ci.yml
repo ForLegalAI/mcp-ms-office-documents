@@ -39,6 +39,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # The PowerPoint fit estimate measures text against real font files, and
+      # its tests need the faces the Docker image ships (Liberation, Carlito;
+      # see the Dockerfile's font line). A runner without them fails
+      # test_pptx_text_metrics. Installed only when missing, so a runner image
+      # that already carries them skips the apt round-trip; `sudo -n` fails at
+      # once instead of waiting for a password the job cannot type.
+      - name: Install fonts
+        run: |
+          if ! dpkg -s fonts-liberation fonts-crosextra-carlito >/dev/null 2>&1; then
+            sudo -n apt-get update
+            sudo -n apt-get install -y --no-install-recommends \
+              fonts-liberation fonts-crosextra-carlito
+          fi
+
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
