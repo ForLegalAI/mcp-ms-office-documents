@@ -1,22 +1,24 @@
 python-pptx==1.0.2
 # Pulled in by python-pptx for images; named here because pptx_tools/text_metrics.py
 # imports it directly to measure text against real font metrics.
-Pillow>=10.0.0
-boto3>=1.40.1
-botocore>=1.40.1
+Pillow>=13.0.0
+boto3>=1.43.114
+botocore>=1.43.114
 python-docx==1.2.0
-beautifulsoup4>=4.13.4
-openpyxl>=3.1.2
-python-dateutil>=2.8.0
-fastmcp==3.4.2
-pydantic>=2.11.5
-PyYAML
-pystache>=0.6.5
-google-cloud-storage>=2.18.2
-azure-storage-blob>=12.23.1
-requests>=2.31.0
-httpx>=0.27.0
+beautifulsoup4>=4.15.0
+openpyxl>=3.1.5
+python-dateutil>=2.9.0.post0
+fastmcp==4.1.0
+pydantic>=2.14.1
+PyYAML>=6.0.3
+pystache>=0.6.8
+google-cloud-storage>=3.17.1
+azure-storage-blob>=12.31.0
+requests>=2.34.2
+# FastMCP 4 dropped httpx for httpx2; named here because the LIBRECHAT upload
+# backend (upload_tools/backends/librechat.py) imports it directly.
+httpx>=0.28.1
 defusedxml>=0.7.1
-python-dotenv>=1.2.1
-python-fasthtml>=0.12.0
-python-multipart>=0.0.9
+python-dotenv>=1.2.4
+python-fasthtml>=0.14.13
+python-multipart>=0.0.32

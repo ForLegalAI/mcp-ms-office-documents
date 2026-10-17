@@ -11,7 +11,7 @@ Both the docx and email dynamic-tool modules use these to:
   the global ``style_mapping`` without rewriting the hand-written master
   (#161); and
 * remove a live MCP tool by name (so a template can be re-registered after an
-  edit, or unregistered on delete) tolerantly across FastMCP versions.
+  edit, or unregistered on delete), tolerating a name that is not registered.
 
 Keeping this here (a sibling of ``template_utils.py``) avoids a dependency from
 the core dynamic-tool modules onto the optional ``admin`` package.
@@ -31,23 +31,16 @@ logger = logging.getLogger(__name__)
 def safe_remove_tool(mcp, name: str) -> bool:
     """Remove a live MCP tool *name* if present.
 
-    Tolerant of FastMCP version differences (prefers ``local_provider`` to
-    avoid the deprecation warning on ``mcp.remove_tool``) and of the tool not
-    existing. Returns True only when a tool was actually removed.
+    Returns True only when a tool was actually removed. FastMCP 4 removes tools
+    through ``local_provider`` (``mcp.remove_tool`` is gone) and raises
+    ``KeyError`` for a name it does not hold — the "not registered" case, which
+    re-registering a new template hits on every first save.
     """
-    provider = getattr(mcp, "local_provider", None)
-    remover = getattr(provider, "remove_tool", None) if provider else None
-    if remover is None:
-        remover = getattr(mcp, "remove_tool", None)
-    if remover is None:  # pragma: no cover - unexpected FastMCP build
-        logger.warning("[template-registry] No remove_tool available on MCP instance.")
-        return False
     try:
-        remover(name)
-        return True
-    except Exception as e:
-        logger.debug("[template-registry] remove_tool(%r) no-op: %s", name, e)
+        mcp.local_provider.remove_tool(name)
+    except KeyError:
         return False
+    return True
 
 
 def read_spec_file(path: Path) -> Optional[Dict[str, Any]]:
