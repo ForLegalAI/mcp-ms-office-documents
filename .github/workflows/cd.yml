@@ -10,7 +10,11 @@ permissions:
 
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest
+    # Publishing a release needs write access, so only maintainers ever start
+    # this. The repository check keeps a fork's copy from queueing forever for
+    # a runner it does not have.
+    if: github.repository == 'ForLegalAI/mcp-ms-office-documents'
+    runs-on: zoomies-forlegalai-actions-runner
 
     steps:
       - name: Checkout code

@@ -72,6 +72,16 @@ review was being worked, one of them reported before it was caught.
 guard is tested by resolving hostnames to fixed addresses, not by
 connecting.
 
+**Fonts.** `test_pptx_text_metrics.py` measures text against real font files,
+so the machine running it needs the faces the Docker image ships: Liberation
+and Carlito (`fonts-liberation`, `fonts-crosextra-carlito` on Debian/Ubuntu).
+Without them `load_font()` finds nothing and those tests fail; CI installs the
+packages when the runner lacks them.
+
+**File timestamps.** Never rely on two writes getting different mtimes. A
+filesystem with coarse timestamps gives back-to-back writes the same one; a
+test about an edit stamps the later mtime itself with `os.utime()`.
+
 ## Where tests live
 
 One file per behaviour, named for it: `test_docx_list_restart.py`,

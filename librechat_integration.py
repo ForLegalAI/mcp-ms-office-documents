@@ -8,6 +8,8 @@ import io
 import logging
 from typing import Optional, Union
 
+from fastmcp.server.dependencies import get_http_headers
+
 from async_runner import run_blocking
 from upload_tools import upload_file_async, is_librechat_strategy
 
@@ -28,7 +30,9 @@ def extract_user_context_from_request() -> dict:
     - X-User-Email: Optional - User email
     - X-Conversation-Id: Optional - Current conversation ID
 
-    Uses FastMCP's get_http_request() to access the current request.
+    Uses FastMCP's get_http_headers(), which returns the request's headers with
+    lower-cased names, or an empty dict when there is no HTTP request (an
+    in-memory client, a test) — so every value is then None.
 
     TRUST BOUNDARY NOTE:
     These headers are trusted verbatim without validation. This is intentional
@@ -40,33 +44,12 @@ def extract_user_context_from_request() -> dict:
     Returns:
         Dict with user_id, user_email, and conversation_id (may be None)
     """
-    try:
-        from fastmcp.server.dependencies import get_http_request
-        request = get_http_request()
-        
-        # Access headers from Starlette Request object
-        headers = request.headers if request else {}
-        
-        return {
-            "user_id": headers.get("x-user-id"),
-            "user_email": headers.get("x-user-email"),
-            "conversation_id": headers.get("x-conversation-id"),
-        }
-    except RuntimeError as e:
-        # No active HTTP request found
-        logger.warning("Could not extract user context: %s", e)
-        return {
-            "user_id": None,
-            "user_email": None,
-            "conversation_id": None,
-        }
-    except ImportError:
-        logger.warning("FastMCP dependencies not available")
-        return {
-            "user_id": None,
-            "user_email": None,
-            "conversation_id": None,
-        }
+    headers = get_http_headers()
+    return {
+        "user_id": headers.get("x-user-id"),
+        "user_email": headers.get("x-user-email"),
+        "conversation_id": headers.get("x-conversation-id"),
+    }
 
 
 async def upload_and_format_response(

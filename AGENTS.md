@@ -5,7 +5,7 @@ Operational brief for coding agents and humans alike. Rules here, reasons in
 
 ## What this is
 
-An MCP server (FastMCP 3, Python 3.12) that turns Markdown or structured
+An MCP server (FastMCP 4, Python 3.12) that turns Markdown or structured
 input into Office files. Runs in Docker on port 8958, endpoint `/mcp`,
 streamable-HTTP. Entry point `main.py`. Six static tools (Word, Excel,
 PowerPoint, template listing, email, XML) plus dynamic tools registered from

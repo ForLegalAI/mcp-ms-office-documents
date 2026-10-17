@@ -6,13 +6,52 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+# One self-hosted runner: a newer push to a pull request supersedes the run
+# still queued or going for its old head. Pushes to master queue instead, so
+# every commit there is tested.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   lint-and-test:
-    runs-on: ubuntu-latest
+    # The self-hosted runner only ever runs code from this repository: a push
+    # to it, a manual dispatch, or a pull request from one of its own branches
+    # (which only people with write access can create). A pull request from a
+    # fork runs on a GitHub-hosted runner instead, and a fork's own copy of
+    # this workflow never asks for a runner label it does not have.
+    #
+    # This is routing, not the security boundary. A pull_request run uses the
+    # workflow file from the pull request, so a fork can rewrite this line;
+    # what stops it is the repository setting that holds every fork's run for
+    # a maintainer's approval. See CONTRIBUTING.md, "CI and releases".
+    runs-on: >-
+      ${{ github.repository == 'ForLegalAI/mcp-ms-office-documents'
+          && (github.event_name != 'pull_request'
+              || github.event.pull_request.head.repo.full_name == github.repository)
+          && 'zoomies-forlegalai-actions-runner'
+          || 'ubuntu-latest' }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      # The PowerPoint fit estimate measures text against real font files, and
+      # its tests need the faces the Docker image ships (Liberation, Carlito;
+      # see the Dockerfile's font line). A runner without them fails
+      # test_pptx_text_metrics. Installed only when missing, so a runner image
+      # that already carries them skips the apt round-trip; `sudo -n` fails at
+      # once instead of waiting for a password the job cannot type.
+      - name: Install fonts
+        run: |
+          if ! dpkg -s fonts-liberation fonts-crosextra-carlito >/dev/null 2>&1; then
+            sudo -n apt-get update
+            sudo -n apt-get install -y --no-install-recommends \
+              fonts-liberation fonts-crosextra-carlito
+          fi
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5

@@ -37,7 +37,11 @@ tool handler, static and dynamic, goes through this and nothing else.
 
 `ApiKeyAuthMiddleware`, a FastMCP middleware registered only when `API_KEY`
 is set. Reads `Authorization: Bearer <key>`, a plain `Authorization: <key>`,
-or `x-api-key`, compares in constant time, and raises `AuthorizationError`.
+or `x-api-key`, compares in constant time, and raises an `mcp.MCPError`
+(`-32600`, `UNAUTHORIZED_MESSAGE`). It must be an `MCPError`: the MCP SDK
+logs any other exception from a request handler as a crash, with a
+traceback, and on the 2026-07-28 protocol tells the client only "Internal
+server error".
 Failed attempts are counted and logged at WARNING at most once a minute, so
 a misconfigured client cannot flood the log. It reads headers through
 `get_http_headers(include={"authorization"})` because FastMCP strips that
@@ -47,8 +51,10 @@ header by default.
 
 Two functions on the request path. `extract_user_context_from_request()`
 reads `X-User-Id`, `X-User-Email` and `X-Conversation-Id` from the current
-HTTP request on the event loop; the headers are trusted as-is, on the
-assumption that only LibreChat can reach the endpoint. `upload_and_format_response()`
+HTTP request on the event loop through FastMCP's `get_http_headers()`, which
+returns `{}` outside a request (every value is then `None`). The headers are
+trusted as-is, on the assumption that only LibreChat can reach the endpoint.
+`upload_and_format_response()`
 is the branch between a LibreChat artifact and a traditional URL, and the
 place that offloads the synchronous upload. See
 [`upload-backends.md`](upload-backends.md).
@@ -86,7 +92,8 @@ drops anything `is_enabled()` rejects unless `include_disabled=True`.
 absent means enabled, so every spec written before #165 stays live. It also
 accepts the string forms PyYAML leaves uncoerced (`n`, `disable`, `disabled`)
 and logs anything it recognises in neither direction. `safe_remove_tool(mcp, name)` removes a live
-tool across FastMCP versions. `arg_field(default, description)` is the
+tool through `mcp.local_provider.remove_tool()` and returns `False` for a
+name that is not registered. `arg_field(default, description)` is the
 pydantic `Field` every dynamic-template argument is built with: a `None`
 default publishes no `"default": null` (see
 [dynamic-templates.md](dynamic-templates.md#the-argument-schema-rules)). It

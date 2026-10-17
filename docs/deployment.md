@@ -66,6 +66,13 @@ session id that lives in one process's memory, so every request for that
 session must reach the same replica. For two or more replicas set
 `STATELESS_HTTP=true`, which makes every request independent.
 
+A session that sits idle for 30 minutes is closed (the MCP SDK's default since
+FastMCP 4.1; before, sessions never expired). A client using it again gets
+`404 Session not found` and, if it follows the MCP spec, opens a new one.
+FastMCP reads `FASTMCP_HTTP_SESSION_IDLE_TIMEOUT` (seconds, or `none` for
+never) if a client of yours cannot recover.
+Clients on the 2026-07-28 protocol revision have no sessions at all.
+
 Two more things assume a single instance:
 
 - **Live template registration.** The admin UI writes template files and

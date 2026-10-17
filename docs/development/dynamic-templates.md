@@ -225,8 +225,8 @@ An optional value is shown with a Mustache section over the argument itself
 
 `register_docx_template()` / `register_email_template()` remove any existing
 tool of the same name through `template_registry.safe_remove_tool()`, which
-prefers FastMCP's `local_provider.remove_tool` and tolerates version
-differences, then register afresh. `unregister_*` removes and forgets. The
+calls FastMCP's `local_provider.remove_tool` and treats its `KeyError` (no
+such tool) as nothing to remove, then register afresh. `unregister_*` removes and forgets. The
 admin UI calls these after writing the `.d` file and the asset, so a saved
 template is callable immediately.
 

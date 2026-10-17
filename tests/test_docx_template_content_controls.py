@@ -75,7 +75,7 @@ def _call(mcp, data):
 def _schema(mcp):
     async def go():
         async with Client(mcp) as c:
-            return (await c.list_tools())[0].inputSchema
+            return (await c.list_tools())[0].input_schema
     return asyncio.run(go())
 
 
@@ -132,7 +132,7 @@ def test_a_plain_list_without_enum_is_unchanged():
 
     async def go():
         async with Client(mcp) as c:
-            return (await c.list_tools())[0].inputSchema
+            return (await c.list_tools())[0].input_schema
     prop = asyncio.run(go())["properties"]["data"]["properties"]["tags"]
     assert prop["type"] == "array" and prop["items"] == {"type": "string"}
 

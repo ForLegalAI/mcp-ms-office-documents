@@ -360,3 +360,36 @@ class TestIsLibreChatStrategy:
         # Default should be LOCAL, not LIBRECHAT
         result = is_librechat_strategy()
         assert isinstance(result, bool)
+
+
+class TestExtractUserContext:
+    """The X-User-* headers LibreChat sends, read through FastMCP."""
+
+    def test_reads_the_user_headers_case_insensitively(self):
+        # Only FastMCP's request accessor is faked, so the real
+        # get_http_headers() runs and its name normalisation is what is tested.
+        import fastmcp.server.dependencies as deps
+        from starlette.datastructures import Headers
+        from librechat_integration import extract_user_context_from_request
+
+        request = MagicMock()
+        request.headers = Headers({
+            "X-User-Id": "u-1",
+            "X-User-Email": "a@example.com",
+            "X-Conversation-Id": "c-9",
+        })
+        with patch.object(deps, "get_http_request", return_value=request):
+            assert extract_user_context_from_request() == {
+                "user_id": "u-1",
+                "user_email": "a@example.com",
+                "conversation_id": "c-9",
+            }
+
+    def test_no_http_request_gives_none_values(self):
+        from librechat_integration import extract_user_context_from_request
+
+        assert extract_user_context_from_request() == {
+            "user_id": None,
+            "user_email": None,
+            "conversation_id": None,
+        }

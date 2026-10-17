@@ -21,8 +21,8 @@ sys.path.insert(0, str(project_root))
 
 import pytest
 
-from middleware import ApiKeyAuthMiddleware
-from fastmcp.exceptions import AuthorizationError
+from middleware import ApiKeyAuthMiddleware, UNAUTHORIZED_MESSAGE
+from mcp import MCPError
 
 
 # ======================================================================
@@ -215,7 +215,7 @@ class TestOnRequest:
         context = _make_context()
 
         with patch("middleware.get_http_headers", return_value={}):
-            with pytest.raises(AuthorizationError):
+            with pytest.raises(MCPError):
                 await mw.on_request(context, call_next)
 
         call_next.assert_not_awaited()
@@ -226,7 +226,7 @@ class TestOnRequest:
         context = _make_context()
 
         with patch("middleware.get_http_headers", return_value={"Authorization": "Bearer wrong-key"}):
-            with pytest.raises(AuthorizationError):
+            with pytest.raises(MCPError):
                 await mw.on_request(context, call_next)
 
         call_next.assert_not_awaited()
@@ -238,7 +238,7 @@ class TestOnRequest:
         context = _make_context()
 
         with patch("middleware.get_http_headers", return_value=None):
-            with pytest.raises(AuthorizationError):
+            with pytest.raises(MCPError):
                 await mw.on_request(context, call_next)
 
         call_next.assert_not_awaited()
@@ -264,7 +264,7 @@ class TestOnRequest:
         assert mw._failed_attempts == 0
 
         with patch("middleware.get_http_headers", return_value={"x-api-key": "wrong"}):
-            with pytest.raises(AuthorizationError):
+            with pytest.raises(MCPError):
                 await mw.on_request(context, call_next)
 
         # First failure triggers a WARNING which resets counter to 0
@@ -284,7 +284,7 @@ class TestOnRequest:
 
         with patch("middleware.get_http_headers", return_value={}), \
              patch("middleware.logger") as mock_logger:
-            with pytest.raises(AuthorizationError):
+            with pytest.raises(MCPError):
                 await mw.on_request(context, call_next)
 
         # DEBUG is always emitted
@@ -310,7 +310,7 @@ class TestOnRequest:
 
         with patch("middleware.get_http_headers", return_value={}), \
              patch("middleware.logger") as mock_logger:
-            with pytest.raises(AuthorizationError):
+            with pytest.raises(MCPError):
                 await mw.on_request(context, call_next)
 
         # WARNING should have been emitted (interval elapsed)
@@ -335,11 +335,54 @@ class TestOnRequest:
         with patch("middleware.get_http_headers", return_value={"x-api-key": "wrong"}), \
              patch("middleware.time.monotonic", return_value=12.0), \
              patch("middleware.logger") as mock_logger:
-            with pytest.raises(AuthorizationError):
+            with pytest.raises(MCPError):
                 await mw.on_request(context, call_next)
 
         mock_logger.warning.assert_called_once()
         assert mw._failed_attempts == 0
+
+    async def test_rejection_is_an_mcp_error_with_the_reason(self):
+        mw = ApiKeyAuthMiddleware("secret-123")
+
+        with patch("middleware.get_http_headers", return_value={}):
+            with pytest.raises(MCPError) as exc:
+                await mw.on_request(_make_context(), AsyncMock())
+
+        assert exc.value.code == -32600
+        assert exc.value.message == UNAUTHORIZED_MESSAGE
+
+
+class TestRejectionOverTheWire:
+    """A real server and client: the reason reaches the client, quietly.
+
+    Regression for the FastMCP 4 upgrade. The MCP SDK v2 maps only an
+    ``MCPError`` to a wire error; anything else (FastMCP's
+    ``AuthorizationError`` included) is logged as a crash with a traceback, and
+    on the modern protocol the client is told only "Internal server error".
+    """
+
+    # Each era pinned rather than "auto": an auto client falls back to the
+    # legacy handshake on any error from its probe, and the in-memory transport
+    # cannot change era mid-connection the way a fresh HTTP request can.
+    @pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
+    async def test_client_without_a_key_is_told_why_and_nothing_is_logged(
+            self, mode, caplog):
+        from fastmcp import Client, FastMCP
+
+        server = FastMCP("auth-probe")
+        server.add_middleware(ApiKeyAuthMiddleware("secret-123"))
+
+        @server.tool
+        def ping() -> str:
+            return "pong"
+
+        # The in-memory transport carries no HTTP headers, so there is no key.
+        with caplog.at_level("ERROR"):
+            with pytest.raises(MCPError, match=UNAUTHORIZED_MESSAGE):
+                async with Client(server, mode=mode) as client:
+                    await client.call_tool("ping", {})
+
+        assert not [r for r in caplog.records if r.levelname == "ERROR"]
 
 
 # ======================================================================

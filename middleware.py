@@ -19,9 +19,13 @@ from typing import Optional
 
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.dependencies import get_http_headers
-from fastmcp.exceptions import AuthorizationError
+from mcp import MCPError
+from mcp.types import INVALID_REQUEST
 
 logger = logging.getLogger(__name__)
+
+#: What a client without a valid key is told. Stable, so a client can match it.
+UNAUTHORIZED_MESSAGE = "Unauthorized – invalid or missing API key"
 
 
 class ApiKeyAuthMiddleware(Middleware):
@@ -36,7 +40,13 @@ class ApiKeyAuthMiddleware(Middleware):
       3. ``x-api-key`` header
 
     If the key is missing or does not match, the request is rejected with
-    ``fastmcp.exceptions.AuthorizationError`` before any tool runs.
+    :data:`UNAUTHORIZED_MESSAGE` as an ``MCPError`` before any tool runs.
+
+    It has to be an ``MCPError``, not FastMCP's ``AuthorizationError``: the MCP
+    SDK (v2, FastMCP 4) treats any other exception escaping a request handler
+    as a server crash. It logs a full traceback at ERROR for each one, which
+    would defeat the throttled warning below, and on the 2026-07-28 protocol
+    the client sees only "Internal server error" instead of the reason.
     """
 
     # Throttle window (seconds) for WARNING-level auth failure messages
@@ -114,7 +124,7 @@ class ApiKeyAuthMiddleware(Middleware):
                 self._failed_attempts = 0
                 self._last_warn_time = now
 
-            raise AuthorizationError("Unauthorized – invalid or missing API key")
+            raise MCPError(code=INVALID_REQUEST, message=UNAUTHORIZED_MESSAGE)
 
         return await call_next(context)
 

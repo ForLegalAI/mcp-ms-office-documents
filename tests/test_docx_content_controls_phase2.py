@@ -159,7 +159,7 @@ def test_a_date_argument_is_an_iso_date_in_the_schema_and_fills_end_to_end(tmp_p
 
         async def go():
             async with Client(mcp) as c:
-                schema = (await c.list_tools())[0].inputSchema
+                schema = (await c.list_tools())[0].input_schema
                 await c.call_tool("date_probe", {"data": {"signed": "2026-10-06"}})
                 with pytest.raises(Exception):
                     await c.call_tool("date_probe", {"data": {"signed": "6. 10. 2026"}})

@@ -10,7 +10,7 @@ the code does it.
 
 ## Process layout
 
-One Python process runs everything: a FastMCP 3 server on uvicorn/Starlette,
+One Python process runs everything: a FastMCP 4 server on uvicorn/Starlette,
 listening on port **8958**. The MCP endpoint is `/mcp` over the streamable-HTTP
 transport. Entry point: `main.py`.
 
@@ -187,7 +187,7 @@ Rules that follow from this:
 | Upload dispatcher and backends | `RuntimeError` | wrapped by the handler as above |
 | LibreChat without `X-User-Id` | `ValueError` | wrapped by the handler as above |
 | Dynamic tool body | any `Exception` | `ToolError("Error generating document from template <name>: …")`, and `metrics.record_error()` is called |
-| Auth middleware | `fastmcp.exceptions.AuthorizationError` | MCP error response; the tool is never invoked |
+| Auth middleware | `mcp.MCPError` (`-32600`, `middleware.UNAUTHORIZED_MESSAGE`) | JSON-RPC error carrying that message; the tool is never invoked. Never another exception type: the MCP SDK reports anything but an `MCPError` as a server crash |
 | Configuration at startup | `ValueError("Invalid configuration: …")` | process exits |
 
 Convention: raise `ToolError` only at the handler boundary, `RuntimeError` in
@@ -276,7 +276,7 @@ file per template into the `.d` directory plus the asset into
 `custom_templates/`, then calls `register_docx_template()` /
 `register_email_template()` on the running `FastMCP` instance so the tool
 appears immediately. `template_registry.safe_remove_tool()` handles
-re-registration and deletion across FastMCP versions.
+re-registration and deletion.
 
 `metrics.py` keeps in-process counters per tool — calls, errors and the
 warnings a finished build reported, counted per severity — and a bounded ring

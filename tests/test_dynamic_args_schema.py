@@ -139,5 +139,5 @@ def test_an_optional_arg_without_default_publishes_no_null_default():
 
     async def listed():
         async with Client(mcp) as c:
-            return (await c.list_tools())[0].inputSchema
+            return (await c.list_tools())[0].input_schema
     assert '"default": null' not in json.dumps(asyncio.run(listed()))

@@ -80,7 +80,41 @@ tests/                  one file per behaviour
 YAML files are git-ignored on purpose. If you need to track a new shipped
 file there, add a `!` rule to `.gitignore`.
 
-## Releases
+## CI and releases
+
+CI (`ci.yml`) and the release build (`cd.yml`) run on the project's
+self-hosted runner, `zoomies-forlegalai-actions-runner`, but only for code
+that is already in this repository: pushes to `master`, manual runs, pull
+requests from a branch here, and releases. A pull request from a fork runs
+the same lint and tests on a GitHub-hosted runner instead, and only after a
+maintainer approves the run, so it never reaches the self-hosted machine.
+
+The `runs-on` routing in `ci.yml` is not what enforces that: a fork's pull
+request runs the workflow file from its own branch and could change it. The
+boundary is in the repository and organisation settings, and they must stay
+this way:
+
+- **Settings → Actions → General → Approval for running fork pull request
+  workflows from contributors:** *Require approval for all external
+  contributors.* A maintainer reads the diff, `.github/` included, before
+  approving.
+- **Settings → Actions → General → Workflow permissions:** *Read repository
+  contents and packages permissions.* `cd.yml` asks for what it needs itself.
+- **Organisation → Actions → Runner groups** (for a runner registered to
+  the organisation): the runner's group lists only this repository. Public repositories are refused by default; allow them for
+  this group alone. Optionally, under *Selected workflows*, allow only
+  `.github/workflows/cd.yml@refs/heads/master` — except that a pull request
+  runs its workflow from its own merge ref, so pinning `ci.yml` the same way
+  would stop pull-request CI from using the runner at all.
+- **Docker Hub secrets** go in a protected environment (for example
+  `release`, with required reviewers and a tag rule) rather than plain
+  repository secrets once `cd.yml` names that environment.
+
+Never add a `pull_request_target` or `workflow_run` trigger that checks out
+pull-request code: those run with the repository's secrets and would hand the
+self-hosted runner to anyone who opens a pull request.
+
+### Releases
 
 A release is a GitHub release. Publishing one runs the `cd.yml` workflow,
 which builds the image for amd64 and arm64 and pushes
