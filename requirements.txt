@@ -8,13 +8,16 @@ python-docx==1.2.0
 beautifulsoup4>=4.15.0
 openpyxl>=3.1.5
 python-dateutil>=2.9.0.post0
-fastmcp==4.1.0
+fastmcp==4.1.3
 pydantic>=2.14.1
 PyYAML>=6.0.3
 pystache>=0.6.8
 google-cloud-storage>=3.17.1
 azure-storage-blob>=12.31.0
 requests>=2.34.2
+# Pulled in by requests; floored here because releases before 2026.10.19 still
+# trust the emSign roots whose intermediate keys leaked (GHSA-6q48-6c7w-9gw2).
+certifi>=2026.10.19
 # FastMCP 4 dropped httpx for httpx2; named here because the LIBRECHAT upload
 # backend (upload_tools/backends/librechat.py) imports it directly.
 httpx>=0.28.1
