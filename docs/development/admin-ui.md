@@ -292,6 +292,17 @@ checks `UploadFile.size` (falling back to a seek) *first*, and only reads a
 file that is within `ADMIN_MAX_UPLOAD_MB`. The post-read check stays as a
 backstop for an upload whose size could not be known in advance.
 
+**Every request's form is closed when the request ends.** Starlette closes the
+spooled temp file only in `Request.close()`, and neither its endpoint wrapper
+nor FastHTML calls it, so each upload used to hold its file open until garbage
+collection. `_CloseRequestForms`, an ASGI middleware on the admin app, puts a
+list into the request scope; `_track_request`, the first `before` hook, adds
+the `Request` to it; the middleware closes them in a `finally`. It sits outside
+the endpoint on purpose: FastHTML parses the form *before* the auth gate runs,
+so a request the gate redirects holds an open file too, and a raising handler
+must not skip the close. Keep `_track_request` first in `before=`, ahead of
+the gate. `tests/test_admin_upload_close.py` covers both paths.
+
 **The log view filters the whole buffer, then limits.** `metrics.recent_logs()`
 takes the level, source and search and applies them before the `limit`, so the
 limit counts *matches* rather than records scanned — limiting first would lose
