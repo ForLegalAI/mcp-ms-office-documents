@@ -9,7 +9,8 @@ pytest tests/test_docx_base.py -q       # one module
 ```
 
 `pytest.ini` sets `asyncio_mode = auto`, so `async def` tests need no
-decorator, and declares the `network` marker. Tests marked `network` reach a
+decorator, pins `asyncio_default_fixture_loop_scope = function` (pytest-asyncio
+1.5 warns while it is unset), and declares the `network` marker. Tests marked `network` reach a
 public image host; CI excludes them so a third-party outage cannot fail an
 unrelated pull request. No `.env` is needed: `config.py` defaults to the
 `LOCAL` strategy and INFO logging.

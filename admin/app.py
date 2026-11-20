@@ -41,6 +41,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import metrics
 
 from fasthtml.common import FastHTML, RedirectResponse, Response, HTMLResponse, to_xml
+from starlette.middleware import Middleware
 from starlette.routing import Mount, Route
 
 from config import Config
@@ -70,6 +71,47 @@ from template_registry import (
 from template_utils import find_file_in_template_dirs
 
 logger = logging.getLogger(__name__)
+
+# The scope key under which _CloseRequestForms collects this request's
+# Request objects for _track_request to append to.
+_OPEN_REQUESTS = "admin.open_requests"
+
+
+class _CloseRequestForms:
+    """Close every parsed form once the admin request is over.
+
+    Starlette spools an uploaded file to a ``SpooledTemporaryFile`` and closes
+    it only in ``Request.close()``, which neither Starlette's endpoint wrapper
+    nor FastHTML calls. Without this, every admin upload left its temp file
+    open until garbage collection. FastHTML parses the form before the
+    ``before`` gate runs, so a request the gate redirects holds one too; closing
+    here, outside the endpoint, covers that, a raising handler and the normal
+    path alike. ``_track_request`` is what hands this the Request objects.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        opened = scope[_OPEN_REQUESTS] = []
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            for req in opened:
+                await req.close()
+
+
+def _track_request(req):
+    """First ``before`` hook: register *req* so its form is closed afterwards.
+
+    Returns ``None``, so the auth gate after it still decides.
+    """
+    opened = req.scope.get(_OPEN_REQUESTS)
+    if opened is not None:
+        opened.append(req)
 
 
 class AdminContext:
@@ -488,7 +530,9 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
     # blank-row HTML injected so "Add argument" can clone it client-side.
     hdrs = head_tags(json.dumps(to_xml(views.arg_row())))
 
-    app = FastHTML(secret_key=secret, before=auth.make_before(login_path, locked=not expected_pw),
+    app = FastHTML(secret_key=secret,
+                   before=[_track_request, auth.make_before(login_path, locked=not expected_pw)],
+                   middleware=[Middleware(_CloseRequestForms)],
                    default_hdrs=False, htmx=False, surreal=False, hdrs=hdrs,
                    htmlkw={"lang": "en"})
     rt = app.route
