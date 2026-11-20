@@ -25,6 +25,12 @@ WORKDIR /app
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
+# The venv is seeded by ensurepip with the pip Python was released with, and
+# the venv is what ships. Upgrade it before anything else so the image carries
+# a pip without the 25.x/26.0 advisories (CVE-2025-8869, CVE-2026-3219, …).
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade "pip>=26.2"
+
 # Download dependencies as a separate step to take advantage of Docker's caching.
 # Leverage a cache mount to /root/.cache/pip to speed up subsequent builds.
 # Leverage a bind mount to requirements.txt to avoid having to copy them into
@@ -39,8 +45,15 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 FROM python:${PYTHON_VERSION}-alpine AS runtime
 
 # Patch base OS packages in the SHIPPED image. This is the stage that matters for
-# the scanned CVEs (openssl/musl/xz/sqlite); only /opt/venv is copied from builder.
+# the scanned CVEs (openssl/musl/xz/sqlite/brotli); only /opt/venv is copied from
+# builder. The release workflow builds this stage without cache
+# (`no-cache-filters: runtime` in .github/workflows/cd.yml): a cached layer
+# would ship whatever the index held on the day it was first built.
 RUN apk upgrade --no-cache
+
+# The base image's own pip (outside the venv) is scanned too; bring it to the
+# same fixed release.
+RUN pip install --no-cache-dir --upgrade "pip>=26.2"
 
 # Font files for the PowerPoint fit estimate, which measures text against a
 # real face rather than counting characters. Each package is metric-compatible
