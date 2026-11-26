@@ -228,12 +228,14 @@ class TestNoNewSilentNumbers:
     is a silent wrong number; a typed one warns, but only if it refuses.
     """
 
-    @pytest.mark.parametrize("raw", ["1,5e3%", "1,234e2%", "10, 20%", "4 3%", "1, 5%"])
+    @pytest.mark.parametrize("raw", ["1,5e3%", "1,234e2%", "10, 20%", "4 3%", "1, 5%",
+                                     # two separators that are not digit grouping
+                                     "4,3.%", "1,5.0%", "12,34.5%", "1.5,2%", "1,2,345%", "1.,5%"])
     def test_untyped_forms_master_kept_as_text_still_are(self, raw):
         ws, _ = build(table(None, raw))
         assert ws["B2"].value == raw
 
-    @pytest.mark.parametrize("raw", ["1,5e3", "10, 20", "4 3"])
+    @pytest.mark.parametrize("raw", ["1,5e3", "10, 20", "4 3", "4,3.", "1.5,2"])
     def test_typed_forms_are_refused_and_reported(self, raw):
         ws, warnings = build(table("text, percent", raw))
         assert ws["B2"].value == raw

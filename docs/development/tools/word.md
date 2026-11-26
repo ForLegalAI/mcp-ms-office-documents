@@ -153,7 +153,8 @@ prose.
 The questions asked *before* parsing read a pipe line more strictly:
 `patterns.line_starts_block()` (which stops a soft-break run or a list item,
 and decides whether a placeholder value is block markdown) counts one only if
-it ends with `|` or the next line is a pipe line too
+it has both pipes with text between them (`TABLE_LINE_PATTERN`, so `|` and
+`||` do not count) or the next line is a pipe line too
 (`patterns._pipe_line_is_table()`). So `|x| < 5` mid-paragraph still joins
 the paragraph above it, and a placeholder value `|x| < 5` still fills inline,
 as they did before #144, while a table whose header lacks its trailing pipe
@@ -161,6 +162,19 @@ still stops the paragraph above it. `expand_br_to_block_breaks()` leaves a
 table row's `<br>` alone and uses the same test, with the line *above*
 counted too (the last row of a table has no pipe line after it), so an
 in-cell `<br>- y` is not torn out of a row missing its trailing pipe.
+
+What the wider row rule changed, on purpose (pinned in
+`tests/test_table_trailing_pipe_144.py`):
+
+- Two consecutive lines starting with `|` are a table, as in GFM and in
+  Excel — including two lines of prose like `|x| < 5` / `|y| > 3`, which now
+  build a table with `table_separator_missing`. `\|` at the start keeps a
+  line as text.
+- A row after a table that runs past the header (`| 1 | 2 | note`) is a row,
+  and widens the table, as a full-pipe row always did.
+- `parse_table()` refuses a run of `|` lines with no cells (`|` / `|`): it
+  would build a zero-column table that shows nothing. Those lines stay prose
+  with `table_not_recognised`, like a lone `|`.
 
 ### Placeholder-safe rendering: `return_elements`
 

@@ -112,6 +112,15 @@ _PERCENT_BODY_RE = re.compile(
     r'^[+-]?(?=[\d.,]*\d)[\d.,]+$'
     r'|^[+-]?(?=[\d.]*\d)[\d.]+[eE][+-]?\d+$'
 )
+# A body with two separators, or several of one, must be genuine digit
+# grouping — groups of three after the first — with an optional decimal part
+# in the other separator: ``1,234.5``, ``1,234,567``, ``1.234,56``. Without
+# this, _strip_thousands_separators reads ``4,3.`` as 43 and ``1.5,2`` as 15.2
+# (#143 review).
+_PERCENT_GROUPED_RE = re.compile(
+    r'^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?$'
+    r'|^[+-]?\d{1,3}(?:\.\d{3})+(?:,\d+)?$'
+)
 _SPACE_GROUPED_RE = re.compile(r'^[+-]?\d{1,3}(?: \d{3})+(?:[.,]\d+)?$')
 # Non-breaking and narrow non-breaking spaces, as Czech typography writes
 # them before % and between digit groups.
@@ -206,6 +215,8 @@ def _parse_percent_body(body: str) -> tuple[float, str] | None:
       as digit grouping (``1 234,56``); ``10, 20`` and ``4 3`` stay text.
     - The typographic minus sign (U+2212) reads as ``-``.
     - An exponent is accepted only without a comma: ``1,5e3`` stays text.
+    - Two separators, or several of one, must be real digit grouping
+      (groups of three): ``4,3.`` and ``1.5,2`` stay text.
     - A lone comma is a decimal comma — ``4,3``, ``0,5``, ``,5``, ``4,30``,
       ``3,14159`` — except when exactly three digits follow it and there is
       no dot: ``0,125`` is 0.125 in Prague and 125 in an English thousands
@@ -224,6 +235,10 @@ def _parse_percent_body(body: str) -> tuple[float, str] | None:
             return None
         text = text.replace(' ', '')
     if not _PERCENT_BODY_RE.match(text) or _AMBIGUOUS_PERCENT_COMMA_RE.match(text):
+        return None
+    mantissa = re.split(r'[eE]', text, maxsplit=1)[0]
+    if ((',' in mantissa and '.' in mantissa) or mantissa.count(',') > 1
+            or mantissa.count('.') > 1) and not _PERCENT_GROUPED_RE.match(mantissa):
         return None
     normalised = _strip_thousands_separators(text)
     try:

@@ -61,7 +61,7 @@ Nesting and combinations work, e.g. `**bold with *italic* inside**`, `**~~bold s
 | `<br>` inside a cell | Line break within the cell (same paragraph) |
 | `<br><br>` inside a cell | New paragraph within the cell |
 
-Every table row starts with `|`; the trailing `|` is optional, so `| 3 | 4` is the same row as `| 3 | 4 |` (header and separator rows included). A row with fewer cells than the header leaves the rest of its cells empty. A line starting with `|` that is not part of a table (a table needs a header row, a separator row and a data row) is written as ordinary text and reported as `table_not_recognised`.
+Every table row starts with `|`; the trailing `|` is optional, so `| 3 | 4` is the same row as `| 3 | 4 |` (header and separator rows included). A row with fewer cells than the header leaves the rest of its cells empty. Two or more consecutive lines starting with `|` are a table; without a `|---|---|` row under the first, that row becomes the header and the table is reported as `table_separator_missing`. So two lines of prose that both start with `|` (`|x| < 5` then `|y| > 3`) become a table — escape the first pipe (`\|x| < 5`) to keep a line as text. A single line starting with `|`, or lines of nothing but `|`, are written as ordinary text and reported as `table_not_recognised`.
 
 **Text alignment** (HTML tags, single- or multi-line):
 

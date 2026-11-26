@@ -134,7 +134,9 @@ requested name will then point at the wrong sheet.
    allows it inside only as digit grouping (`1 234,56`; `10, 20` and `4 3`
    stay text), reads the typographic minus `−` as `-`, accepts an exponent
    only without a comma (`1,5e3` stays text — the thousands reading would give
-   10x), reads a lone comma as a decimal comma
+   10x), requires two separators or several of one to be real digit grouping
+   in groups of three (`4,3.` and `1.5,2` stay text), reads a lone comma as a
+   decimal comma
    (`4,3`, `,5`, `3,14159`) and two separators or several commas as digit
    grouping (`1.234,56`, `1,234.5`, `1,234,567`). The exception is a lone
    comma before exactly three digits with no dot (`0,125`, `1,234`): a

@@ -84,6 +84,12 @@ def parse_table(lines, start_idx):
         i += 1
     if len(rows) < 2:
         return None, None, start_idx + 1, False
+    # A run of `|` lines with no cells at all would build a table with no
+    # columns: Word shows nothing, so the caller's text would be gone. Not a
+    # table — it falls to table_not_recognised and is written as prose, as a
+    # lone `|` is (#144 review).
+    if not any(rows):
+        return None, None, start_idx + 1, False
     # A run of nothing but separator rows is not a table: there is no header
     # for one of them to sit under. Without this, the `idx == 1` rule below
     # picks one as the separator and appends the rest as data, building a

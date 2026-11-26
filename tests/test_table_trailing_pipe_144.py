@@ -262,3 +262,76 @@ class TestWordAndExcelAgree:
         rows, _ = excel_parse_table("| A | B |\n|---|---|\n|\n| 1 | 2 |".split("\n"), 0)
 
         assert list(rows) == [["A", "B"], [], ["1", "2"]]
+
+
+# ---------------------------------------------------------------------------
+# Review of #144: lines with no cells, and the behaviour changes it disclosed
+# ---------------------------------------------------------------------------
+
+class TestRunsOfEmptyPipeLines:
+
+    @pytest.mark.parametrize("markdown", ["|\n|\n", "| \n| \n", "|\n|\n|\n"])
+    def test_pipe_lines_with_no_cells_are_not_a_zero_column_table(self, markdown):
+        """`|` lines have no cells; a table built from them has no columns
+        and shows nothing, so the caller's text is gone. They stay prose and
+        are reported, as a lone `|` is."""
+        doc, codes = render(markdown)
+
+        assert doc.tables == []
+        assert prose(doc), "the caller's text must still be in the document"
+        assert W.TABLE_NOT_RECOGNISED in codes
+
+    def test_a_template_value_of_empty_pipe_lines_builds_no_table(self):
+        doc = Document()
+        doc.add_paragraph("{{v}}")
+
+        _replace_placeholders_in_document(doc, {"v": "|\n|"})
+
+        assert doc.tables == []
+
+
+class TestDisclosedChanges:
+    """What the wider row rule changed on purpose — pinned so it is a decision."""
+
+    def test_two_prose_lines_starting_with_a_pipe_become_a_table(self):
+        """Two consecutive pipe lines are a table in GFM, and in Excel."""
+        doc, codes = render("|x| < 5\n|y| > 3\n")
+
+        assert len(doc.tables) == 1
+        assert W.TABLE_SEPARATOR_MISSING in codes
+
+    def test_escaping_the_first_pipe_keeps_it_prose(self):
+        doc, codes = render("\\|x| < 5\n\\|y| > 3\n")
+
+        assert doc.tables == []
+        assert W.TABLE_NOT_RECOGNISED not in codes
+
+    def test_a_multi_line_placeholder_value_of_pipe_lines_is_a_block(self):
+        doc = Document()
+        doc.add_paragraph("{{v}}")
+
+        _replace_placeholders_in_document(doc, {"v": "|x| < 5\n|y| > 3"})
+
+        assert len(doc.tables) == 1
+
+    def test_a_list_item_soft_break_stops_before_a_header_missing_its_pipe(self):
+        doc, _ = render("- item  \n| A | B\n|---|---|\n| 1 | 2 |\n")
+
+        assert len(doc.tables) == 1
+        assert rows_of(doc.tables[0]) == [["A", "B"], ["1", "2"]]
+
+
+class TestExcelUnchanged:
+
+    @pytest.mark.parametrize("markdown", SAME_ROWS + [
+        "|x| < 5\n|y| > 3\n", "|\n|\n", "| A | B |\n|---|---|\n| 1 | 2 | note\n",
+    ])
+    def test_excel_output_matches_its_rows_on_master(self, markdown):
+        """Excel's parser was already lenient; it must read the same rows."""
+        table_data, _ = excel_parse_table(markdown.strip("\n").split("\n"), 0)
+        rows = list(table_data) if table_data else []
+        expected = [split_row(line) for line in markdown.strip("\n").split("\n")
+                    if line.strip().startswith("|")]
+        expected = [r for i, r in enumerate(expected)
+                    if not (i == 1 and is_separator_cells(r))]
+        assert [list(r) for r in rows] == expected or rows == []
