@@ -9,7 +9,9 @@ column cannot read is kept as text the same way (#143); that one is reported
 once per column, with a count, rather than once per cell. A ``number`` or
 ``currency`` column that reads ``4,375`` as 4375 with nothing in its table to
 say whether that comma groups thousands or marks a decimal says so too, the
-same way (#211).
+same way (#211), and so does one whose ambiguous values were settled by how
+*other* columns of its table write numbers, since that is a guess about this
+one (#211 review).
 
 Each code below names one of those situations, and :data:`WARNING_SEVERITY`
 fixes what it costs. Locations are the ``sheet`` the problem is on plus either
@@ -51,8 +53,10 @@ STYLE_RANGE_TOO_LARGE = "style_range_too_large"
 STYLE_FAILED = "style_failed"
 TYPED_VALUE_KEPT_AS_TEXT = "typed_value_kept_as_text"
 
-# A value read one of two ways, with nothing in the table to say which.
+# A value read one of two ways, with nothing in the table to say which — or
+# with only the table's other columns to say which.
 AMBIGUOUS_COMMA_READ_AS_THOUSANDS = "ambiguous_comma_read_as_thousands"
+AMBIGUOUS_NUMBER_READ_FROM_TABLE = "ambiguous_number_read_from_table"
 
 #: One severity per code, in one place.
 WARNING_SEVERITY: dict[str, str] = {
@@ -76,6 +80,7 @@ WARNING_SEVERITY: dict[str, str] = {
     TYPED_VALUE_KEPT_AS_TEXT: SEVERITY_WARNING,
 
     AMBIGUOUS_COMMA_READ_AS_THOUSANDS: SEVERITY_INFO,
+    AMBIGUOUS_NUMBER_READ_FROM_TABLE: SEVERITY_INFO,
 }
 
 

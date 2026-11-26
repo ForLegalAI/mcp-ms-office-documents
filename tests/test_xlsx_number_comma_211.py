@@ -13,7 +13,13 @@ They now share the percent column's reader, ``_parse_decimal_text()`` (#143):
 - the one truly ambiguous form, ``4,375``, is settled by the table's own
   numbers: European evidence (``2,5``) makes it 4.375, English evidence
   (``1.5``, ``1,234.5``) 4375, both leave it as text with a hint, and none
-  reads it as 4375 and says so with ``ambiguous_comma_read_as_thousands``.
+  reads it as 4375 and says so with ``ambiguous_comma_read_as_thousands``;
+- the evidence is the column's own values, then the table's typed numeric
+  columns, then untyped cells that read as numbers — never untyped text, a
+  trailing ``1.`` / ``5,`` or ``1234,567`` — and a decision taken from
+  another column is reported as ``ambiguous_number_read_from_table`` (the
+  review of the first #211 commit, 1e32771);
+- Indian lakh grouping (``₹1,23,456.70``) reads in typed columns again.
 
 Untyped cells keep refusing to guess at a lone comma, and a lead group with a
 leading zero (``0,125``, ``01,234``) is no longer taken for grouping there.
@@ -79,9 +85,23 @@ def guessed(warnings):
     return of(READ_AS_THOUSANDS, warnings)
 
 
+# Likewise for the note a decision taken from another column raises (review
+# of #211), which 1e32771 does not have.
+READ_FROM_TABLE = "ambiguous_number_read_from_table"
+
+
+def from_table(warnings):
+    return of(READ_FROM_TABLE, warnings)
+
+
 def test_the_code_is_declared_with_info_severity():
     """Fix: the code is new in #211."""
     assert W.WARNING_SEVERITY.get(READ_AS_THOUSANDS) == "info"
+
+
+def test_the_cross_column_code_is_declared_with_info_severity():
+    """Fix: the code is new in the review of #211."""
+    assert W.WARNING_SEVERITY.get(READ_FROM_TABLE) == "info"
 
 
 # ── Fixes ─────────────────────────────────────────────────────────────────────
@@ -204,23 +224,52 @@ class TestEuropeanEvidence:
 
     def test_from_another_typed_column_of_the_table(self):
         """Fix: the `Kč` column's `12 500,00` writes a decimal comma, so the
-        rate column beside it — with no evidence of its own — is European."""
+        rate column beside it — with no evidence of its own — is European,
+        and says where that came from (review of #211): exactly one
+        `ambiguous_number_read_from_table` for the rate column, none for the
+        `Kč` column, whose own values decided it. 1e32771 read the rates
+        right but said nothing."""
         ws, warnings = build(table(
             "text, number, currency:Kč", ("4,375", "12 500,00 Kč"),
-            header="| Item | Rate | Amount |"))
+            ("3,125", "1 000,50 Kč"), header="| Item | Rate | Amount |"))
 
-        assert ws["B2"].value == pytest.approx(4.375)
-        assert ws["C2"].value == pytest.approx(12500)
-        assert warnings == []
+        assert column(ws, "B", 2) == [pytest.approx(4.375), pytest.approx(3.125)]
+        assert column(ws, "C", 2) == [pytest.approx(12500), pytest.approx(1000.5)]
+        [note] = from_table(warnings)
+        assert note.severity == "info"
+        assert note.location == {"sheet": ws.title, "cell": "B2"}
+        assert note.message.startswith("2 values in column B ('Rate')")
+        assert "'12 500,00 Kč' at C2" in note.message
+        assert "write them without the comma (4375)" in note.message
+        assert kept(warnings) == [] and guessed(warnings) == []
 
-    def test_from_an_untyped_column_of_the_table(self):
-        """Fix: an untyped `2,5` stays text itself, but it shows how the
-        table writes numbers."""
+    def test_an_untyped_cell_that_stays_text_is_not_evidence(self):
+        """Fix (review of #211; was "from an untyped column", which took the
+        `2,5` for evidence): an untyped `2,5` is text in the workbook, so it
+        shows nothing about how the table writes numbers. 1e32771 read the
+        rate as 4.375 from it; with nothing that reads as a number, it is the
+        no-evidence reading, reported."""
         ws, warnings = build(table(
             "text, number", ("4,375", "2,5"), header="| Item | Rate | Note |"))
 
-        assert ws["B2"].value == pytest.approx(4.375)
+        assert ws["B2"].value == 4375
         assert ws["C2"].value == "2,5"
+        [warning] = guessed(warnings)
+        assert warning.location["cell"] == "B2"
+        assert from_table(warnings) == []
+
+    @pytest.mark.parametrize("untyped,read", [("1.234,56", 1234.56), ("4,5%", 0.045)])
+    def test_from_an_untyped_column_of_the_table(self, untyped, read):
+        """Fix: an untyped cell is evidence when the cell loop itself reads it
+        as a number or a percent — `1.234,56`, `4,5%` — and the decision it
+        makes for another column is reported. 1e32771 made it silently."""
+        ws, warnings = build(table(
+            "text, number", ("4,375", untyped), header="| Item | Rate | Note |"))
+
+        assert ws["B2"].value == pytest.approx(4.375)
+        assert ws["C2"].value == pytest.approx(read)
+        [note] = from_table(warnings)
+        assert f"'{untyped}' at C2" in note.message
         assert guessed(warnings) == []
 
     def test_survives_markdown_and_ignores_formulas(self):
@@ -340,6 +389,233 @@ class TestPercent:
 
         assert ws["B2"].value == "4,375"
         assert len(kept(warnings)) == 1
+
+
+# ── Review fixes (on top of 1e32771) ──────────────────────────────────────────
+#
+# A "fix" here fails on 1e32771, the first #211 commit, for the stated reason;
+# a "pin" holds there and must keep holding.
+
+
+class TestUntypedEvidenceReadsAsTheCellLoopReadsIt:
+    """Fix: an untyped cell counts as evidence only if resolve_cell() itself
+    reads it as a number or a percent; 1e32771 counted any text the decimal
+    grammar accepted, so a footnote marker decided an English column."""
+
+    def test_footnote_markers_beside_a_dollar_column(self):
+        """Fix: 1e32771 read `$1,234` and `$12,500` as 1.234 and 12.5,
+        because the untyped `1,2` (text in the workbook) looked European;
+        master read 1234 and 12500."""
+        ws, warnings = build(table(
+            "text, currency:$, ", ("$1,234", "1,2"), ("$12,500", "3"),
+            header="| Item | Amount | Note |"))
+
+        assert column(ws, "B", 2) == [1234, 12500]
+        assert column(ws, "C", 2) == ["1,2", 3]
+        [warning] = guessed(warnings)
+        assert warning.location["cell"] == "B2"
+        assert from_table(warnings) == [] and kept(warnings) == []
+
+    def test_page_ranges_beside_a_number_column(self):
+        """Fix: the untyped `12,15` is text, so it is no evidence; 1e32771
+        read `1,234` and `2,500` as 1.234 and 2.5."""
+        ws, warnings = build(table(
+            "text, number, ", ("1,234", "12,15"), ("2,500", "7"),
+            header="| Item | Amount | Pages |"))
+
+        assert column(ws, "B", 2) == [1234, 2500]
+        assert ws["C2"].value == "12,15"
+        assert len(guessed(warnings)) == 1 and from_table(warnings) == []
+
+    @pytest.mark.parametrize("untyped,read", [("14.30", 14.3), ("1.1", 1.1)])
+    def test_a_number_that_reads_still_leaves_the_column_reported(self, untyped, read):
+        """Fix: a time like `14.30` or a section number like `1.1` does read
+        as a number untyped, so it is English evidence and `4,375` stays 4375
+        — but the column is no longer silent: the decision came from another
+        column, and the note says which. 1e32771 reported nothing."""
+        ws, warnings = build(table(
+            "text, number, ", ("4,375", untyped), ("3,125", untyped),
+            header="| Item | Rate | Ref |"))
+
+        assert column(ws, "B", 2) == [4375, 3125]
+        assert ws["C2"].value == pytest.approx(read)
+        [note] = from_table(warnings)
+        assert f"'{untyped}' at C2" in note.message
+        assert "with a dot (4.375)" in note.message and "(4375)" in note.message
+        assert guessed(warnings) == []
+
+    def test_the_header_is_never_evidence(self):
+        """Pin: a header is a name, not a value."""
+        ws, warnings = build(table("text, number", "4,375", header="| 2,5 | 1.5 |"))
+
+        assert ws["B2"].value == 4375
+        assert len(guessed(warnings)) == 1 and from_table(warnings) == []
+
+    @pytest.mark.parametrize("types,other", [("text, number, text", "2,5"),
+                                             ("text, number, date", "1.5.2024")])
+    def test_a_text_or_date_column_is_never_evidence(self, types, other):
+        """Pin: only number, currency and percent columns, and untyped cells,
+        show how the table writes numbers."""
+        ws, warnings = build(table(types, ("4,375", other),
+                                   header="| Item | Rate | Other |"))
+
+        assert ws["B2"].value == 4375
+        assert len(guessed(warnings)) == 1 and from_table(warnings) == []
+
+
+class TestADecisionFromAnotherColumnIsReported:
+    """Fix: an ambiguous value decided by another column's numbers is a
+    guess about the whole table, and a mixed-locale table guesses wrong;
+    1e32771 made it silently. Own-column evidence stays silent."""
+
+    def test_the_mirror_dot_beside_a_decimal_comma_column(self):
+        """Fix: `1.500` and `2.250` read as 1500 and 2250 because the column
+        beside them writes `12,5`; 1e32771 said nothing, and if the first
+        column is English decimals that is a 1000x error."""
+        ws, warnings = build(table(
+            "text, number, number", ("1.500", "12,5"), ("2.250", "3,5"),
+            header="| Item | Qty | Rate |"))
+
+        assert column(ws, "B", 2) == [1500, 2250]
+        assert column(ws, "C", 2) == [pytest.approx(12.5), pytest.approx(3.5)]
+        [note] = from_table(warnings)
+        assert note.severity == "info"
+        assert note.location == {"sheet": ws.title, "cell": "B2"}
+        assert note.message.startswith("2 values in column B ('Qty')")
+        assert "'12,5' at C2" in note.message
+        assert "(1500)" in note.message and "1.5000" in note.message
+        assert guessed(warnings) == [] and kept(warnings) == []
+
+    def test_the_mirror_dot_under_a_declared_format(self):
+        """Fix: `number:0.000` is the caller's format, not a locale: `1.234`
+        beside a `2,5` column is 1234, and now says so."""
+        ws, warnings = build(table(
+            "text, number:0.000, number", ("1.234", "2,5"),
+            header="| Item | Qty | Rate |"))
+
+        assert ws["B2"].value == 1234
+        assert ws["B2"].number_format == "0.000"
+        [note] = from_table(warnings)
+        assert note.message.startswith("'1.234' in column B ('Qty') was read as 1234")
+        assert "'2,5' at C2" in note.message
+
+    def test_english_evidence_from_another_column(self):
+        """Fix: `1,234` read as thousands because the other column writes
+        `1.5`; reported with both ways to write it explicitly."""
+        ws, warnings = build(table(
+            "text, number, number", ("1,234", "1.5"), header="| Item | Amount | Rate |"))
+
+        assert ws["B2"].value == 1234
+        [note] = from_table(warnings)
+        assert note.message.startswith("'1,234' in column B ('Amount') was read as 1234")
+        assert "'1.5' at C2" in note.message
+        assert "write 1.234" in note.message and "write 1234" in note.message
+        assert guessed(warnings) == []
+
+    def test_a_european_decision_suggests_a_form_the_table_cannot_misread(self):
+        """Fix: in a table read as European `4.375` is itself read as 4375, so
+        the note offers `4,3750` for the decimal, never `4.375`."""
+        _, warnings = build(table(
+            "text, number, number", ("4,375", "2,5"), header="| Item | Rate | Other |"))
+
+        [note] = from_table(warnings)
+        assert note.message.startswith("'4,375' in column B ('Rate') was read as 4.375")
+        assert "write 4375" in note.message and "write 4,3750" in note.message
+        assert "write 4.375" not in note.message
+
+    def test_the_mirror_dot_under_english_evidence_is_silent(self):
+        """Pin: `1.234` beside a `1.5` column reads as the decimal it is with
+        no evidence at all, so there is nothing to report."""
+        ws, warnings = build(table(
+            "text, number, number", ("1.234", "1.5"), header="| Item | A | B |"))
+
+        assert ws["B2"].value == pytest.approx(1.234)
+        assert warnings == []
+
+    def test_own_column_evidence_is_silent(self):
+        """Pin: the column decided for itself."""
+        ws, warnings = build(table(
+            "text, number, number", ("4,375", "7"), ("2,5", "8"),
+            header="| Item | A | B |"))
+
+        assert ws["B2"].value == pytest.approx(4.375)
+        assert warnings == []
+
+
+class TestATrailingSeparatorIsNotEvidence:
+    """Fix: `1.` and `5,` write no decimal digits, so they show neither
+    locale; 1e32771 took `1.` for English and `5,` for European evidence."""
+
+    def test_ordinals_beside_czech_rates(self):
+        """Fix: the untyped `1.` and `2.` silenced the no-evidence report on
+        1e32771 (they looked English); now it is raised."""
+        ws, warnings = build(table(
+            "text, number, ", ("4,375", "1."), ("3,125", "2."),
+            header="| Item | Rate | No. |"))
+
+        assert column(ws, "B", 2) == [4375, 3125]
+        assert column(ws, "C", 2) == [1, 2]
+        [warning] = guessed(warnings)
+        assert warning.message.startswith("2 values in column B ('Rate')")
+        assert from_table(warnings) == []
+
+    @pytest.mark.parametrize("trailing,read", [("5,", 5), ("1.", 1)])
+    def test_in_the_same_column(self, trailing, read):
+        """Fix: 1e32771 read `4,375` as 4.375 beside a `5,` (and as 4375
+        silently beside a `1.`); neither says anything about the locale."""
+        ws, warnings = build(table("text, number", "4,375", trailing))
+
+        assert column(ws, "B", 2) == [4375, read]
+        assert len(guessed(warnings)) == 1 and from_table(warnings) == []
+
+
+class TestIndianGrouping:
+    """Fix: lakh grouping, `1,23,456.70`, reads in number and currency
+    columns again — 1e32771's grammar refused it, master read it."""
+
+    @pytest.mark.parametrize("types,raw,expected", [
+        ("text, currency:₹", "₹1,23,456.70", 123456.7),
+        ("text, currency:₹", "₹1,23,456", 123456),
+        ("text, currency:₹", "₹12,34,56,789.5", 123456789.5),
+        ("text, currency:₹", "(₹1,23,456)", -123456),
+        ("text, currency:₹", "-₹1,23,456.70", -123456.7),
+        ("text, number", "1,23,456.70", 123456.7),
+    ])
+    def test_reads(self, types, raw, expected):
+        """Fix: kept as text on 1e32771."""
+        ws, warnings = build(table(types, raw))
+
+        assert ws["B2"].value == pytest.approx(expected)
+        assert warnings == []
+
+    @pytest.mark.parametrize("raw", ["₹1,23,45", "₹01,23,456", "₹1,2,34,567"])
+    def test_what_is_not_lakh_grouping_stays_text(self, raw):
+        """Pin: a last group of two, a zero lead or a one-digit group."""
+        ws, warnings = build(table("text, currency:₹", raw))
+
+        assert ws["B2"].value == raw
+        assert len(kept(warnings)) == 1
+
+    def test_untyped_it_is_unchanged(self):
+        """Pin: untyped grouping stays three-digit only."""
+        ws, _ = build(table(None, "1,23,456"))
+
+        assert ws["B2"].value == "1,23,456"
+
+
+class TestFourDigitsBeforeTheCommaAreNotEvidence:
+    """Fix: `1234,567` is a decimal (four digits are not one group), but an
+    English writer who forgot a comma writes it too, so it shows nothing."""
+
+    def test_it_does_not_flip_the_column(self):
+        """Fix: on 1e32771 it made the column European and turned `12,500`
+        and `3,200` into 12.5 and 3.2."""
+        ws, warnings = build(table("text, number", "1234,567", "12,500", "3,200"))
+
+        assert column(ws, "B", 3) == [pytest.approx(1234.567), 12500, 3200]
+        [warning] = guessed(warnings)
+        assert warning.message.startswith("2 values in column B ('Value')")
+        assert "'12,500' at B3" in warning.message
 
 
 # ── Pins ──────────────────────────────────────────────────────────────────────

@@ -129,6 +129,16 @@ _DIGIT_GROUPED_RE = re.compile(
     _GROUPED_COMMA_RE.pattern
     + rf'|^[+-]?{_LEAD_GROUP}(?:\.\d{{3}})+(?:,\d+)?$'
 )
+# Indian lakh/crore grouping: a last group of three, every group before it of
+# two — ``1,23,456.70``, ``12,34,56,789``. Comma grouping like ``1,234,567``,
+# read by typed columns only (``currency:₹`` read it before #211); an untyped
+# cell keeps its three-digit grouping, _GROUPED_COMMA_RE.
+_INDIAN_GROUPED_RE = re.compile(r'^[+-]?[1-9]\d?(?:,\d{2})+,\d{3}(?:\.\d+)?$')
+# Four or more digits, a comma and exactly three: ``1234,567``. A decimal —
+# four digits cannot be one thousands group — but not evidence of a decimal
+# comma: an English writer who left out a separator writes it too (#211
+# review).
+_UNGROUPED_COMMA_RE = re.compile(r'^[+-]?\d{4,},\d{3}$')
 # Whitespace inside a body is allowed only as digit grouping: ``1 234,56``.
 # ``10, 20``, ``10 20`` and ``4 3`` stay text (#143 review, #211).
 _SPACE_GROUPED_RE = re.compile(rf'^[+-]?{_LEAD_GROUP}(?: \d{{3}})+(?:[.,]\d+)?$')
@@ -230,21 +240,31 @@ def _thousands_format_for(value: float) -> str:
 
 
 # The kinds _lex_decimal sorts a body into.
-_KIND_PLAIN = 'plain'                       # 1234, 1 234, 1e3
+_KIND_PLAIN = 'plain'                       # 1234, 1 234, 1e3, 1., 5,
 _KIND_DOT_DECIMAL = 'dot_decimal'           # 1.5, 0.125, 1234.567
-_KIND_COMMA_DECIMAL = 'comma_decimal'       # 4,3, 0,125, ,125, 1234,567
-_KIND_COMMA_GROUPED = 'comma_grouped'       # 1,234.5, 1,234,567
+_KIND_COMMA_DECIMAL = 'comma_decimal'       # 4,3, 0,125, ,125
+_KIND_UNGROUPED_COMMA = 'ungrouped_comma'   # 1234,567
+_KIND_COMMA_GROUPED = 'comma_grouped'       # 1,234.5, 1,234,567, 1,23,456
 _KIND_DOT_GROUPED = 'dot_grouped'           # 1.234,56, 1.234.567
 _KIND_AMBIGUOUS_COMMA = 'ambiguous_comma'   # 1,234, 4,375
 _KIND_AMBIGUOUS_DOT = 'ambiguous_dot'       # 1.234
 
-# What each kind proves about the table it is in. The neutral kinds — plain
-# integers and the two ambiguous forms — prove nothing and are absent.
+# What each kind proves about the table it is in. The neutral kinds prove
+# nothing and are absent: plain integers (a trailing ``1.`` or ``5,`` writes
+# no decimal digit), ``1234,567`` (a decimal either way, but an English
+# writer who left out a separator writes it too) and the two ambiguous forms.
 _KIND_EVIDENCE = {
     _KIND_COMMA_DECIMAL: EVIDENCE_EUROPEAN,
     _KIND_DOT_GROUPED: EVIDENCE_EUROPEAN,
     _KIND_DOT_DECIMAL: EVIDENCE_ENGLISH,
     _KIND_COMMA_GROUPED: EVIDENCE_ENGLISH,
+}
+# How a note names what an evidence value shows.
+_KIND_SHOWS = {
+    _KIND_COMMA_DECIMAL: 'writes a decimal comma',
+    _KIND_DOT_GROUPED: 'groups thousands with dots',
+    _KIND_DOT_DECIMAL: 'writes a decimal point',
+    _KIND_COMMA_GROUPED: 'groups thousands with commas',
 }
 
 
@@ -270,15 +290,21 @@ def _lex_decimal(text: str) -> tuple[str, str] | None:
     elif (commas and dots) or commas > 1 or dots > 1:
         if exponent:
             return None                     # 1.234.567e3 is nobody's number
-        if _GROUPED_COMMA_RE.match(mantissa):
+        if _GROUPED_COMMA_RE.match(mantissa) or _INDIAN_GROUPED_RE.match(mantissa):
             kind = _KIND_COMMA_GROUPED
         elif _DIGIT_GROUPED_RE.match(mantissa):
             kind = _KIND_DOT_GROUPED
         else:
             return None
+    elif mantissa.endswith((',', '.')):
+        kind = _KIND_PLAIN                  # 1. and 5, write no decimal digit
     elif commas:
-        kind = (_KIND_AMBIGUOUS_COMMA if _AMBIGUOUS_COMMA_RE.match(mantissa)
-                else _KIND_COMMA_DECIMAL)
+        if _AMBIGUOUS_COMMA_RE.match(mantissa):
+            kind = _KIND_AMBIGUOUS_COMMA
+        elif _UNGROUPED_COMMA_RE.match(mantissa):
+            kind = _KIND_UNGROUPED_COMMA
+        else:
+            kind = _KIND_COMMA_DECIMAL
     else:
         kind = (_KIND_AMBIGUOUS_DOT
                 if not exponent and _AMBIGUOUS_DOT_RE.match(mantissa)
@@ -312,7 +338,10 @@ def _parse_decimal_text(text: str, *, comma3: str) -> tuple[float, str] | None:
     - Two separators, or several of one, must be real digit grouping — groups
       of three after a lead group that does not start with 0: ``1.234,56``,
       ``1,234.5``, ``1,234,567`` and ``1.234.567`` read; ``4,3.``, ``1.5,2``
-      and ``0,125,000`` are refused.
+      and ``0,125,000`` are refused. Indian lakh grouping, twos before a last
+      three (``1,23,456.70``), is comma grouping too.
+    - A lone separator at the end writes no decimal digit: ``1.`` and ``5,``
+      are the integers 1 and 5.
     - A lone comma is a decimal comma — ``4,3``, ``,5``, ``3,14159`` — and so
       is a lone comma before three digits wherever the digits in front of it
       cannot be a thousands group: ``0,125`` and ``,125`` (nobody groups
@@ -347,27 +376,35 @@ def _parse_decimal_text(text: str, *, comma3: str) -> tuple[float, str] | None:
     return value, normalised
 
 
-def _decimal_evidence(text: str) -> str | None:
-    """What *text* proves about how its table writes numbers, or None.
+def _decimal_evidence(text: str) -> tuple[str, str] | None:
+    """What *text* proves about how its table writes numbers: ``(evidence, kind)``.
 
-    ``EVIDENCE_EUROPEAN`` for a value that can only be a decimal comma or dot
-    grouping — ``4,3``, ``0,125``, ``1234,567``, ``1.234,5``, ``1.234.567``,
-    ``1 234,5``. ``EVIDENCE_ENGLISH`` for a decimal point or comma grouping —
-    ``1.5``, ``12.50``, ``0.125``, ``1,234.5``, ``1,234,567``. None for what
-    proves nothing — integers, ``1 234``, the ambiguous ``1,234`` and
-    ``1.234`` themselves — and for anything the grammar refuses.
+    *evidence* is ``EVIDENCE_EUROPEAN`` for a value that can only be a
+    decimal comma or dot grouping — ``4,3``, ``0,125``, ``1.234,5``,
+    ``1.234.567``, ``1 234,5`` — and ``EVIDENCE_ENGLISH`` for a decimal point
+    or comma grouping — ``1.5``, ``12.50``, ``0.125``, ``1,234.5``,
+    ``1,234,567``, ``1,23,456``; *kind* is the ``_KIND_*`` it was read as,
+    which a note names (``_KIND_SHOWS``). None for what proves nothing —
+    integers, ``1 234``, a trailing ``1.`` or ``5,``, ``1234,567``, the
+    ambiguous ``1,234`` and ``1.234`` themselves — and for anything the
+    grammar refuses.
     """
     lexed = _lex_decimal(text)
-    return None if lexed is None else _KIND_EVIDENCE.get(lexed[1])
+    if lexed is None or lexed[1] not in _KIND_EVIDENCE:
+        return None
+    return _KIND_EVIDENCE[lexed[1]], lexed[1]
 
 
-def _ambiguous_comma_text(text: str) -> str | None:
-    """*text* compacted if it is the truly ambiguous ``4,375`` form, else None.
+def _ambiguous_form(text: str) -> tuple[str, str] | None:
+    """``(compact, kind)`` if *text* is ``4,375`` or its mirror ``1.234``, else None.
 
-    What the two warnings about that form quote in their hint.
+    What the warnings about those forms quote in their hint; *kind* is
+    ``_KIND_AMBIGUOUS_COMMA`` or ``_KIND_AMBIGUOUS_DOT``.
     """
     lexed = _lex_decimal(text)
-    return lexed[0] if lexed is not None and lexed[1] == _KIND_AMBIGUOUS_COMMA else None
+    if lexed is None or lexed[1] not in (_KIND_AMBIGUOUS_COMMA, _KIND_AMBIGUOUS_DOT):
+        return None
+    return lexed
 
 
 def _parse_percent_body(body: str) -> tuple[float, str] | None:
@@ -1370,7 +1407,9 @@ def _report_ambiguous_read_as_thousands(
     error for a Czech ``4,375``, so the caller is told, with what to write
     instead (#211). Severity ``info``: the value is in the file, as the
     commoner reading. Aggregated per table column like
-    ``typed_value_kept_as_text``, so a column of them is one entry.
+    ``typed_value_kept_as_text``, so a column of them is one entry. A value
+    the evidence of another column settled is reported by
+    :func:`_report_ambiguous_read_from_table` instead, never by both.
     """
     for col_idx, (count, first_cell, first_value, compact, number) in sorted(read.items()):
         column = _column_label(table_data, col_idx)
@@ -1408,6 +1447,92 @@ def _report_ambiguous_read_as_thousands(
             )
 
 
+def _report_ambiguous_read_from_table(
+    read: dict[int, list],
+    table_data: list[list[str]],
+    start_row: int,
+    worksheet,
+    warnings,
+) -> None:
+    """Report each column whose ambiguous values another column decided — once.
+
+    *read* maps a 0-based column index to ``[count, first_coordinate,
+    first_value, first_compact, first_kind, first_number, source]``, where
+    *source* is the :class:`_Evidence` that decided the column's policy
+    (:func:`_comma3_policies`, steps 2 and 3). The column itself showed
+    nothing, so ``4,375`` — or, in a table read as European, ``1.234`` — was
+    read by how *other* columns write numbers; that is right for a table in
+    one locale and a 1000x error for a column that writes the other one, so
+    the caller is told which value decided, and what to write to settle it
+    whatever the rest of the table says (#211 review). Severity ``info``,
+    aggregated per table column like ``ambiguous_comma_read_as_thousands``,
+    which a cell never also gets.
+
+    The explicit forms: the whole number without its separator (``4375``);
+    the decimal written with a dot when the table reads English (``4.375``),
+    and otherwise with a fourth decimal place in its own separator
+    (``4,3750``, ``1.2340``) — in a table read as European, ``4.375`` is
+    itself read as 4375.
+    """
+    for col_idx, (count, first_cell, first_value, compact, kind, number,
+                  source) in sorted(read.items()):
+        column = _column_label(table_data, col_idx)
+        quoted = _excerpt(first_value)
+        shown = f"{number:.15g}"
+        is_comma = kind == _KIND_AMBIGUOUS_COMMA
+        separator = 'comma' if is_comma else 'dot'
+        whole = compact.replace(',' if is_comma else '.', '')
+        # Read as English, only 4,375 is reported (1.234 reads as it would
+        # with no evidence), and 4.375 is its decimal there.
+        english = _KIND_EVIDENCE[source.kind] == EVIDENCE_ENGLISH
+        decimal = compact.replace(',', '.') if english else compact + '0'
+        if is_comma:
+            why = ("a comma before exactly three digits groups thousands in "
+                   "English but is a decimal comma in most of Europe")
+        else:
+            why = ("a dot before exactly three digits is a decimal point in "
+                   "English but groups thousands in most of Europe")
+        evidence_cell = f"{get_column_letter(source.col_idx + 1)}{start_row + source.row_idx}"
+        evidence = (f"'{_excerpt(source.text)}' at {evidence_cell} "
+                    f"{_KIND_SHOWS[source.kind]}")
+        if count == 1:
+            what = f"'{quoted}' in {column} was read as {shown}"
+            whose = "its own column"
+            if english:
+                fix = (f"If it is a decimal, write {decimal}; if it is the "
+                       f"whole number, write {whole}")
+            else:
+                fix = (f"If it is the whole number, write {whole}; if it is a "
+                       f"decimal, write {decimal}")
+        else:
+            what = (f"{count} values in {column} were read by how other "
+                    f"columns write numbers — the first is '{quoted}' at "
+                    f"{first_cell}, read as {shown}")
+            whose = "their own column"
+            if english:
+                fix = (f"If they are decimals, write them with a dot "
+                       f"({decimal}); if they are whole numbers, without the "
+                       f"{separator} ({whole})")
+            else:
+                fix = (f"If they are whole numbers, write them without the "
+                       f"{separator} ({whole}); if they are decimals, with a "
+                       f"fourth decimal place ({decimal})")
+        logger.info(
+            "Sheet '%s' %s: %d ambiguous value(s) read by the evidence of %s "
+            "(first %s: %r)", worksheet.title, column, count, evidence_cell,
+            first_cell, first_value,
+        )
+        if warnings is not None:
+            warnings.add(
+                W.AMBIGUOUS_NUMBER_READ_FROM_TABLE,
+                f"{what}: {why}; nothing in {whose} shows which, and "
+                f"{evidence}. {fix}, and the reading no longer depends on the "
+                f"other columns.",
+                sheet=worksheet.title,
+                cell=first_cell,
+            )
+
+
 def _column_label(table_data: list[list[str]], col_idx: int) -> str:
     """``column B ('Amount')`` — how a column warning names its column."""
     letter = get_column_letter(col_idx + 1)
@@ -1423,75 +1548,144 @@ def _excerpt(value: str) -> str:
             else value[:_KEPT_VALUE_EXCERPT] + '…')
 
 
-def _evidence_in(table_data: list[list[str]],
-                 columns: list[tuple[int, str | None]]) -> set[str]:
-    """The evidence the literal values of *columns* give: a set of EVIDENCE_*.
+@dataclass(frozen=True)
+class _Evidence:
+    """One value that shows how a table writes numbers, and where it is."""
+    row_idx: int          # in table_data; the header is row 0
+    col_idx: int
+    text: str             # the cell as written, markdown stripped
+    kind: str             # the _KIND_* it was read as — what _KIND_SHOWS names
 
-    Each value is read as its own column would extract it
-    (:func:`_numeric_body`); an untyped cell (spec None) has only a trailing
-    ``%`` to take off. Stops once both kinds are found.
+
+@dataclass(frozen=True)
+class _Comma3Policy:
+    """How one ``number`` or ``currency`` column reads ``4,375`` (and ``1.234``).
+
+    *comma3* goes to :func:`_apply_column_type`. *guessed*: no evidence
+    anywhere, reported as ``ambiguous_comma_read_as_thousands``. *source*:
+    the first value that decided it when it is not in the column itself,
+    reported as ``ambiguous_number_read_from_table``; None when the column
+    decided for itself, or nothing did.
     """
-    found: set[str] = set()
+    comma3: str = COMMA3_THOUSANDS
+    guessed: bool = False
+    source: _Evidence | None = None
+
+
+def _untyped_number_text(raw_text: str) -> str | None:
+    """The number an untyped cell holds, if the cell loop reads it as one.
+
+    An untyped cell is evidence only when :func:`resolve_cell` itself makes
+    it a number or a percent — the one test the cell loop applies — and then
+    as the text that number was read from (its ``%`` taken off). A ``1,2`` or
+    ``12,15`` the cell loop keeps as text shows nothing about how the table
+    writes numbers: before the #211 review, a footnote marker beside an
+    English dollar column turned ``$12,500`` into 12.5. None for text,
+    dates, formulas and empty cells.
+    """
+    resolved = resolve_cell(raw_text)
+    if resolved.is_formula or resolved.is_date or not isinstance(resolved.value, float):
+        return None
+    text = _strip_markdown_formatting(raw_text)[0]
+    return text[:-1] if resolved.is_percent else text
+
+
+def _evidence_values(table_data: list[list[str]], col_idx: int, spec: str | None):
+    """Yield ``(row_idx, text, body)`` for each value of a column that may be evidence.
+
+    A typed column's values are walked by :func:`_data_cell_texts` and
+    extracted by :func:`_numeric_body`, exactly as its coercion reads them;
+    an untyped column's (*spec* None) are what :func:`_untyped_number_text`
+    finds the cell loop reading as a number. Data rows only, ragged rows
+    passed over.
+    """
+    if spec is not None:
+        for row_idx, text in _data_cell_texts(table_data, col_idx):
+            yield row_idx, text, _numeric_body(text, spec)[0]
+        return
+    for row_idx, row in enumerate(table_data[1:], start=1):
+        if col_idx < len(row):
+            body = _untyped_number_text(row[col_idx])
+            if body is not None:
+                yield row_idx, _strip_markdown_formatting(row[col_idx])[0].strip(), body
+
+
+def _evidence_in(table_data: list[list[str]],
+                 columns: list[tuple[int, str | None]]) -> dict[str, _Evidence]:
+    """The evidence *columns* give: ``{EVIDENCE_*: the first value showing it}``.
+
+    Columns in the order given, rows top to bottom; values as
+    :func:`_evidence_values` yields them. Stops once both kinds are found.
+    """
+    found: dict[str, _Evidence] = {}
     for col_idx, spec in columns:
-        for _, text in _data_cell_texts(table_data, col_idx):
-            evidence = _decimal_evidence(_numeric_body(text, spec or 'percent')[0])
-            if evidence:
-                found.add(evidence)
+        for row_idx, text, body in _evidence_values(table_data, col_idx, spec):
+            read = _decimal_evidence(body)
+            if read is not None and read[0] not in found:
+                found[read[0]] = _Evidence(row_idx, col_idx, text, read[1])
                 if len(found) == 2:
                     return found
     return found
 
 
 def _comma3_policies(table_data: list[list[str]],
-                     col_types: list[str | None]) -> dict[int, tuple[str, bool]]:
+                     col_types: list[str | None]) -> dict[int, _Comma3Policy]:
     """How each ``number`` and ``currency`` column reads ``4,375``: the evidence pass.
 
-    Returns ``{col_idx: (comma3, guessed)}`` for :func:`_apply_column_type`.
-    Nobody declares a locale; the table's own numbers do (#211). Evidence is
-    what a value proves (:func:`_decimal_evidence`): a decimal comma or dot
-    grouping is European, a decimal point or comma grouping English, an
-    integer or the ambiguous form itself nothing. It is looked for in order,
-    and the first place that has any decides:
+    Returns ``{col_idx: _Comma3Policy}``; its ``comma3`` goes to
+    :func:`_apply_column_type`. Nobody declares a locale; the table's own
+    numbers do (#211). Evidence is what a value proves
+    (:func:`_decimal_evidence`): a decimal comma or dot grouping is European,
+    a decimal point or comma grouping English; an integer, a trailing ``1.``
+    or ``5,``, ``1234,567`` and the ambiguous form itself prove nothing. It
+    is looked for in order, and the first place that has any decides:
 
     1. the column's own literal values;
     2. every literal in the table's typed ``number``, ``currency`` and
        ``percent`` columns;
-    3. the numeric-looking cells of its untyped columns.
+    3. the cells of its untyped columns that the cell loop reads as a number
+       or a percent (:func:`_untyped_number_text`) — never one it keeps as
+       text.
 
     European only → ``'decimal'`` (``4,375`` is 4.375, and ``1.234`` is
     1234). English only → ``'thousands'``. Both → ``'refuse'``: the table
     writes numbers both ways, so ``4,375`` stays text and is reported by
     ``typed_value_kept_as_text``. None anywhere → ``'thousands'`` with
     *guessed* set, so the loop reports each such value as
-    ``ambiguous_comma_read_as_thousands``. Header, formula and empty cells
-    never count (:func:`_data_cell_texts`). A ``percent`` column is not
-    given a policy — it always refuses the form — but its values are
-    evidence for the others.
+    ``ambiguous_comma_read_as_thousands``. A decision taken in step 2 or 3
+    keeps its first deciding value as *source*, so the loop reports each
+    value it settled as ``ambiguous_number_read_from_table`` (#211 review):
+    another column is a guess about this one, and a table that mixes locales
+    across columns guesses wrong. Header, formula and empty cells never
+    count. A ``percent`` column is not given a policy — it always refuses the
+    form — but its values are evidence for the others.
     """
     width = max((len(row) for row in table_data), default=0)
     typed = [(idx, spec) for idx, spec in enumerate(col_types) if _is_numeric_type(spec)]
     untyped = [(idx, None) for idx in range(width)
                if idx >= len(col_types) or not col_types[idx]]
-    table_wide: set[str] | None = None        # steps 2 and 3, on first need
+    table_wide: dict[str, _Evidence] | None = None    # steps 2 and 3, on first need
 
-    policies: dict[int, tuple[str, bool]] = {}
+    policies: dict[int, _Comma3Policy] = {}
     for idx, spec in typed:
         if spec.strip().lower().startswith('percent'):
             continue
         found = _evidence_in(table_data, [(idx, spec)])
-        if not found:
+        own = bool(found)
+        if not own:
             if table_wide is None:
                 table_wide = (_evidence_in(table_data, typed)
                               or _evidence_in(table_data, untyped))
             found = table_wide
-        if found == {EVIDENCE_EUROPEAN}:
-            policies[idx] = (COMMA3_DECIMAL, False)
-        elif found == {EVIDENCE_ENGLISH}:
-            policies[idx] = (COMMA3_THOUSANDS, False)
-        elif found:
-            policies[idx] = (COMMA3_REFUSE, False)
-        else:
-            policies[idx] = (COMMA3_THOUSANDS, True)
+        if not found:
+            policies[idx] = _Comma3Policy(COMMA3_THOUSANDS, guessed=True)
+            continue
+        if len(found) == 2:
+            policies[idx] = _Comma3Policy(COMMA3_REFUSE)
+            continue
+        [(evidence, first)] = found.items()
+        comma3 = COMMA3_DECIMAL if evidence == EVIDENCE_EUROPEAN else COMMA3_THOUSANDS
+        policies[idx] = _Comma3Policy(comma3, source=None if own else first)
     return policies
 
 
@@ -1673,8 +1867,9 @@ def add_table_to_sheet(
         col_alignments = table_data.col_alignments
 
     # How each number/currency column reads the ambiguous `4,375`, from the
-    # table's own evidence (#211): col_idx -> (comma3 policy, guessed).
+    # table's own evidence (#211): col_idx -> _Comma3Policy.
     comma3_policies = _comma3_policies(table_data, col_types)
+    no_policy = _Comma3Policy()
 
     # Typed values the column could not read and kept as text, per column:
     # col_idx -> [count, first coordinate, first value, first ambiguous].
@@ -1684,6 +1879,11 @@ def add_table_to_sheet(
     # col_idx -> [count, first coordinate, first value, compact, number].
     # Reported once per column by _report_ambiguous_read_as_thousands (#211).
     read_as_thousands: dict[int, list] = {}
+    # `4,375` (or a European `1.234`) settled by another column's evidence,
+    # per column: col_idx -> [count, first coordinate, first value, compact,
+    # kind, number, source]. Reported once per column by
+    # _report_ambiguous_read_from_table (#211 review).
+    read_from_table: dict[int, list] = {}
 
     # Styles
     header_font = Font(bold=True, color="FFFFFF")
@@ -1710,19 +1910,33 @@ def add_table_to_sheet(
                     # which Excel shows as #NAME?. Fall through to the formula
                     # path below, which re-applies the column's number format.
                     is_formula = clean_text.startswith('=')
-                    comma3, guessed = comma3_policies.get(
-                        col_idx, (COMMA3_THOUSANDS, False))
+                    policy = comma3_policies.get(col_idx, no_policy)
                     if not is_formula and _apply_column_type(cell, clean_text, col_type,
-                                                             comma3=comma3):
-                        ambiguous = (_ambiguous_comma_text(_numeric_body(clean_text, col_type)[0])
-                                     if _is_numeric_type(col_type) else None)
+                                                             comma3=policy.comma3):
+                        form = (_ambiguous_form(_numeric_body(clean_text, col_type)[0])
+                                if _is_numeric_type(col_type) else None)
+                        compact, kind = form or (None, None)
+                        ambiguous = compact if kind == _KIND_AMBIGUOUS_COMMA else None
+                        # One report per cell at most: kept as text, read
+                        # from another column, or read on no evidence. The
+                        # mirror `1.234` only counts where the evidence moved
+                        # it — read as European; read as English it is the
+                        # decimal it would be with no evidence at all.
                         if _kept_as_text(cell, col_type):
                             entry = kept_as_text.setdefault(
                                 col_idx, [0, cell.coordinate, cell.value, None])
                             entry[0] += 1
                             if entry[3] is None:
                                 entry[3] = ambiguous
-                        elif guessed and ambiguous is not None:
+                        elif policy.source is not None and (
+                                ambiguous is not None
+                                or (kind == _KIND_AMBIGUOUS_DOT
+                                    and policy.comma3 == COMMA3_DECIMAL)):
+                            entry = read_from_table.setdefault(
+                                col_idx, [0, cell.coordinate, clean_text, compact, kind,
+                                          cell.value, policy.source])
+                            entry[0] += 1
+                        elif policy.guessed and ambiguous is not None:
                             entry = read_as_thousands.setdefault(
                                 col_idx, [0, cell.coordinate, clean_text, ambiguous, cell.value])
                             entry[0] += 1
@@ -1821,6 +2035,8 @@ def add_table_to_sheet(
 
     _report_kept_as_text(kept_as_text, table_data, col_types, worksheet, warnings)
     _report_ambiguous_read_as_thousands(read_as_thousands, table_data, worksheet, warnings)
+    _report_ambiguous_read_from_table(read_from_table, table_data, start_row,
+                                      worksheet, warnings)
 
     # Column widths — based on clean text length (not raw markdown with formatting markers)
     # When type directives are active, estimate display width from the type spec.

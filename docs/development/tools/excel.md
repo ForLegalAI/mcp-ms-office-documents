@@ -197,7 +197,12 @@ no-break, narrow no-break and thin spaces count as spaces; `−` reads as `-`;
 an exponent only without a comma (`1,5e3` stays text — the thousands reading
 gives 10x); two separators, or several of one, must be real grouping in
 threes behind a lead group that does not start with 0 (`4,3.`, `1.5,2` and
-`0,125,000` stay text); `nan`, `inf` and underscores never match.
+`0,125,000` stay text) — or Indian lakh grouping, twos before a last three
+(`1,23,456.70`, `_INDIAN_GROUPED_RE`), which `currency:₹` read before #211
+and reads again; a lone separator at the end (`1.`, `5,`) writes no decimal
+digit and is the integer; `nan`, `inf` and underscores never match. Untyped
+cells keep their own, three-digit grouping (step 4 above), so an untyped
+`1,23,456` is still text.
 
 A lone comma is a decimal comma — `4,3`, `,5`, and before three digits too
 wherever the digits in front cannot be a thousands group: `0,125`, `,125`,
@@ -211,24 +216,53 @@ percent columns.
 
 **The evidence pass.** A `number` or `currency` column takes its policy from
 the table: `_comma3_policies()` runs before the cell loop and asks, in
-order, the column's own literals, then every literal in the table's typed
-`number`/`currency`/`percent` columns, then the numeric-looking cells of its
-untyped columns; the first place with any evidence decides.
+order,
+
+1. the column's own literals;
+2. every literal in the table's typed `number`/`currency`/`percent` columns;
+3. the cells of its untyped columns that the cell loop itself reads as a
+   number or a percent — `_untyped_number_text()` asks `resolve_cell()` —
+   never one it keeps as text;
+
+and the first place with any evidence decides. Step 3 used to take any
+untyped text the decimal grammar accepted, so a footnote marker `1,2` or a
+page range `12,15` — text in the workbook — made an English dollar column
+European and turned `$12,500` into 12.5 (#211 review).
 `_decimal_evidence()` reads one value: a decimal comma or dot grouping
-(`4,3`, `0,125`, `1234,567`, `1.234,5`, `1.234.567`, `1 234,5`) is
-European; a decimal point or comma grouping (`1.5`, `12.50`, `0.125`,
-`1,234.5`, `1,234,567`) is English; integers, `1 234` and the ambiguous
-`1,234` and `1.234` themselves are neutral. European only → `decimal`;
-English only → `thousands`; both → `refuse`, and `_report_kept_as_text()`
-adds the hint that the table writes numbers both ways; none → `thousands`,
-and each value read that way is counted for
-`ambiguous_comma_read_as_thousands`. All of it walks the column with
-`_data_cell_texts()` — data rows only, whole-cell markdown stripped,
-formulas and empty cells skipped, ragged rows passed over — the same walk
-`_percent_format_for_column()` uses, and extracts with the same
-`_numeric_body()` as the coercion, so a value is evidence exactly as the
-column reads it. Evidence is per table: two tables on one sheet can read
-`4,375` differently.
+(`4,3`, `0,125`, `1.234,5`, `1.234.567`, `1 234,5`) is European; a decimal
+point or comma grouping (`1.5`, `12.50`, `0.125`, `1,234.5`, `1,234,567`,
+`1,23,456`) is English; integers, `1 234`, a trailing `1.` or `5,`,
+`1234,567` (a decimal, `_KIND_UNGROUPED_COMMA`, but an English writer who
+left out a separator writes it too) and the ambiguous `1,234` and `1.234`
+themselves are neutral. European only → `decimal`; English only →
+`thousands`; both → `refuse`, and `_report_kept_as_text()` adds the hint
+that the table writes numbers both ways; none → `thousands`, and each value
+read that way is counted for `ambiguous_comma_read_as_thousands`.
+
+The result is a `_Comma3Policy` per column: `comma3` for
+`_apply_column_type()`, `guessed` for no evidence anywhere, and `source`
+— the first value that decided it, an `_Evidence` with its row, column,
+text and kind — when that value came from step 2 or 3. Another column is a
+guess about this one, so each value it settles is counted for
+`ambiguous_number_read_from_table` and `_report_ambiguous_read_from_table()`
+names the deciding cell and what it shows (`_KIND_SHOWS`). Settled means
+`4,375` under either reading, and `1.234` only when read as European
+thousands: read as English it is the decimal it would be with no evidence
+at all, which is silent. Own-column evidence is silent too. A cell gets at
+most one of the three codes — kept as text, read from the table, read on no
+evidence. The note's explicit forms are the whole number without its
+separator (`4375`) and, for the decimal, `4.375` in a table read as English
+but a fourth decimal place in its own separator (`4,3750`, `1.2340`) in one
+read as European, where `4.375` would itself be read as 4375.
+
+Steps 1 and 2 walk a column with `_data_cell_texts()` — data rows only,
+whole-cell markdown stripped, formulas and empty cells skipped, ragged rows
+passed over — the same walk `_percent_format_for_column()` uses, and
+extract with the same `_numeric_body()` as the coercion, so a value is
+evidence exactly as the column reads it; step 3 reads each cell as the cell
+loop does. `_evidence_values()` is the one place that chooses between the
+two. Evidence is per table: two tables on one sheet can read `4,375`
+differently.
 
 ### Formula reference rewriting
 
@@ -320,7 +354,8 @@ is created in `_markdown_to_excel_buffer()` and threaded through
 `_build_workbook()` → `walk_markdown_lines()`, `add_table_to_sheet()` →
 `adjust_formula_references()`, `_write_formula()`,
 `_ensure_unique_table_headers()`, `_report_kept_as_text()`,
-`_report_ambiguous_read_as_thousands()`, `parse_styles_directive()`. It is an
+`_report_ambiguous_read_as_thousands()`, `_report_ambiguous_read_from_table()`,
+`parse_styles_directive()`. It is an
 **argument, never module state**: builds run concurrently on `run_blocking`
 worker threads.
 
@@ -347,6 +382,7 @@ still markdown.
 | `style_failed` | warning | `apply_style_spec()` raised for one cell |
 | `typed_value_kept_as_text` | warning | Non-empty values in a `types` column (any type but `text`) that do not read as that type and were kept as text; **one per table column**, with the count, located at the first such cell |
 | `ambiguous_comma_read_as_thousands` | info | A `number` or `currency` column read the ambiguous `4,375` as 4375 because the table had no evidence either way (see "[Reading a number](#reading-a-number)"); **one per table column**, with the count, located at the first such cell |
+| `ambiguous_number_read_from_table` | info | A `number` or `currency` column with no evidence of its own read `4,375` — or, as European, `1.234` — by another column's or an untyped cell's evidence; **one per table column**, with the count and the deciding cell, located at the first such cell. Never on a cell that also gets one of the two codes above |
 
 The channel **de-duplicates** identical `(code, message, location)` entries
 and **caps** the number it carries (`warning_channel.DEFAULT_LIMIT`), which
@@ -361,8 +397,9 @@ the channel, reach the cap, and push the formula errors raised after it out of
 the response. `add_table_to_sheet()` collects `[count, first cell, first value]`
 per column and `_report_kept_as_text()` adds one warning each after the cell
 loop. `ambiguous_comma_read_as_thousands` does the same through
-`_report_ambiguous_read_as_thousands()`: in a Czech rate column it is every
-row. A new per-cell code that a caller can trip in bulk should do the same.
+`_report_ambiguous_read_as_thousands()`, and `ambiguous_number_read_from_table`
+through `_report_ambiguous_read_from_table()`: in a Czech rate column it is
+every row. A new per-cell code that a caller can trip in bulk should do the same.
 
 A table row is any line that starts with `|`; the trailing pipe is optional,
 and a lone `|` inside a table is an empty row. `parse_table()` gets that rule
@@ -421,7 +458,7 @@ report in the `else` branch below it.
 | A new directive | `parser.DIRECTIVE_PATTERN` already accepts any key; read it in `add_table_to_sheet()` or `_build_workbook()` | Directives are lower-cased keys with optional values |
 | A new style attribute | `styles.parse_style_spec()`, `StyleSpec`, `apply_style_spec()` | Flags without a value go in `_FLAG_ATTRS` |
 | A new date format | `helpers.DATE_FORMATS` | Pair the `strptime` pattern with the Excel display format; order is most specific first |
-| A new numeric form (a separator, a sign, a currency spelling) | `helpers._numeric_body()` for what a column strips; `_lex_decimal()` and its regexes for the grammar; `_KIND_EVIDENCE` for what a new kind proves | Every numeric column and the evidence pass go through these, so a form added here is read and learned from the same way everywhere. Untyped cells do not (`_normalize_grouped_number()`), and should not loosen without a way to warn |
+| A new numeric form (a separator, a sign, a currency spelling) | `helpers._numeric_body()` for what a column strips; `_lex_decimal()` and its regexes for the grammar; `_KIND_EVIDENCE` for what a new kind proves and `_KIND_SHOWS` for how a note names it | Every numeric column and the evidence pass go through these, so a form added here is read and learned from the same way everywhere. Untyped cells do not (`_normalize_grouped_number()`), and should not loosen without a way to warn |
 | A new numeric column type | as "a new column type", plus `_is_numeric_type()` | That is what makes its literals evidence in `_comma3_policies()`; a type that should take a policy itself needs its branch to pass `comma3` on |
 | A new warning | `xlsx_tools/warnings.py` (code + severity), then `warnings.add(...)` at the site | `tests/test_xlsx_warnings.py::test_every_code_has_a_severity` fails if the table is missed; locate it with `sheet=` plus `cell=` or `line=` |
 
@@ -459,7 +496,7 @@ report in the `else` branch below it.
 | `tests/test_xlsx_styling.py` | The `styles` directive and template-defined named styles |
 | `tests/test_xlsx_warnings.py` | The warnings channel: every code, sheet/cell/line locations, the cap, the tool-boundary response shape |
 | `tests/test_xlsx_percent_european_143.py` | Decimal commas in typed and untyped percents, the ambiguous `4,375` form, the format learner agreeing with the coercion, and the per-column `typed_value_kept_as_text` warning |
-| `tests/test_xlsx_number_comma_211.py` | Number and currency columns on the shared reader: `0,125` and `1234,567` as decimals, malformed and non-finite values refused and reported, typographic spaces and minus, the evidence pass (column, table, untyped; European, English, mixed, none) and `ambiguous_comma_read_as_thousands`, untyped grouping behind a zero, the currency forms that must not move, and a differential over every #143 percent case. Each test is labelled fix or pin |
+| `tests/test_xlsx_number_comma_211.py` | Number and currency columns on the shared reader: `0,125` and `1234,567` as decimals, malformed and non-finite values refused and reported, typographic spaces and minus, the evidence pass (column, table, untyped cells only where they read as numbers; European, English, mixed, none; what is not evidence — trailing separators, `1234,567`, headers, text and date columns), `ambiguous_comma_read_as_thousands` and `ambiguous_number_read_from_table`, Indian grouping, untyped grouping behind a zero, the currency forms that must not move, and a differential over every #143 percent case. Each test is labelled fix or pin |
 | `tests/test_table_trailing_pipe_144.py` | The table-row grammar shared with Word: rows without a trailing pipe, a lone `\|` row, Word and Excel giving the same rows |
 | `tests/test_warning_channel.py` | The shared record and collector the channel is built on |
 
@@ -483,3 +520,12 @@ it with `openpyxl.load_workbook` so assertions see what Excel would see. See
 - **A percent column takes no evidence.** It always refuses `4,375` as
   ambiguous, even in a table full of decimal commas; only `number` and
   `currency` columns run the evidence pass.
+- **A decision from another column is reported, not refused.** A column with
+  no evidence of its own follows the rest of the table, so in a table that
+  mixes locales across columns — English `1.500` beside a Czech `12,5` — it
+  reads 1500, a 1000x error. The value is in the file and
+  `ambiguous_number_read_from_table` names the cell that decided it. It is
+  not kept as text, because refusing every cross-column decision would leave
+  every English `1,234` beside a `$12.50` as text. Steps 2 and 3 are not
+  pooled either: when the typed columns show one locale, untyped cells that
+  show the other are not asked.
