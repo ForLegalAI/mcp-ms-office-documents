@@ -319,6 +319,7 @@ several replicas, put the files on shared storage and restart the pods.
 | `template_utils.py` | template file resolution across custom/default and container/local dirs |
 | `template_registry.py` | YAML merging — template specs and kind-wide settings — live tool removal, and `arg_field()` for argument schemas, shared by both dynamic-tool modules |
 | `inline_markdown.py` | the inline-markdown grammar shared by the Word and PowerPoint renderers |
+| `markdown_table.py` | the table-row grammar (row detection, cell split, separator shape) shared by the Word and Excel renderers |
 | `image_utils.py` | image download, data-URI decoding, validation, SSRF guard |
 | `warning_channel.py` | the severity vocabulary, the `DocumentWarning` record and the per-build `WarningChannel` the builders write to |
 | `metrics.py` | in-process counters and recent-log buffer for the admin Status page |

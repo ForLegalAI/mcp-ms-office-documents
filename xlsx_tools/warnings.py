@@ -4,7 +4,9 @@ Excel used to lose content and mis-resolve formulas in silence (#114): a line
 that is not a table row is dropped, a formula naming a table or sheet that
 does not exist still resolves — to the wrong cell, or to ``#REF!`` once Excel
 opens it — and an over-length formula is stored as text. Each produced a
-success response and a log line the caller never sees.
+success response and a log line the caller never sees. A value a ``types``
+column cannot read is kept as text the same way (#143); that one is reported
+once per column, with a count, rather than once per cell.
 
 Each code below names one of those situations, and :data:`WARNING_SEVERITY`
 fixes what it costs. Locations are the ``sheet`` the problem is on plus either
@@ -43,6 +45,7 @@ HEADER_RENAMED = "header_renamed"
 STYLE_ENTRY_INVALID = "style_entry_invalid"
 STYLE_RANGE_TOO_LARGE = "style_range_too_large"
 STYLE_FAILED = "style_failed"
+TYPED_VALUE_KEPT_AS_TEXT = "typed_value_kept_as_text"
 
 #: One severity per code, in one place.
 WARNING_SEVERITY: dict[str, str] = {
@@ -63,6 +66,7 @@ WARNING_SEVERITY: dict[str, str] = {
     STYLE_ENTRY_INVALID: SEVERITY_WARNING,
     STYLE_RANGE_TOO_LARGE: SEVERITY_WARNING,
     STYLE_FAILED: SEVERITY_WARNING,
+    TYPED_VALUE_KEPT_AS_TEXT: SEVERITY_WARNING,
 }
 
 

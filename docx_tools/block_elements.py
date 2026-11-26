@@ -1,10 +1,10 @@
 """Block-level markdown elements: tables, lists, images, alignment, horizontal lines."""
-import re
 import logging
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from markdown_table import is_separator_cells, is_table_line, split_row
 from .patterns import (
     ORDERED_LIST_PATTERN,
     UNORDERED_LIST_PATTERN,
@@ -40,33 +40,12 @@ ALIGNMENT_MAP = {
 # ---------------------------------------------------------------------------
 # Tables
 # ---------------------------------------------------------------------------
-_SEPARATOR_RE = re.compile(r'^[|:\-\s]+$')
-
-def _is_separator_line(line):
-    """True if *line* is a markdown table separator row (``|---|:---:|``).
-
-    Every cell must carry dashes. Skipping the empty ones made ``all()``
-    vacuously true for a row of blank cells, so ``|  |  |`` passed as a
-    separator and the caller's blank row was swallowed. Excel's
-    ``_is_separator_row()`` applies the same rule.
-
-    Shape only — whether a row is *the* separator also depends on its
-    position; see :func:`parse_table`.
-    """
-    if not _SEPARATOR_RE.match(line.replace('|', ' | ')):
-        return False
-    cells = [c.strip() for c in line.split('|')[1:-1]]
-    return bool(cells) and all(re.match(r'^:?-+:?$', c) for c in cells)
-
-
-def _parse_alignment_row(line):
-    """Extract column alignments from a markdown table separator row.
+def _parse_alignment_row(cells):
+    """Extract column alignments from a separator row's split *cells*.
     Returns a list of alignment values (WD_ALIGN_PARAGRAPH) or None per column.
     """
-    cells = [c.strip() for c in line.split('|')[1:-1]]
     alignments = []
     for cell in cells:
-        cell = cell.strip()
         if cell.startswith(':') and cell.endswith(':'):
             alignments.append(WD_ALIGN_PARAGRAPH.CENTER)
         elif cell.endswith(':'):
@@ -77,6 +56,14 @@ def _parse_alignment_row(line):
 
 def parse_table(lines, start_idx):
     """Parse markdown table and return table data, column alignments, and next line index.
+
+    The table runs while lines are table rows by
+    :func:`markdown_table.is_table_line` — a leading ``|``, the trailing one
+    optional — and each row is split by :func:`markdown_table.split_row`.
+    Those are the rules Excel's ``parse_table()`` uses, so a row missing its
+    trailing pipe stays in the table in both tools (#144); Word used to demand
+    both pipes, which ended the table at that row and printed it as prose.
+
     Returns:
         Tuple of (table_data, col_alignments, next_line_index, has_separator).
         table_data is a list of rows (each row is a list of cell strings).
@@ -87,16 +74,21 @@ def parse_table(lines, start_idx):
         the flag is what lets the caller report that it was decided for them
         (#114).
     """
-    table_lines = []
+    rows = []
     i = start_idx
     while i < len(lines):
         line = lines[i].strip()
-        if line.startswith('|') and line.endswith('|'):
-            table_lines.append(line)
-            i += 1
-        else:
+        if not is_table_line(line):
             break
-    if len(table_lines) < 2:
+        rows.append(split_row(line))
+        i += 1
+    if len(rows) < 2:
+        return None, None, start_idx + 1, False
+    # A run of `|` lines with no cells at all would build a table with no
+    # columns: Word shows nothing, so the caller's text would be gone. Not a
+    # table — it falls to table_not_recognised and is written as prose, as a
+    # lone `|` is (#144 review).
+    if not any(rows):
         return None, None, start_idx + 1, False
     # A run of nothing but separator rows is not a table: there is no header
     # for one of them to sit under. Without this, the `idx == 1` rule below
@@ -106,24 +98,20 @@ def parse_table(lines, start_idx):
     # they are reported as table_not_recognised and written as prose — Word
     # keeps what the caller wrote, where Excel reports table_incomplete
     # because a worksheet has nowhere to put it.
-    if all(_is_separator_line(line) for line in table_lines):
+    if all(is_separator_cells(cells) for cells in rows):
         return None, None, start_idx + 1, False
     table_data = []
     col_alignments = None
     separator_in_place = False
-    for idx, line in enumerate(table_lines):
+    for idx, cells in enumerate(rows):
         # Markdown has exactly one separator, directly under the header. A row
         # of dashes anywhere else is data — `| - | - |` is how a caller writes
         # "not applicable in either column" — so position decides, not shape
-        # alone. Every cell must also carry dashes: skipping the empty ones
-        # made `all()` vacuously true for a row of blank cells, so `|  |  |`
-        # passed as a separator and the caller's blank row was swallowed.
-        # Excel's parse_table() applies both rules the same way.
-        if idx == 1 and _is_separator_line(line):
-            col_alignments = _parse_alignment_row(line)
+        # alone. Excel's parse_table() applies the same rule.
+        if idx == 1 and is_separator_cells(cells):
+            col_alignments = _parse_alignment_row(cells)
             separator_in_place = True
             continue
-        cells = [cell.strip() for cell in line.split('|')[1:-1]]
         table_data.append(cells)
     return table_data, col_alignments, i, separator_in_place
 

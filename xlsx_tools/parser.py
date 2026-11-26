@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from markdown_table import is_table_line
+
 from . import warnings as W
 from .helpers import TABLE_BOTTOM_SPACING, parse_table
 
@@ -152,8 +154,8 @@ def walk_markdown_lines(lines: list[str], warnings=None) -> list[LineEvent]:
             current_row += HEADER_ROW_SPACING
             i += 1
 
-        # Tables
-        elif line.startswith('|'):
+        # Tables: a line starting with |, trailing pipe optional
+        elif is_table_line(line):
             table_start = i
             table_data, i = parse_table(lines, i)
             if table_data:

@@ -1,7 +1,8 @@
 """Cell-level machinery for the Excel tool.
 
 Everything that happens inside one table once the parser has placed it:
-``parse_table`` splits the Markdown rows; ``resolve_cell`` decides whether a
+``parse_table`` splits the Markdown rows (the row grammar is the root
+``markdown_table`` module, shared with Word); ``resolve_cell`` decides whether a
 cell is a formula, percent, number, date or text; ``adjust_formula_references``
 rewrites the table-relative formula syntax (``T1.B[0]``, ``B[-1]``,
 ``Sheet!T1.SUM(...)``) to real cell references; the ``types`` directive
@@ -22,6 +23,8 @@ from dateutil import parser as dateutil_parser
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
+
+from markdown_table import is_separator_cells, is_table_line, split_row
 
 from . import warnings as W
 
@@ -92,6 +95,37 @@ _THOUSANDS_THRESHOLD = 1000
 # Cap on decimals carried from a percentage's source text into its format.
 _PERCENT_MAX_DECIMALS = 4
 
+# A percent body whose one comma is followed by exactly three digits, with no
+# dot: ``0,125``, ``4,375``, ``1,234``. Thousands grouping and a European
+# decimal comma both read it, a thousand times apart, so it is left as text
+# rather than guessed at (#143). See _parse_percent_body.
+_AMBIGUOUS_PERCENT_COMMA_RE = re.compile(r'^[+-]?\d*,\d{3}$')
+
+# What a percent body may look like once its edges are trimmed: a sign,
+# digits with dots and commas, and an exponent only where there is no comma
+# (``1,5e3`` is refused: _strip_thousands_separators would read ``,5e3`` as a
+# thousands group and give 10x the number). Whitespace inside is allowed only
+# as digit grouping (``1 234,56``); anything looser — ``10, 20``, ``4 3`` —
+# was text on master and must not become a number in an untyped cell, where
+# nothing can warn about it (#143 review).
+_PERCENT_BODY_RE = re.compile(
+    r'^[+-]?(?=[\d.,]*\d)[\d.,]+$'
+    r'|^[+-]?(?=[\d.]*\d)[\d.]+[eE][+-]?\d+$'
+)
+# A body with two separators, or several of one, must be genuine digit
+# grouping — groups of three after the first — with an optional decimal part
+# in the other separator: ``1,234.5``, ``1,234,567``, ``1.234,56``. Without
+# this, _strip_thousands_separators reads ``4,3.`` as 43 and ``1.5,2`` as 15.2
+# (#143 review).
+_PERCENT_GROUPED_RE = re.compile(
+    r'^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?$'
+    r'|^[+-]?\d{1,3}(?:\.\d{3})+(?:,\d+)?$'
+)
+_SPACE_GROUPED_RE = re.compile(r'^[+-]?\d{1,3}(?: \d{3})+(?:[.,]\d+)?$')
+# Non-breaking and narrow non-breaking spaces, as Czech typography writes
+# them before % and between digit groups.
+_PERCENT_SPACES = str.maketrans({'\u00a0': ' ', '\u202f': ' ', '\u2009': ' '})
+
 # Minimum length to even attempt date parsing (avoids matching plain numbers)
 _MIN_DATE_LENGTH = 6
 # Regex to quickly reject values that clearly can't be dates
@@ -159,8 +193,70 @@ def _thousands_format_for(value: float) -> str:
     return THOUSANDS_FORMAT if float(value).is_integer() else THOUSANDS_FORMAT_DECIMALS
 
 
+def _parse_percent_body(body: str) -> tuple[float, str] | None:
+    """Read the number in front of a ``%`` as a fraction, or None.
+
+    The one test of "is this a percent", shared by every place that asks it —
+    the ``percent`` branch of :func:`_apply_column_type`, Step 3 of
+    :func:`resolve_cell` and the format learner
+    :func:`_percent_format_for_column` — so the three cannot disagree (#126,
+    #143). Callers strip the ``%`` themselves; whether it is required is
+    theirs to decide (a typed column takes it optional, an untyped cell needs
+    it).
+
+    Returns ``(fraction, normalised_text)``: ``4,3`` → ``(0.043, '4.3')``.
+    The normalised text is what the precision of the percent format is counted
+    on, so ``1.234,56`` shows two decimals, not the six its raw text implies.
+
+    Separators, in a percent body:
+
+    - Whitespace at the edges is dropped, so ``4,3 %`` and a Czech
+      non-breaking space before the sign both read. Inside, it is allowed only
+      as digit grouping (``1 234,56``); ``10, 20`` and ``4 3`` stay text.
+    - The typographic minus sign (U+2212) reads as ``-``.
+    - An exponent is accepted only without a comma: ``1,5e3`` stays text.
+    - Two separators, or several of one, must be real digit grouping
+      (groups of three): ``4,3.`` and ``1.5,2`` stay text.
+    - A lone comma is a decimal comma — ``4,3``, ``0,5``, ``,5``, ``4,30``,
+      ``3,14159`` — except when exactly three digits follow it and there is
+      no dot: ``0,125`` is 0.125 in Prague and 125 in an English thousands
+      reading, and choosing either one silently is a 1000x error for the
+      other. That form returns None and stays text.
+    - Both separators, or several commas, are digit grouping:
+      ``1.234,56``, ``1,234.5``, ``1,234,567``
+      (:func:`_strip_thousands_separators`).
+
+    ``nan``, ``inf`` and PEP 515 underscores are refused, as an untyped number
+    is in :func:`resolve_cell`: the first two serialise as an empty cell.
+    """
+    text = body.translate(_PERCENT_SPACES).replace('\u2212', '-').strip()
+    if ' ' in text or '\t' in text:
+        if not _SPACE_GROUPED_RE.match(text):
+            return None
+        text = text.replace(' ', '')
+    if not _PERCENT_BODY_RE.match(text) or _AMBIGUOUS_PERCENT_COMMA_RE.match(text):
+        return None
+    mantissa = re.split(r'[eE]', text, maxsplit=1)[0]
+    if ((',' in mantissa and '.' in mantissa) or mantissa.count(',') > 1
+            or mantissa.count('.') > 1) and not _PERCENT_GROUPED_RE.match(mantissa):
+        return None
+    normalised = _strip_thousands_separators(text)
+    try:
+        value = float(normalised)
+    except ValueError:
+        return None
+    if not math.isfinite(value):
+        return None
+    return value / 100, normalised
+
+
 def _percent_decimals(numeric_text: str) -> int:
-    """How many decimal places the source text of a percent carries."""
+    """How many decimal places the source text of a percent carries.
+
+    Counts after the first ``.``, so give it the *normalised* text from
+    :func:`_parse_percent_body`; a comma is still read as a decimal point for
+    callers that pass a bare ``50,5``.
+    """
     fraction = numeric_text.strip().replace(',', '.').partition('.')[2].strip()
     return min(len(fraction), _PERCENT_MAX_DECIMALS)
 
@@ -195,13 +291,15 @@ def _percent_format_for_column(table_data: list[list[str]], col_idx: int) -> str
     percent to learn from, leaving the caller its own fallback.
 
     A cell counts exactly when :func:`_apply_column_type` would coerce it, and
-    the two tests are deliberately identical: ``rstrip('%')`` then a bare
-    ``float()``. Either half drifting apart from the coercion has already
-    caused this both ways — ``1,234%`` fails ``float()``, so the coercion
-    leaves it as text and it must not set the format of the cells that are
-    percents; while a bare ``50.5`` in a percent column *is* coerced (the
-    ``%`` is optional there), so it must. Neither the sign nor a comma is a
-    test of its own; what the column does with the value is.
+    the two tests are deliberately identical: ``rstrip('%')`` then
+    :func:`_parse_percent_body`, the one function both call. Either half
+    drifting apart from the coercion has already caused this both ways —
+    ``1,234%`` is ambiguous, so the coercion leaves it as text and it must not
+    set the format of the cells that are percents; while a bare ``50.5`` or a
+    European ``4,3`` in a percent column *is* coerced (the ``%`` is optional
+    there), so it must (#143). Neither the sign nor a comma is a test of its
+    own; what the column does with the value is. Decimals are counted on the
+    normalised text, so ``1.234,56`` teaches two.
     """
     decimals = None
     for row in table_data[1:]:                      # data rows only
@@ -210,43 +308,22 @@ def _percent_format_for_column(table_data: list[list[str]], col_idx: int) -> str
         text = _strip_markdown_formatting(row[col_idx])[0].strip()
         if text.startswith('='):
             continue                                 # a formula teaches nothing
-        body = text.rstrip('%').strip()
-        try:
-            float(body)                              # exactly what the column
-        except ValueError:                           # coercion itself accepts
-            continue
-        decimals = max(decimals or 0, _percent_decimals(body))
+        parsed = _parse_percent_body(text.rstrip('%'))   # exactly what the
+        if parsed is None:                               # column coercion
+            continue                                     # itself accepts
+        decimals = max(decimals or 0, _percent_decimals(parsed[1]))
     return None if decimals is None else _percent_format_with(decimals)
 
 
-def _is_separator_row(line: str) -> bool:
-    """Check if a table line is a markdown separator row (e.g. |---|:---:|---:|).
-
-    Only returns True if ALL cells in the row match the separator pattern,
-    preventing false positives from data cells that happen to contain '---'.
-
-    One dash is enough, as in CommonMark and in the Word tool's own check.
-    Demanding three wrote a caller's ``|--|--|`` into the sheet as a row of
-    literal dashes and then reported ``table_separator_missing`` against a
-    table that had one (#114).
-    """
-    cells = [c.strip() for c in line.split('|')[1:-1]]
-    if not cells:
-        return False
-    return all(re.match(r'^:?-+:?$', c) for c in cells)
-
-
-def _parse_column_alignments(separator_line: str) -> list[str | None]:
-    """Extract column alignments from a markdown separator row.
+def _parse_column_alignments(cells: list[str]) -> list[str | None]:
+    """Extract column alignments from a separator row's split *cells*.
 
     Returns a list of alignment strings ('left', 'center', 'right') or None per column.
     This is the same logic used by docx_tools but returns generic strings
     instead of Word-specific enums.
     """
-    cells = [c.strip() for c in separator_line.split('|')[1:-1]]
     alignments: list[str | None] = []
     for cell in cells:
-        cell = cell.strip()
         if cell.startswith(':') and cell.endswith(':'):
             alignments.append('center')
         elif cell.endswith(':'):
@@ -261,31 +338,33 @@ def _parse_column_alignments(separator_line: str) -> list[str | None]:
 def parse_table(lines: list[str], start_idx: int) -> tuple[list[list[str]] | None, int]:
     """Parse markdown table and return (table_data, next_index).
 
+    The table runs while lines are table rows by
+    :func:`markdown_table.is_table_line` — a leading ``|``, the trailing one
+    optional — and each row is split by :func:`markdown_table.split_row`; the
+    Word tool's ``parse_table()`` uses the same two functions, so the two
+    tools keep the same rows (#144).
+
     Also extracts column alignments from the separator row and attaches them
     as the 'col_alignments' attribute on the returned TableData instance.
     """
-    table_lines: list[str] = []
+    rows: list[list[str]] = []
     i = start_idx
 
-    # Find all consecutive table lines (allow missing trailing pipe)
+    # Find all consecutive table lines
     while i < len(lines):
         line = lines[i].strip()
-        if line.startswith('|'):
-            # Normalize: ensure trailing pipe for consistent splitting
-            if not line.endswith('|'):
-                line = line + '|'
-            table_lines.append(line)
-            i += 1
-        else:
+        if not is_table_line(line):
             break
+        rows.append(split_row(line))
+        i += 1
 
-    if len(table_lines) < 2:  # Need at least header and separator
+    if len(rows) < 2:  # Need at least header and separator
         return None, i if i > start_idx else start_idx + 1
 
     # A run of nothing but separator rows is not a table at all: there is no
     # header for them to sit under. Empty table_data is what the caller of this
     # function reads as "no table here", and it reports table_incomplete.
-    if all(_is_separator_row(line) for line in table_lines):
+    if all(is_separator_cells(cells) for cells in rows):
         return TableData([], [], has_separator=False), i
 
     # Parse table data, extracting alignment from the separator row.
@@ -296,16 +375,17 @@ def parse_table(lines: list[str], start_idx: int) -> tuple[list[list[str]] | Non
     # from the sheet with nothing said, and widening the match from three
     # dashes to one (#114) made a lone `-` hit it, which is the likelier
     # spelling by far. So position decides: row 1 may be the separator, every
-    # other row is content.
+    # other row is content. One dash is enough, as in CommonMark: demanding
+    # three wrote a caller's ``|--|--|`` into the sheet as a row of literal
+    # dashes and then reported ``table_separator_missing`` (#114).
     table_data: list[list[str]] = []
     col_alignments: list[str | None] = []
     separator_in_place = False
-    for idx, line in enumerate(table_lines):
-        if idx == 1 and _is_separator_row(line):
-            col_alignments = _parse_column_alignments(line)
+    for idx, cells in enumerate(rows):
+        if idx == 1 and is_separator_cells(cells):
+            col_alignments = _parse_column_alignments(cells)
             separator_in_place = True
             continue
-        cells = [cell.strip() for cell in line.split('|')[1:-1]]
         table_data.append(cells)
 
     # Attach alignment info to the table_data list
@@ -399,19 +479,19 @@ def resolve_cell(raw_text: str) -> CellResult:
             bold=bold, italic=italic, monospace=monospace,
         )
 
-    # Step 3: Detect percent and convert to number
-    is_percent = clean_text.endswith('%')
-    if is_percent:
-        percent_body = clean_text[:-1]
-        try:
-            numeric_val = float(percent_body) / 100
+    # Step 3: Detect percent and convert to number. The body is read by the
+    # same function a `types: percent` column uses, so `4,3%` and `1.234,56%`
+    # parse here too, and an ambiguous `1,234%` stays text in both (#143).
+    if clean_text.endswith('%'):
+        parsed = _parse_percent_body(clean_text[:-1])
+        if parsed is not None:
+            numeric_val, normalised = parsed
             return CellResult(
                 value=numeric_val, is_percent=True,
-                percent_format=_percent_format_for(percent_body),
+                percent_format=_percent_format_for(normalised),
                 bold=bold, italic=italic, monospace=monospace,
             )
-        except ValueError:
-            pass  # Not a valid percent number — fall through
+        # Not a valid percent number — fall through
 
     # Step 4: Try numeric conversion. Digit-group separators are stripped only
     # when the grouping is unambiguous — see _normalize_grouped_number.
@@ -878,6 +958,14 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
 
     Returns True if type was applied (caller should skip default processing),
     False if default processing should continue.
+
+    A value the declared type cannot read is kept as text (``nan``/``inf`` in
+    a number or currency column are the pre-existing exception: they become a
+    float, which serialises as an empty cell); ask
+    :func:`_kept_as_text` afterwards whether that happened, so the caller can
+    report it (#143). The signature takes no warnings channel on purpose: the
+    report is one per column, not one per cell, and only the table loop sees
+    the whole column.
     """
     if not type_spec:
         return False
@@ -956,17 +1044,96 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
     # applies to every cell in the column, literal and formula alike; that is
     # what declaring it is for. Without one, each literal keeps the precision
     # of its own source text.
+    #
+    # European decimals read as they do in a `number` column (`4,3` → 4.3%),
+    # except the ambiguous `0,125` form, which stays text — see
+    # _parse_percent_body (#143).
     if type_lower.startswith('percent'):
         explicit = type_spec.split(':', 1)[1].strip() if ':' in type_spec else ''
-        numeric_str = clean.rstrip('%').strip()
-        try:
-            cell.value = float(numeric_str) / 100
-            cell.number_format = explicit or _percent_format_for(numeric_str)
-        except ValueError:
+        parsed = _parse_percent_body(clean.rstrip('%'))
+        if parsed is None:
             cell.value = clean
+        else:
+            cell.value, normalised = parsed
+            cell.number_format = explicit or _percent_format_for(normalised)
         return True
 
     return False
+
+
+def _is_ambiguous_percent(value: str) -> bool:
+    """Whether *value* is the refused ``0,125`` form (for the warning's hint)."""
+    text = value.rstrip('%').translate(_PERCENT_SPACES).replace('\u2212', '-').strip()
+    return bool(_AMBIGUOUS_PERCENT_COMMA_RE.match(text.replace(' ', '')))
+
+
+def _kept_as_text(cell, type_spec: str) -> bool:
+    """Whether :func:`_apply_column_type` left *cell* as text against its type.
+
+    Every type but ``text`` turns a value it can read into a non-string —
+    a float, a bool or a datetime — so a non-empty string after coercion is
+    exactly a value the column could not read. An empty cell is not one: it
+    has no value to lose.
+    """
+    return (type_spec.strip().lower() != 'text'
+            and isinstance(cell.value, str) and cell.value != '')
+
+
+# How much of a value a typed_value_kept_as_text message quotes.
+_KEPT_VALUE_EXCERPT = 60
+
+
+def _report_kept_as_text(
+    kept: dict[int, list],
+    table_data: list[list[str]],
+    col_types: list[str | None],
+    worksheet,
+    warnings,
+) -> None:
+    """Report each typed column that kept values as text — once per column.
+
+    *kept* maps a 0-based column index to ``[count, first_coordinate,
+    first_value, first_ambiguous_value_or_None]``; the last one is what the
+    percent hint quotes, so a column whose first kept value is ``-`` still
+    gets it. One warning per table column, with the count, rather than one
+    per cell: a column of ``-`` placeholders would otherwise fill the channel
+    up to its cap and push out the formula errors after it (#143).
+    """
+    for col_idx, (count, first_cell, first_value, ambiguous) in sorted(kept.items()):
+        type_spec = col_types[col_idx]
+        letter = get_column_letter(col_idx + 1)
+        header_row = table_data[0] if table_data else []
+        header = (_strip_markdown_formatting(header_row[col_idx])[0]
+                  if col_idx < len(header_row) else '')
+        column = f"column {letter} ('{header}')" if header else f"column {letter}"
+        quoted = (first_value if len(first_value) <= _KEPT_VALUE_EXCERPT
+                  else first_value[:_KEPT_VALUE_EXCERPT] + '…')
+        if count == 1:
+            what = (f"'{quoted}' in {column} does not read as {type_spec}, so "
+                    f"it was kept as text")
+        else:
+            what = (f"{count} values in {column} do not read as {type_spec}, "
+                    f"so they were kept as text — the first is '{quoted}' at "
+                    f"{first_cell}")
+        hint = ''
+        if type_spec.strip().lower().startswith('percent') and ambiguous is not None:
+            hint = (" A comma followed by exactly three digits is ambiguous in "
+                    "a percent (0,125 is 0.125 or 125): write the decimal with "
+                    "a dot (0.125), or drop the comma if it groups thousands.")
+        logger.warning(
+            "Sheet '%s' %s: %d value(s) kept as text against type '%s' "
+            "(first %s: %r)", worksheet.title, column, count, type_spec,
+            first_cell, first_value,
+        )
+        if warnings is not None:
+            warnings.add(
+                W.TYPED_VALUE_KEPT_AS_TEXT,
+                f"{what}; text will not sum, sort or format with the rest of "
+                f"the column.{hint} Correct the value, change the column's "
+                f"type, or leave the cell empty if it has no value.",
+                sheet=worksheet.title,
+                cell=first_cell,
+            )
 
 
 def _number_format_for_type(type_spec: str | None) -> str | None:
@@ -1148,6 +1315,11 @@ def add_table_to_sheet(
     if hasattr(table_data, 'col_alignments'):
         col_alignments = table_data.col_alignments
 
+    # Typed values the column could not read and kept as text, per column:
+    # col_idx -> [count, first coordinate, first value]. Reported once per
+    # column after the loop by _report_kept_as_text (#143).
+    kept_as_text: dict[int, list] = {}
+
     # Styles
     header_font = Font(bold=True, color="FFFFFF")
     header_fill = PatternFill(start_color="366092", end_color="366092", fill_type="solid")
@@ -1174,6 +1346,12 @@ def add_table_to_sheet(
                     # path below, which re-applies the column's number format.
                     is_formula = clean_text.startswith('=')
                     if not is_formula and _apply_column_type(cell, clean_text, col_type):
+                        if _kept_as_text(cell, col_type):
+                            entry = kept_as_text.setdefault(
+                                col_idx, [0, cell.coordinate, cell.value, None])
+                            entry[0] += 1
+                            if entry[3] is None and _is_ambiguous_percent(cell.value):
+                                entry[3] = cell.value
                         # Type directive handled the cell value — apply formatting, border, alignment
                         apply_cell_formatting(cell, fmt_info)
                         cell.border = border
@@ -1266,6 +1444,8 @@ def add_table_to_sheet(
                         sheet=worksheet.title,
                         cell=f"{get_column_letter(col_idx + 1)}{current_excel_row}",
                     )
+
+    _report_kept_as_text(kept_as_text, table_data, col_types, worksheet, warnings)
 
     # Column widths — based on clean text length (not raw markdown with formatting markers)
     # When type directives are active, estimate display width from the type spec.

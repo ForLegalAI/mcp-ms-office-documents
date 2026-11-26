@@ -50,7 +50,7 @@ markdown_content
   markdown_processor.process_markdown_block(doc, lines, i, …)   one block per call
   ├─ heading            → style_map.add_mapped_heading() + inline parse
   ├─ fenced code        → _render_code_block(), verbatim, monospace
-  ├─ table              → block_elements.parse_table() + add_table_to_doc()
+  ├─ | … table          → block_elements.parse_table() + add_table_to_doc()
   ├─ ---                → page break
   ├─ ***                → block_elements.add_horizontal_line()
   ├─ ![alt](url)        → block_elements.add_image_to_doc() (image_utils.download_image)
@@ -84,9 +84,9 @@ line by line and paragraphs are appended as they are recognised.
 |--------|------|
 | `base_docx_tool.py` | Template load, metadata, TOC, header/footer, then hands off to the processor. The three entry points |
 | `markdown_processor.py` | Line walker (`process_markdown_content`), block dispatcher (`process_markdown_block`), soft breaks, code blocks, alignment blocks, comment directives, the running ordered-list count |
-| `patterns.py` | Every compiled regex for block detection, plus `ordered_list_is_genuine()`, `normalize_newlines()`, `ends_with_soft_break()`, `br_to_newlines()`, `expand_br_to_block_breaks()`, `line_starts_block()`, `contains_block_markdown()` |
+| `patterns.py` | Every compiled regex for block detection, plus `ordered_list_is_genuine()`, `normalize_newlines()`, `ends_with_soft_break()`, `br_to_newlines()`, `expand_br_to_block_breaks()`, `line_starts_block()`, `contains_block_markdown()`, and `_pipe_line_is_table()`, the strict reading of a pipe line those last three use (see [Table rows](#table-rows)) |
 | `inline_formatting.py` | `parse_inline_formatting()`: entities, escapes, soft breaks, run creation, hyperlinks |
-| `block_elements.py` | Tables, lists, images, horizontal lines, alignment detection |
+| `block_elements.py` | Tables (`parse_table()` on the shared `markdown_table` row grammar, `add_table_to_doc()`), lists, images, horizontal lines, alignment detection |
 | `numbering.py` | Ordered-list restart through fresh `<w:num>` instances; style-aware numbering resolution; indent re-assertion |
 | `style_map.py` | `StyleMap` dataclass, config merging, `apply_style()` with fallback, the global map loaded from `config/docx_templates.yaml` |
 | `warnings.py` | The Word warning codes and their severities; `channel()` builds the per-build collector |
@@ -95,12 +95,15 @@ line by line and paragraphs are appended as they are recognised.
 | `content_controls.py` | Fills Word content controls (check box, drop-down, plain text, combo box, date picker) bound by their Tag, for dynamic templates. See [`../dynamic-templates.md`](../dynamic-templates.md#content-controls-word) |
 | `dynamic_docx_tools.py` | YAML-driven template tools, placeholder replacement across split runs, live registration. See [`../dynamic-templates.md`](../dynamic-templates.md) |
 
-Three root modules are part of this pipeline:
+Four root modules are part of this pipeline:
 
 - `inline_markdown.py` holds the emphasis grammar. Word asks for the full set
   of spans (`highlight=True, superscript=True, subscript=True`), so
   `patterns._INLINE_FORMAT_RE` is built from it. Change the grammar there, not
   in `patterns.py`; the PowerPoint renderer uses the same source.
+- `markdown_table.py` holds the table-row grammar Word shares with Excel:
+  `is_table_line()`, `split_row()`, `is_separator_cells()`. See
+  "[Table rows](#table-rows)".
 - `image_utils.py` downloads and validates images, including the SSRF guard.
 - `warning_channel.py` holds the severity vocabulary, the `DocumentWarning`
   record and the `WarningChannel` collector. `docx_tools/warnings.py` supplies
@@ -128,6 +131,50 @@ by the table branch; the `style` directive is applied after the block has been
 rendered, to every element it produced. For a list, the style goes in through
 a modified `StyleMap` instead, so nested levels keep their own styles and the
 numbering definition is resolved from the directive style.
+
+### Table rows
+
+A table row is any line that starts with `|`; the trailing pipe is optional,
+as in GitHub-flavoured Markdown. That rule and the cell split are
+`markdown_table.is_table_line()` and `markdown_table.split_row()`, the same
+two functions Excel's `parse_table()` uses, so the two tools keep the same
+rows for the same input. Word used to demand both pipes: a last row written
+`| 3 | 4` ended the table one row early and was printed under it as prose with
+nothing reported, and a header written `| A | B` was printed as prose while
+the table started on its separator and read `---|---`
+([#144](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/144)).
+
+The dispatcher starts a table on that wide rule and `parse_table()` runs
+while it holds, so a lone `|` inside a table is an empty row, not the end of
+it. A pipe line that is not part of a table — a lone `| x` with no separator
+under it — falls to the `table_not_recognised` report and is written as
+prose.
+
+The questions asked *before* parsing read a pipe line more strictly:
+`patterns.line_starts_block()` (which stops a soft-break run or a list item,
+and decides whether a placeholder value is block markdown) counts one only if
+it has both pipes with text between them (`TABLE_LINE_PATTERN`, so `|` and
+`||` do not count) or the next line is a pipe line too
+(`patterns._pipe_line_is_table()`). So `|x| < 5` mid-paragraph still joins
+the paragraph above it, and a placeholder value `|x| < 5` still fills inline,
+as they did before #144, while a table whose header lacks its trailing pipe
+still stops the paragraph above it. `expand_br_to_block_breaks()` leaves a
+table row's `<br>` alone and uses the same test, with the line *above*
+counted too (the last row of a table has no pipe line after it), so an
+in-cell `<br>- y` is not torn out of a row missing its trailing pipe.
+
+What the wider row rule changed, on purpose (pinned in
+`tests/test_table_trailing_pipe_144.py`):
+
+- Two consecutive lines starting with `|` are a table, as in GFM and in
+  Excel — including two lines of prose like `|x| < 5` / `|y| > 3`, which now
+  build a table with `table_separator_missing`. `\|` at the start keeps a
+  line as text.
+- A row after a table that runs past the header (`| 1 | 2 | note`) is a row,
+  and widens the table, as a full-pipe row always did.
+- `parse_table()` refuses a run of `|` lines with no cells (`|` / `|`): it
+  would build a zero-column table that shows nothing. Those lines stay prose
+  with `table_not_recognised`, like a lone `|`.
 
 ### Placeholder-safe rendering: `return_elements`
 
@@ -356,13 +403,17 @@ the `table_not_recognised` path and the lines are written as prose. Excel
 applies both rules too, reporting `table_incomplete` for the second because a
 worksheet has nowhere to put the lines.
 
-`_is_separator_line()` is the shape test both the guard and the loop use, so
-they cannot disagree about what a separator row looks like; position is
-decided by the caller of it. A separator row must also carry dashes in
-*every* cell: the empty-cell exemption this once had made `all()` vacuously
-true for a row of blank cells, so `|  |  |` passed as a separator and the
-caller's blank row was swallowed with the table counted as well formed. Excel's
-`_is_separator_row()` checks every cell; so does this.
+`markdown_table.is_separator_cells()` is the shape test both the guard and
+the loop use, on the row's split cells, so they cannot disagree about what a
+separator row looks like — and Excel's `parse_table()` uses the same one;
+position is decided by the caller of it. A separator row must also carry
+dashes in *every* cell: the empty-cell exemption this once had made `all()`
+vacuously true for a row of blank cells, so `|  |  |` passed as a separator
+and the caller's blank row was swallowed with the table counted as well
+formed. Word once also matched the whole line against `^[|:\-\s]+$` first;
+on a row split by `split_row()`, which keeps text after the last pipe as a
+cell, the per-cell test already rejects everything that regex did, so it is
+gone.
 
 `process_markdown_content()` takes `warnings=None`, which discards them. The
 dynamic Word template tools have a channel of their own (created in their
@@ -438,6 +489,7 @@ it on open.
 | `tests/test_docx_content_controls.py`, `test_docx_content_controls_phase2.py`, `test_docx_template_content_controls.py` | Dynamic templates: content controls filled by Tag |
 | `tests/test_docx_warnings.py` | The warnings channel: every code, the source line, de-duplication, the tool-boundary response shape |
 | `tests/test_inline_markdown.py` | The shared inline grammar |
+| `tests/test_table_trailing_pipe_144.py` | The shared table-row grammar: rows without a trailing pipe, Word and Excel giving the same rows, pipe prose left alone by block detection |
 | `tests/test_warning_channel.py` | The shared record and collector the channel is built on |
 
 The usual pattern is to call `_markdown_to_doc()` directly and inspect the

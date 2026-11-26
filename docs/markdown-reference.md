@@ -61,6 +61,8 @@ Nesting and combinations work, e.g. `**bold with *italic* inside**`, `**~~bold s
 | `<br>` inside a cell | Line break within the cell (same paragraph) |
 | `<br><br>` inside a cell | New paragraph within the cell |
 
+Every table row starts with `|`; the trailing `|` is optional, so `| 3 | 4` is the same row as `| 3 | 4 |` (header and separator rows included). A row with fewer cells than the header leaves the rest of its cells empty. Two or more consecutive lines starting with `|` are a table; without a `|---|---|` row under the first, that row becomes the header and the table is reported as `table_separator_missing`. So two lines of prose that both start with `|` (`|x| < 5` then `|y| > 3`) become a table — escape the first pipe (`\|x| < 5`) to keep a line as text. A single line starting with `|`, or lines that are a single `|` each, are written as ordinary text and reported as `table_not_recognised`.
+
 **Text alignment** (HTML tags, single- or multi-line):
 
 ```markdown
@@ -137,6 +139,8 @@ The codes are `block_failed`, `table_failed`, `table_cell_failed`, `image_failed
 | `## Sheet: Name` | Start a new worksheet named `Name` |
 | `# Heading` above a table | Used as a title row above the table |
 
+Rows follow the same rule as in Word: each starts with `|`, the trailing `|` is optional.
+
 **Formulas & references** (put a formula in any cell, starting with `=`):
 
 | Reference form | Meaning |
@@ -171,8 +175,10 @@ would otherwise show a warning dialog and silently resolve those cells to 0.
 | Directive | Effect |
 |-----------|--------|
 | `<!-- freeze -->` | Freeze panes below the header row (header stays visible when scrolling) |
-| `<!-- types: text, currency:$, date, bool, number, percent -->` | Force per-column data types (one entry per column; blank = auto). Options: `text` (preserves leading zeros), `currency:<symbol>` (`$ € £ ¥ Kč zł kr CHF R$ ₹`), `date` / `date:<format>`, `bool`, `number` / `number:<format>`, `percent` / `percent:<format>` (`50%` → `0.5`; each value keeps the precision it was written with, and a formula in the column takes the widest precision the column uses — declare `percent:0.0%` to fix it) |
+| `<!-- types: text, currency:$, date, bool, number, percent -->` | Force per-column data types (one entry per column; blank = auto). Options: `text` (preserves leading zeros), `currency:<symbol>` (`$ € £ ¥ Kč zł kr CHF R$ ₹`), `date` / `date:<format>`, `bool`, `number` / `number:<format>`, `percent` / `percent:<format>` (`50%` → `0.5`; each value keeps the precision it was written with, and a formula in the column takes the widest precision the column uses — declare `percent:0.0%` to fix it; the `%` is optional and a decimal comma works as in `number`: `4,3`, `4,3 %`, `1 234,56` and `1.234,56` are percents, but a lone comma before exactly three digits (`0,125`, `1,234`) could be a decimal or a thousands separator, so it stays text — write `0.125`). A value the type cannot read is kept as text and reported as `typed_value_kept_as_text`; leave a cell empty rather than writing `-` or `n/a` if it has no value |
 | `<!-- styles: B2=bg:yellow, C[0]:C[3]=color:red;bold -->` | Set cell background and font colour (see below) |
+
+Without a `types` directive a cell ending in `%` is a percent when the number before it reads by the same rule — `4,3%` and `1.234,56%` do, `1,234%` stays text.
 
 **Cell styling.** Comma-separated `<target>=<attributes>` entries; attributes separated by `;`.
 
@@ -223,7 +229,7 @@ rather than repeating hex codes in every document:
 
 Column alignment via the `:---:` separator syntax is honored, and inline `**bold**` / `*italic*` in cells is applied as cell formatting.
 
-**Warnings.** Lines that are not a heading, a `## Sheet:` marker, a directive or a table row have nowhere to go in a spreadsheet and are dropped; a formula naming a table or a sheet that does not exist still resolves, to the wrong cell or to `#REF!`; a formula over Excel's 8,192-character limit is stored as text so the file still opens. When any of that happens the result carries a `warnings` list alongside the file, instead of leaving it in the server log:
+**Warnings.** Lines that are not a heading, a `## Sheet:` marker, a directive or a table row have nowhere to go in a spreadsheet and are dropped; a formula naming a table or a sheet that does not exist still resolves, to the wrong cell or to `#REF!`; a formula over Excel's 8,192-character limit is stored as text so the file still opens; a value a `types` column cannot read is kept as text. When any of that happens the result carries a `warnings` list alongside the file, instead of leaving it in the server log:
 
 ```json
 {"file": "https://…/workbook.xlsx",
@@ -246,4 +252,4 @@ Each warning is an object rather than a sentence, so you can act on it without r
 | `line` | the line of `markdown_content` to look at, counting from 1, where it is still markdown |
 | `message` | the sentence, naming what to change |
 
-The codes are `line_dropped`, `table_incomplete` (lines that start with `|` but do not form a table — a table needs a header row, a separator row and at least one data row), `cell_failed`, `table_reference_missing`, `sheet_reference_missing`, `formula_unresolved`, `formula_too_long`, `circular_reference`, `table_separator_missing` (a table with no `|---|---|` row directly under its first row — that row was used as the header), `sheet_name_collision`, `sheet_name_invalid`, `header_renamed`, `style_entry_invalid`, `style_range_too_large` and `style_failed`. A workbook with nothing to report comes back exactly as before — the bare link, no `warnings` key. A very long run of warnings is cut off after fifty, with a final `warnings_truncated` note saying how many were left out.
+The codes are `line_dropped`, `table_incomplete` (lines that start with `|` but do not form a table — a table needs a header row, a separator row and at least one data row), `cell_failed`, `table_reference_missing`, `sheet_reference_missing`, `formula_unresolved`, `formula_too_long`, `circular_reference`, `table_separator_missing` (a table with no `|---|---|` row directly under its first row — that row was used as the header), `sheet_name_collision`, `sheet_name_invalid`, `header_renamed`, `style_entry_invalid`, `style_range_too_large`, `style_failed` and `typed_value_kept_as_text` (values in a `types` column that do not read as its type and were kept as text — one warning per table column, with the count, located at the first such cell). A workbook with nothing to report comes back exactly as before — the bare link, no `warnings` key. A very long run of warnings is cut off after fifty, with a final `warnings_truncated` note saying how many were left out.

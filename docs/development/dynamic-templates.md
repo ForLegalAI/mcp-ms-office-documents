@@ -130,7 +130,10 @@ delete it. Then:
 - a value with no block-level Markdown is rendered inline through
   `parse_inline_formatting()` into the paragraph, with the placeholder run's
   font, size, colour and emphasis re-applied to the new runs;
-- a value with block-level Markdown (`contains_block_markdown()`) is rendered
+- a value with block-level Markdown (`contains_block_markdown()`) — which
+  includes two or more *consecutive* lines starting with `|`, since #144
+  even without trailing pipes, and, as before, a single line with both
+  pipes (`| a |`); a single line like `|x| < 5` is not — is rendered
   through `process_markdown_content(..., return_elements=True)` and the
   produced elements are inserted after the paragraph, with the placeholder
   paragraph's properties propagated.

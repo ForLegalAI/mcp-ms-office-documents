@@ -6,12 +6,12 @@ import logging
 from dataclasses import replace
 from docx.oxml.ns import qn
 from docx.text.paragraph import Paragraph
+from markdown_table import is_table_line
 from .patterns import (
     HEADING_PATTERN,
     PAGE_BREAK_PATTERN,
     HORIZONTAL_LINE_PATTERN,
     IMAGE_PATTERN,
-    TABLE_LINE_PATTERN,
     ORDERED_LIST_PATTERN,
     ORDERED_LIST_CAPTURE_PATTERN,
     UNORDERED_LIST_PATTERN,
@@ -344,8 +344,10 @@ def process_markdown_block(doc, lines, start_idx, return_element=True,
             next_idx = _render_code_block(doc, lines, start_idx, fence_match,
                                           style_map, _collect, warnings=warnings)
             return next_idx, elements
-        # Table (lines starting with |)
-        if TABLE_LINE_PATTERN.match(stripped):
+        # Table: a line starting with | — the trailing pipe is optional, as
+        # in Excel (markdown_table.is_table_line, #144). One that is not part
+        # of a table falls to the table_not_recognised report below.
+        if is_table_line(stripped):
             table_data, col_alignments, next_idx, has_separator = parse_table(
                 lines, start_idx)
             if table_data:
