@@ -126,6 +126,21 @@ requested name will then point at the wrong sheet.
    decimals ([#126](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/126)).
    `percent:<format>` declares the precision outright and then applies to
    every cell in the column, literal and computed alike.
+   The body is read by `_parse_percent_body()`, which the `percent` column
+   type and the format learner `_percent_format_for_column()` call too, so
+   the three cannot disagree about what a percent is
+   ([#143](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/143)).
+   It drops whitespace (`4,3 %`), reads a lone comma as a decimal comma
+   (`4,3`, `,5`, `3,14159`) and two separators or several commas as digit
+   grouping (`1.234,56`, `1,234.5`, `1,234,567`). The exception is a lone
+   comma before exactly three digits with no dot (`0,125`, `1,234`): a
+   thousand times apart under the two readings, so it returns None and the
+   cell stays text. That departs from `types: number`, whose
+   `_strip_thousands_separators()` reads `1,234` as 1234. Decimals for the
+   format are counted on the normalised text, so `1.234,56` gets `0.00%`.
+   `nan`, `inf` and underscores are refused as in step 4. The rule is the same
+   typed and untyped; only whether the `%` is required differs — a `percent`
+   column takes `4,3` alone, an untyped cell needs `4,3%`.
 4. A number, after stripping digit-group separators only where the grouping
    is unambiguous (`1,234` and `1.234,56` yes; `1,5` no, since it is 1.5 in
    most of Europe). `nan`, `inf` and PEP 515 underscores are refused because
@@ -143,6 +158,13 @@ in General so they display as written. A `types` directive bypasses this
 whole ladder for its column and applies the declared coercion instead, with
 formula cells as the one exception: they still go through the formula path
 and then take the column's number format.
+
+A value the declared type cannot read is kept as text. `_apply_column_type()`
+does not report it — its signature is unchanged and takes no channel — but
+`_kept_as_text()` recognises the result afterwards (a non-empty string under
+any type but `text`), and `add_table_to_sheet()` counts those per column and
+hands them to `_report_kept_as_text()` once the table is written. Empty cells
+and formula cells never count.
 
 ### Formula reference rewriting
 
@@ -233,7 +255,8 @@ A `WarningChannel` (`warning_channel.py`, codes in `xlsx_tools/warnings.py`)
 is created in `_markdown_to_excel_buffer()` and threaded through
 `_build_workbook()` → `walk_markdown_lines()`, `add_table_to_sheet()` →
 `adjust_formula_references()`, `_write_formula()`,
-`_ensure_unique_table_headers()`, `parse_styles_directive()`. It is an
+`_ensure_unique_table_headers()`, `_report_kept_as_text()`,
+`parse_styles_directive()`. It is an
 **argument, never module state**: builds run concurrently on `run_blocking`
 worker threads.
 
@@ -258,12 +281,21 @@ still markdown.
 | `style_entry_invalid` | warning | A `styles:` entry is malformed, unresolvable or sets nothing |
 | `style_range_too_large` | warning | A `styles:` range is over `MAX_STYLED_CELLS`; none of it was applied |
 | `style_failed` | warning | `apply_style_spec()` raised for one cell |
+| `typed_value_kept_as_text` | warning | Non-empty values in a `types` column (any type but `text`) that do not read as that type and were kept as text; **one per column**, with the count, located at the first such cell |
 
 The channel **de-duplicates** identical `(code, message, location)` entries
 and **caps** the number it carries (`warning_channel.DEFAULT_LIMIT`), which
 matters most here: a page of prose fed to this tool drops one line per line,
 and the cap turns that into fifty warnings plus a `warnings_truncated` note
 rather than hundreds.
+
+`typed_value_kept_as_text` is the first code in this package that
+**aggregates** rather than reporting each occurrence: a column of `-`
+placeholders under `types: number` would otherwise put one warning per row on
+the channel, reach the cap, and push the formula errors raised after it out of
+the response. `add_table_to_sheet()` collects `[count, first cell, first value]`
+per column and `_report_kept_as_text()` adds one warning each after the cell
+loop. A new per-cell code that a caller can trip in bulk should do the same.
 
 `parse_table()` never *requires* the separator row — it only skips rows that
 look like one, wherever in the run they are — so a table written without one,
@@ -306,7 +338,7 @@ report in the `else` branch below it.
 
 | To add… | Edit | Notes |
 |---------|------|-------|
-| A new column type | `helpers._apply_column_type()`, `_number_format_for_type()`, `_KNOWN_TYPE_KEYWORDS`, the width estimate in `add_table_to_sheet()` | The keyword set is what lets the directive parser tell a column boundary from a comma inside a format |
+| A new column type | `helpers._apply_column_type()`, `_number_format_for_type()`, `_KNOWN_TYPE_KEYWORDS`, the width estimate in `add_table_to_sheet()` | The keyword set is what lets the directive parser tell a column boundary from a comma inside a format; a type whose successful result is a string needs its own case in `_kept_as_text()`, or every value it reads is reported as kept as text |
 | A new formula form | `helpers.adjust_formula_references()` | Insert it in the right position of the substitution order; add a case to `circular_refs.extract_formula_references()` if the resolved output could be a new reference shape |
 | A new directive | `parser.DIRECTIVE_PATTERN` already accepts any key; read it in `add_table_to_sheet()` or `_build_workbook()` | Directives are lower-cased keys with optional values |
 | A new style attribute | `styles.parse_style_spec()`, `StyleSpec`, `apply_style_spec()` | Flags without a value go in `_FLAG_ATTRS` |
@@ -346,6 +378,7 @@ report in the `else` branch below it.
 | `tests/test_xlsx_tier4_robustness.py` | Sheet-name quoting, `nan`/`inf`/underscore refusal, font family preserved by inline formatting, Excel Table header uniqueness, formula-length guard, buffer and upload paths agreeing |
 | `tests/test_xlsx_styling.py` | The `styles` directive and template-defined named styles |
 | `tests/test_xlsx_warnings.py` | The warnings channel: every code, sheet/cell/line locations, the cap, the tool-boundary response shape |
+| `tests/test_xlsx_percent_european_143.py` | Decimal commas in typed and untyped percents, the ambiguous `0,125` form, the format learner agreeing with the coercion, and the per-column `typed_value_kept_as_text` warning |
 | `tests/test_warning_channel.py` | The shared record and collector the channel is built on |
 
 The usual pattern is to build the workbook, save it to a buffer, and reload
