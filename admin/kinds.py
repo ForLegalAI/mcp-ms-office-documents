@@ -170,8 +170,10 @@ _DOCX = KindDescriptor(
     save_ok="Saved — the tool '{name}' is now live and ready for the AI to use.",
     save_warn="Saved, but the tool '{name}' could not be registered (check the logs).",
     save_warn_kept="Saved, but the new version of '{name}' could not be built, so the "
-                   "AI keeps using the previous version until the server restarts. "
-                   "Check the logs, fix the template and save again.",
+                   "AI keeps the previous version's arguments and style mapping — "
+                   "rendering whatever Word file is stored now — until the server "
+                   "restarts or the template is switched off. Check the logs, fix "
+                   "the template and save again.",
     save_disabled="Saved. '{name}' stays disabled, so the AI cannot call it — "
                   "enable it from the template list when you are ready.",
     preview_label="Preview",
@@ -191,8 +193,9 @@ _EMAIL = KindDescriptor(
     save_ok="Saved — the tool '{name}' is now live and ready for the AI to use.",
     save_warn="Saved, but the tool '{name}' could not be registered (check the logs).",
     save_warn_kept="Saved, but the new version of '{name}' could not be built, so the "
-                   "AI keeps using the previous version until the server restarts. "
-                   "Check the logs, fix the template and save again.",
+                   "AI keeps using the previous version until the server restarts or "
+                   "the template is switched off. Check the logs, fix the template "
+                   "and save again.",
     save_disabled="Saved. '{name}' stays disabled, so the AI cannot call it — "
                   "enable it from the template list when you are ready.",
     preview_label="Preview",

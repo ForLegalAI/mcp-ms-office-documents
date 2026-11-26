@@ -241,15 +241,24 @@ actions about something else (saving the global style mapping rebuilds every
 Word tool), so removing first used to take a working tool off the server as a
 side effect. Two consequences:
 
-- **A kept tool always works, or it is removed.** An email tool rendered from
-  the HTML it read at build time, so it keeps working whatever happened to the
+- **A kept tool runs, or it is removed.** An email tool rendered from the
+  HTML it read at build time, so it keeps working whatever happened to the
   file. A Word tool opens its `.docx` on every call, so after a failed rebuild
   it is kept only while that file (`_LIVE_SOURCE[name]`) still exists; with
   the file gone it is removed, as before #192, and the style-mapping save
-  reports it (see [admin-ui.md](admin-ui.md)).
-- **Kept is until the next restart.** The stored spec is the new one, so at
-  startup the build fails again and nothing registers. The admin's save page
-  says so (`save_warn_kept` in `admin/kinds.py`).
+  reports it (see [admin-ui.md](admin-ui.md)). Existence is all that is
+  checked: a Word file replaced on the volume or through *Replace document*
+  is rendered with the kept tool's old arguments and style mapping, which is
+  what the docx `save_warn_kept` wording says.
+- **A kept tool is stale.** It keeps the style mapping baked in when it was
+  built, so a later style-mapping save cannot move it either.
+  `register_docx_template_tools_from_yaml()` returns the names whose build
+  failed, and `resync_docx_style_map()` reports the ones still live as
+  `stale` rather than counting them as re-registered.
+- **Kept is until the next reload.** The stored spec is the new one, so at
+  startup — or when the template is switched off and on — the build fails
+  again and nothing registers. The admin's save page says so
+  (`save_warn_kept` in `admin/kinds.py`).
 
 A **rename** is the exception the swap does not cover: the save route
 unregisters the old name, then registers the new one, so a failed build of the

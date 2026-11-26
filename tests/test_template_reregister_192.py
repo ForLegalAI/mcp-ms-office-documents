@@ -285,3 +285,29 @@ async def test_admin_a_rename_whose_build_fails_is_not_called_kept(admin_client)
     assert await _tool(mcp, "letter_old") is None
     assert "could not be registered" in r.text
     assert "previous version" not in r.text
+
+
+@pytest.mark.asyncio
+async def test_admin_a_style_save_names_a_tool_it_could_not_rebuild(admin_client):
+    """A tool kept on its previous build cannot take the new mapping either.
+
+    Counting it as re-registered would be the split word.md warns about: the
+    page says the mapping applies, the tool still renders with the old one.
+    """
+    client, mcp = admin_client
+    _create_letter(client, "letter_stale")
+    _save_letter(client, "letter_stale", arg="_bad")   # kept on its previous build
+
+    r = _post(client, "/admin/styles/save", {"style_heading_1": "Heading 2"})
+
+    assert await _tool(mcp, "letter_stale") is not None
+    assert 'class="flash flash-warn"' in r.text, "a stale tool is not a success"
+    assert "letter_stale" in r.text and "previous" in r.text
+    assert "0 Word template tool(s) re-registered" in r.text
+
+
+def test_docx_a_malformed_name_returns_false_rather_than_raising():
+    """Hand-written YAML can put anything under name:."""
+    mcp = FastMCP("t")
+    assert dd.register_docx_template(mcp, {"name": ["x"], "docx_path": DOCX_ASSET}) is False
+    assert de.register_email_template(mcp, {"name": {"a": 1}, "html_path": EMAIL_ASSET}) is False

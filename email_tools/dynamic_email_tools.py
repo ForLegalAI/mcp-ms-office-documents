@@ -100,6 +100,8 @@ def register_email_template(mcp: FastMCP, spec: Dict[str, Any]) -> bool:
     tool it keeps working even if the file has since gone.
     """
     name = spec.get("name") if isinstance(spec, dict) else None
+    if not isinstance(name, str):
+        name = None   # hand-written YAML can put anything here
     try:
         tool = _build_email_template_tool(spec)
     except Exception:
@@ -136,7 +138,8 @@ def _build_email_template_tool(spec: Dict[str, Any]):
     path, file not found). Raises for a spec the tool cannot be built from;
     :func:`register_email_template` catches both outcomes.
     """
-    if not isinstance(spec, dict) or not spec.get("name"):
+    if not isinstance(spec, dict) or not isinstance(spec.get("name"), str) \
+            or not spec.get("name"):
         logger.warning("[dynamic-email] Template missing 'name', skipping.")
         return None
     name = spec["name"]

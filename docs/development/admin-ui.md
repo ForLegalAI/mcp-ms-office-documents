@@ -580,10 +580,13 @@ itself has to get right:
 - **A template lost to that re-registration is named, as a warning.**
   A failed rebuild keeps the previous tool (#192) — except a Word tool whose
   `.docx` has gone missing since startup, which could only fail and is removed.
-  `resync_docx_style_map()` returns `(live, lost)` from a before/after
-  comparison of the live names, so that removal is named. From the admin's
-  side the only thing that happened was saving a style, so this must not
-  arrive as a success message with a smaller number in it.
+  `resync_docx_style_map()` returns `(rebuilt, lost, stale)`: `lost` from a
+  before/after comparison of the live names, so that removal is named, and
+  `stale` from the names the registration loop could not build that are still
+  live — kept on the previous build, so still on the *old* mapping, and not
+  counted as re-registered. From the admin's side the only thing that
+  happened was saving a style, so neither may arrive as a success message
+  with a smaller number in it.
 - **Saving an edit that cannot be built keeps the previous version and says
   so.** The save page uses the kind's `save_warn_kept` wording — the AI keeps
   the previous version until the next restart — rather than "could not be

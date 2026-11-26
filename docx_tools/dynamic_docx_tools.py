@@ -620,7 +620,7 @@ def registered_docx_template_names() -> list[str]:
         return sorted(_REGISTERED_DOCX)
 
 
-def register_docx_template_tools_from_yaml(mcp: FastMCP, yaml_path: Path) -> None:
+def register_docx_template_tools_from_yaml(mcp: FastMCP, yaml_path: Path) -> list[str]:
     """Register dynamic DOCX template tools from YAML.
 
     Merges the master YAML at *yaml_path* with any UI-managed per-template files
@@ -630,16 +630,26 @@ def register_docx_template_tools_from_yaml(mcp: FastMCP, yaml_path: Path) -> Non
     Args:
         mcp: The FastMCP instance to register tools with
         yaml_path: Path to the master YAML configuration file
+
+    Returns:
+        The names whose build failed. Startup ignores it; the admin style
+        resync uses it to tell a tool kept on its previous build (#192) from
+        one rebuilt on the new mapping.
     """
     templates, cfg = gather_specs(yaml_path, docx_spec_dir(yaml_path))
     global_style_mapping = cfg.get("style_mapping") or {}
 
+    failed: list[str] = []
     for spec in templates:
+        name = spec.get("name") if isinstance(spec, dict) else None
         try:
-            register_docx_template(mcp, spec, global_style_mapping)
+            ok = register_docx_template(mcp, spec, global_style_mapping)
         except Exception as e:
-            name = spec.get("name", "<unknown>") if isinstance(spec, dict) else "<unknown>"
             logger.exception(f"[dynamic-docx] Failed to register template '{name}': {e}")
+            ok = False
+        if not ok and isinstance(name, str):
+            failed.append(name)
+    return failed
 
 
 def register_docx_template(
@@ -661,6 +671,8 @@ def register_docx_template(
     the name missing.
     """
     name = spec.get("name") if isinstance(spec, dict) else None
+    if not isinstance(name, str):
+        name = None   # hand-written YAML can put anything here
     try:
         built = _build_template_tool(spec, global_style_mapping)
     except Exception:
@@ -725,7 +737,7 @@ def _build_template_tool(spec: Dict[str, Any],
         :func:`register_docx_template` catches both outcomes.
     """
     name = spec.get("name") if isinstance(spec, dict) else None
-    if not name:
+    if not name or not isinstance(name, str):
         logger.warning("[dynamic-docx] Template missing 'name', skipping.")
         return None
 
