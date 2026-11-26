@@ -275,8 +275,10 @@ picked up without a restart.
 file per template into the `.d` directory plus the asset into
 `custom_templates/`, then calls `register_docx_template()` /
 `register_email_template()` on the running `FastMCP` instance so the tool
-appears immediately. `template_registry.safe_remove_tool()` handles
-re-registration and deletion.
+appears immediately. A re-registration builds the new tool before it removes
+the old one, so a failed build never takes a working tool off the server
+(#192); `template_registry.safe_remove_tool()` does the removing, for
+re-registration and deletion alike.
 
 `metrics.py` keeps in-process counters per tool — calls, errors and the
 warnings a finished build reported, counted per severity — and a bounded ring

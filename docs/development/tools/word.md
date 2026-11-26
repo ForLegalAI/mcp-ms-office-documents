@@ -236,7 +236,9 @@ down, which is what every dynamic template tool already does.
 Because the middle row bakes the map in, the admin UI re-registers every Word
 template tool after saving a global mapping (`AdminContext.resync_docx_style_map`).
 Without that, a save would move the static tool and leave the template tools
-behind — a split with no symptom an admin could act on.
+behind — a split with no symptom an admin could act on. A template that cannot
+be rebuilt keeps its previous build unless its `.docx` is gone
+([dynamic-templates.md](../dynamic-templates.md#live-registration), #192).
 
 ### Inline formatting
 
@@ -414,7 +416,7 @@ it on open.
 - **Do not add `Optional[...]` types to dynamic-tool arguments.** Optionality
   is expressed by the default alone. Several MCP clients drop the sibling
   description when they see `anyOf`. This rule lives in
-  `dynamic_docx_tools._register_single_template()`.
+  `dynamic_docx_tools._build_template_tool()`.
 - **Do not reintroduce a default for `add_unique_prefix` in the dynamic tool
   body.** It must reach `upload_file()` as `None` so the strategy default
   applies. See [`../architecture.md`](../architecture.md#upload-strategies-and-response-shape).

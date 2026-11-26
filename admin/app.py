@@ -164,20 +164,20 @@ class AdminContext:
         """Re-register every live Word template tool for a changed global map.
 
         The global mapping is *baked into each tool at registration time* —
-        ``_register_single_template`` resolves ``build_style_map(global,
+        ``_build_template_tool`` resolves ``build_style_map(global,
         per-template)`` once and closes over the result — so saving a new
         global mapping without this leaves every existing tool rendering on the
         old one, and only the static Word tool (which resolves per document)
         would follow the change. That split is precisely the kind of thing an
         admin would never think to suspect.
 
-        Returns ``(live, lost)``. ``lost`` is why the before/after comparison
-        is here at all: ``register_docx_template()`` removes the existing tool
-        *before* rebuilding it, so a template whose source file has gone
-        missing since startup does not merely fail to re-register — it is
-        taken off the server, and the loop that registers them logs the
-        failure and moves on. The caller has to be able to say so, because
-        from the admin's side the only thing that happened was saving a style.
+        Returns ``(live, lost)``. A failed rebuild keeps the previous tool
+        (#192) — except one whose ``.docx`` has gone missing since startup:
+        it opens the file on every call, so it could only fail, and
+        ``register_docx_template()`` takes it off the server. The loop that
+        registers them logs that and moves on, so the before/after comparison
+        is what lets the caller say so — from the admin's side the only thing
+        that happened was saving a style.
         """
         from docx_tools.dynamic_docx_tools import (
             register_docx_template_tools_from_yaml, registered_docx_template_names,
@@ -1232,8 +1232,11 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             # failure to report, not an unhandled 500.
             return views.save_failed_page(ctx, str(e))
         ok = ctx.sync(kind, spec)
+        # A failed build keeps the previous tool live (#192). Read right after
+        # sync(), with no await between, so it describes this save.
+        kept = not ok and spec["name"] in ctx.live_names(kind)
         return views.saved_page(ctx, kind, spec["name"], ok,
-                                enabled=is_enabled(spec))
+                                enabled=is_enabled(spec), kept=kept)
 
     @rt("/{kind}/preview/values", methods=["post"])
     async def preview_values(req, sess, kind: str):

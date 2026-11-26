@@ -183,6 +183,9 @@ backend → URL string or LibreChat artifact dict. Details:
   refuses.
 - Do not give `add_unique_prefix` a default in a dynamic tool body; it must
   reach `upload_file()` as `None`.
+- Re-registering a template builds the new tool first and swaps it in only
+  once it exists; a failed build never removes a tool that still works
+  (#192). Build with `_build_*_tool()`, never `mcp.tool()` inside the builder.
 - A disabled template (`enabled: false`) is filtered in
   `template_registry.gather_specs()` — the one merge point every registration
   path uses — never at a call site. A new consumer of `gather_specs()` gets

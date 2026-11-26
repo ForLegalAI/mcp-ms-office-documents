@@ -638,10 +638,10 @@ def test_a_save_applies_even_when_the_files_look_unchanged(admin_client, monkeyp
 def test_a_template_lost_to_the_re_registration_is_reported(admin_client):
     """Saving a style must not take a tool off the server in silence.
 
-    `register_docx_template()` removes the existing tool *before* rebuilding
-    it, and the loop logs a failure and moves on — so a template whose source
-    file went missing since startup is gone, and from the admin's side the
-    only thing that happened was saving a style mapping.
+    A failed rebuild keeps the previous tool (#192), except one whose source
+    file went missing since startup — it could only fail, so it is removed,
+    and the loop logs that and moves on. From the admin's side the only thing
+    that happened was saving a style mapping, so the page must name it.
     """
     client, custom, cfg = admin_client
     (custom / "letter.docx").write_bytes(_docx_bytes())

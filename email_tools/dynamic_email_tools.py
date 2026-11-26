@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, Literal
 from pydantic import Field, create_model
 from fastmcp import FastMCP
+from fastmcp.tools import Tool
 from upload_tools import upload_file
 from template_utils import find_email_template
 from template_registry import arg_field, gather_specs, safe_remove_tool
@@ -89,15 +90,35 @@ def register_email_template_tools_from_yaml(mcp: FastMCP, yaml_path: Path) -> No
 def register_email_template(mcp: FastMCP, spec: Dict[str, Any]) -> bool:
     """Register (or replace) a single email template tool on the live server.
 
-    Removes any existing tool of the same name first, so it is safe to call
-    after startup to apply an edited template. Returns True on success.
+    Builds the new tool first and swaps it in only once it exists, so this is
+    safe to call after startup to apply an edited template (#192). Returns True
+    when the tool now live is the one built from *spec*.
+
+    A build that fails, is skipped or raises (logged here, not propagated)
+    returns False and leaves a previous tool of the same name serving. That
+    tool rendered from the HTML it read when it was built, so unlike a Word
+    tool it keeps working even if the file has since gone.
     """
     name = spec.get("name") if isinstance(spec, dict) else None
-    if name:
-        safe_remove_tool(mcp, name)
-        with _REG_LOCK:
-            _REGISTERED_EMAIL.pop(name, None)
-    return _register_single_email_template(mcp, spec)
+    try:
+        tool = _build_email_template_tool(spec)
+    except Exception:
+        logger.exception(f"[dynamic-email] Could not build template '{name}'")
+        tool = None
+
+    if tool is None:
+        if name and name in registered_email_template_names():
+            logger.warning(
+                f"[dynamic-email] Rebuild of '{name}' failed; the previous version stays live."
+            )
+        return False
+
+    safe_remove_tool(mcp, name)
+    mcp.add_tool(tool)
+    with _REG_LOCK:
+        _REGISTERED_EMAIL[name] = spec
+    logger.info(f"[dynamic-email] Registered tool: {name}")
+    return True
 
 
 def unregister_email_template(mcp: FastMCP, name: str) -> bool:
@@ -108,11 +129,16 @@ def unregister_email_template(mcp: FastMCP, name: str) -> bool:
     return removed
 
 
-def _register_single_email_template(mcp: FastMCP, spec: Dict[str, Any]) -> bool:
-    """Build and register one email template tool. Returns True on success."""
+def _build_email_template_tool(spec: Dict[str, Any]):
+    """Build one email template's MCP tool without touching the server.
+
+    Returns the ``Tool``, or None when the spec was skipped (missing name or
+    path, file not found). Raises for a spec the tool cannot be built from;
+    :func:`register_email_template` catches both outcomes.
+    """
     if not isinstance(spec, dict) or not spec.get("name"):
         logger.warning("[dynamic-email] Template missing 'name', skipping.")
-        return False
+        return None
     name = spec["name"]
     description = spec.get("description")
     annotations = spec.get("annotations")
@@ -121,16 +147,16 @@ def _register_single_email_template(mcp: FastMCP, spec: Dict[str, Any]) -> bool:
 
     if not html_path:
         logger.warning(f"[dynamic-email] Missing html_path for {name}, skipping.")
-        return False
+        return None
     html_path_obj = Path(html_path)
     if html_path_obj.is_absolute() or len(html_path_obj.parts) != 1:
         logger.error(f"[dynamic-email] html_path must be filename only (no directories, no absolute paths) for {name}; got '{html_path}'")
-        return False
+        return None
 
     resolved = find_email_template(html_path)
     if not resolved:
         logger.error(f"[dynamic-email] Template file not found for {name}: {html_path}")
-        return False
+        return None
     logger.info(f"[dynamic-email] Using template for {name}: {resolved}")
     html_source = Path(resolved).read_text(encoding="utf-8")
 
@@ -244,8 +270,6 @@ def _register_single_email_template(mcp: FastMCP, spec: Dict[str, Any]) -> bool:
         tool_impl.__annotations__['return'] = str  # type: ignore[index]
         return tool_impl
 
-    mcp.tool(name=name, description=description, annotations=annotations, meta=meta)(make_tool_fn())
-    with _REG_LOCK:
-        _REGISTERED_EMAIL[name] = spec
-    logger.info(f"[dynamic-email] Registered tool: {name}")
-    return True
+    # Built, not registered: register_email_template() swaps it in (#192).
+    return Tool.from_function(make_tool_fn(), name=name, description=description,
+                              annotations=annotations, meta=meta)

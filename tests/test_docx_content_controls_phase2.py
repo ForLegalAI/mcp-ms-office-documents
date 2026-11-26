@@ -155,7 +155,7 @@ def test_a_date_argument_is_an_iso_date_in_the_schema_and_fills_end_to_end(tmp_p
     mcp = FastMCP("d")
     with patch.object(dd, "find_docx_template_by_name", lambda f: str(template)), \
             patch.object(dd, "upload_file", fake_upload):
-        assert dd._register_single_template(mcp, spec)
+        assert dd.register_docx_template(mcp, spec)
 
         async def go():
             async with Client(mcp) as c:
