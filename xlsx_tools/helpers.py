@@ -101,6 +101,22 @@ _PERCENT_MAX_DECIMALS = 4
 # rather than guessed at (#143). See _parse_percent_body.
 _AMBIGUOUS_PERCENT_COMMA_RE = re.compile(r'^[+-]?\d*,\d{3}$')
 
+# What a percent body may look like once its edges are trimmed: a sign,
+# digits with dots and commas, and an exponent only where there is no comma
+# (``1,5e3`` is refused: _strip_thousands_separators would read ``,5e3`` as a
+# thousands group and give 10x the number). Whitespace inside is allowed only
+# as digit grouping (``1 234,56``); anything looser — ``10, 20``, ``4 3`` —
+# was text on master and must not become a number in an untyped cell, where
+# nothing can warn about it (#143 review).
+_PERCENT_BODY_RE = re.compile(
+    r'^[+-]?(?=[\d.,]*\d)[\d.,]+$'
+    r'|^[+-]?(?=[\d.]*\d)[\d.]+[eE][+-]?\d+$'
+)
+_SPACE_GROUPED_RE = re.compile(r'^[+-]?\d{1,3}(?: \d{3})+(?:[.,]\d+)?$')
+# Non-breaking and narrow non-breaking spaces, as Czech typography writes
+# them before % and between digit groups.
+_PERCENT_SPACES = str.maketrans({'\u00a0': ' ', '\u202f': ' ', '\u2009': ' '})
+
 # Minimum length to even attempt date parsing (avoids matching plain numbers)
 _MIN_DATE_LENGTH = 6
 # Regex to quickly reject values that clearly can't be dates
@@ -185,8 +201,11 @@ def _parse_percent_body(body: str) -> tuple[float, str] | None:
 
     Separators, in a percent body:
 
-    - Whitespace is dropped wherever it is, so ``4,3 %`` and a Czech
-      non-breaking space before the sign both read.
+    - Whitespace at the edges is dropped, so ``4,3 %`` and a Czech
+      non-breaking space before the sign both read. Inside, it is allowed only
+      as digit grouping (``1 234,56``); ``10, 20`` and ``4 3`` stay text.
+    - The typographic minus sign (U+2212) reads as ``-``.
+    - An exponent is accepted only without a comma: ``1,5e3`` stays text.
     - A lone comma is a decimal comma — ``4,3``, ``0,5``, ``,5``, ``4,30``,
       ``3,14159`` — except when exactly three digits follow it and there is
       no dot: ``0,125`` is 0.125 in Prague and 125 in an English thousands
@@ -199,8 +218,12 @@ def _parse_percent_body(body: str) -> tuple[float, str] | None:
     ``nan``, ``inf`` and PEP 515 underscores are refused, as an untyped number
     is in :func:`resolve_cell`: the first two serialise as an empty cell.
     """
-    text = ''.join(body.split())
-    if not text or '_' in text or _AMBIGUOUS_PERCENT_COMMA_RE.match(text):
+    text = body.translate(_PERCENT_SPACES).replace('\u2212', '-').strip()
+    if ' ' in text or '\t' in text:
+        if not _SPACE_GROUPED_RE.match(text):
+            return None
+        text = text.replace(' ', '')
+    if not _PERCENT_BODY_RE.match(text) or _AMBIGUOUS_PERCENT_COMMA_RE.match(text):
         return None
     normalised = _strip_thousands_separators(text)
     try:
@@ -921,7 +944,9 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
     Returns True if type was applied (caller should skip default processing),
     False if default processing should continue.
 
-    A value the declared type cannot read is kept as text, never dropped; ask
+    A value the declared type cannot read is kept as text (``nan``/``inf`` in
+    a number or currency column are the pre-existing exception: they become a
+    float, which serialises as an empty cell); ask
     :func:`_kept_as_text` afterwards whether that happened, so the caller can
     report it (#143). The signature takes no warnings channel on purpose: the
     report is one per column, not one per cell, and only the table loop sees
@@ -1021,6 +1046,12 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
     return False
 
 
+def _is_ambiguous_percent(value: str) -> bool:
+    """Whether *value* is the refused ``0,125`` form (for the warning's hint)."""
+    text = value.rstrip('%').translate(_PERCENT_SPACES).replace('\u2212', '-').strip()
+    return bool(_AMBIGUOUS_PERCENT_COMMA_RE.match(text.replace(' ', '')))
+
+
 def _kept_as_text(cell, type_spec: str) -> bool:
     """Whether :func:`_apply_column_type` left *cell* as text against its type.
 
@@ -1047,11 +1078,13 @@ def _report_kept_as_text(
     """Report each typed column that kept values as text — once per column.
 
     *kept* maps a 0-based column index to ``[count, first_coordinate,
-    first_value]``. One warning per column, with the count, rather than one
+    first_value, first_ambiguous_value_or_None]``; the last one is what the
+    percent hint quotes, so a column whose first kept value is ``-`` still
+    gets it. One warning per table column, with the count, rather than one
     per cell: a column of ``-`` placeholders would otherwise fill the channel
     up to its cap and push out the formula errors after it (#143).
     """
-    for col_idx, (count, first_cell, first_value) in sorted(kept.items()):
+    for col_idx, (count, first_cell, first_value, ambiguous) in sorted(kept.items()):
         type_spec = col_types[col_idx]
         letter = get_column_letter(col_idx + 1)
         header_row = table_data[0] if table_data else []
@@ -1068,8 +1101,7 @@ def _report_kept_as_text(
                     f"so they were kept as text — the first is '{quoted}' at "
                     f"{first_cell}")
         hint = ''
-        if (type_spec.strip().lower().startswith('percent')
-                and _AMBIGUOUS_PERCENT_COMMA_RE.match(''.join(first_value.rstrip('%').split()))):
+        if type_spec.strip().lower().startswith('percent') and ambiguous is not None:
             hint = (" A comma followed by exactly three digits is ambiguous in "
                     "a percent (0,125 is 0.125 or 125): write the decimal with "
                     "a dot (0.125), or drop the comma if it groups thousands.")
@@ -1301,8 +1333,10 @@ def add_table_to_sheet(
                     if not is_formula and _apply_column_type(cell, clean_text, col_type):
                         if _kept_as_text(cell, col_type):
                             entry = kept_as_text.setdefault(
-                                col_idx, [0, cell.coordinate, cell.value])
+                                col_idx, [0, cell.coordinate, cell.value, None])
                             entry[0] += 1
+                            if entry[3] is None and _is_ambiguous_percent(cell.value):
+                                entry[3] = cell.value
                         # Type directive handled the cell value — apply formatting, border, alignment
                         apply_cell_formatting(cell, fmt_info)
                         cell.border = border

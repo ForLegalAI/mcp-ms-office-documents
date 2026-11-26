@@ -219,3 +219,48 @@ class TestTypedValueKeptAsText:
         _, warnings = build(table("text, percent", "5", "=B2*2"))
 
         assert kept_as_text(warnings) == []
+
+
+class TestNoNewSilentNumbers:
+    """Review of #143: forms master kept as text must not become numbers now.
+
+    Untyped cells declare nothing and cannot warn, so a loose reading there
+    is a silent wrong number; a typed one warns, but only if it refuses.
+    """
+
+    @pytest.mark.parametrize("raw", ["1,5e3%", "1,234e2%", "10, 20%", "4 3%", "1, 5%"])
+    def test_untyped_forms_master_kept_as_text_still_are(self, raw):
+        ws, _ = build(table(None, raw))
+        assert ws["B2"].value == raw
+
+    @pytest.mark.parametrize("raw", ["1,5e3", "10, 20", "4 3"])
+    def test_typed_forms_are_refused_and_reported(self, raw):
+        ws, warnings = build(table("text, percent", raw))
+        assert ws["B2"].value == raw
+        assert len(kept_as_text(warnings)) == 1
+
+    @pytest.mark.parametrize("raw, expected", [
+        ("1 234,56", 12.3456),        # a space grouping thousands
+        ("1 234,5", 12.345),     # a non-breaking one
+        ("−4,3", -0.043),        # the typographic minus sign
+        ("+4,3", 0.043),
+        ("1e3", 10.0),                # an exponent with no comma, as on master
+    ])
+    def test_typographic_and_plain_forms_read(self, raw, expected):
+        ws, _ = build(table("text, percent", raw))
+        assert ws["B2"].value == pytest.approx(expected)
+
+
+class TestTheAmbiguityHint:
+
+    def test_the_hint_appears_when_any_kept_value_is_ambiguous(self):
+        """The first kept value is `-`; the comma hint must still be there."""
+        _, warnings = build(table("text, percent", "-", "0,125"))
+        [w] = kept_as_text(warnings)
+        assert "2 values" in w.message
+        assert "0.125" in w.message, w.message
+
+    def test_two_typed_tables_on_one_sheet_report_separately(self):
+        md = table("text, percent", "x") + "\n" + table("text, percent", "y")
+        _, warnings = build(md)
+        assert len(kept_as_text(warnings)) == 2

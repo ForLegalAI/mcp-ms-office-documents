@@ -130,7 +130,11 @@ requested name will then point at the wrong sheet.
    type and the format learner `_percent_format_for_column()` call too, so
    the three cannot disagree about what a percent is
    ([#143](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/143)).
-   It drops whitespace (`4,3 %`), reads a lone comma as a decimal comma
+   It trims whitespace at the edges (`4,3 %`, a non-breaking space too),
+   allows it inside only as digit grouping (`1 234,56`; `10, 20` and `4 3`
+   stay text), reads the typographic minus `−` as `-`, accepts an exponent
+   only without a comma (`1,5e3` stays text — the thousands reading would give
+   10x), reads a lone comma as a decimal comma
    (`4,3`, `,5`, `3,14159`) and two separators or several commas as digit
    grouping (`1.234,56`, `1,234.5`, `1,234,567`). The exception is a lone
    comma before exactly three digits with no dot (`0,125`, `1,234`): a
@@ -159,10 +163,16 @@ whole ladder for its column and applies the declared coercion instead, with
 formula cells as the one exception: they still go through the formula path
 and then take the column's number format.
 
-A value the declared type cannot read is kept as text. `_apply_column_type()`
+A value the declared type cannot read is kept as text (with one exception
+that predates this: `nan`/`inf` in a `number` or `currency` column become a
+float and an empty cell, unreported; it belongs with the number-column
+parsing bug in
+[#211](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/211)).
+`_apply_column_type()`
 does not report it — its signature is unchanged and takes no channel — but
 `_kept_as_text()` recognises the result afterwards (a non-empty string under
-any type but `text`), and `add_table_to_sheet()` counts those per column and
+any type but `text`), and `add_table_to_sheet()` counts those per table
+column and
 hands them to `_report_kept_as_text()` once the table is written. Empty cells
 and formula cells never count.
 
@@ -281,7 +291,7 @@ still markdown.
 | `style_entry_invalid` | warning | A `styles:` entry is malformed, unresolvable or sets nothing |
 | `style_range_too_large` | warning | A `styles:` range is over `MAX_STYLED_CELLS`; none of it was applied |
 | `style_failed` | warning | `apply_style_spec()` raised for one cell |
-| `typed_value_kept_as_text` | warning | Non-empty values in a `types` column (any type but `text`) that do not read as that type and were kept as text; **one per column**, with the count, located at the first such cell |
+| `typed_value_kept_as_text` | warning | Non-empty values in a `types` column (any type but `text`) that do not read as that type and were kept as text; **one per table column**, with the count, located at the first such cell |
 
 The channel **de-duplicates** identical `(code, message, location)` entries
 and **caps** the number it carries (`warning_channel.DEFAULT_LIMIT`), which
