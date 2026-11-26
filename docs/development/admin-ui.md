@@ -578,14 +578,22 @@ itself has to get right:
   each tool at registration time, so a save would otherwise move the static
   tool and leave the template tools on the old mapping.
 - **A template lost to that re-registration is named, as a warning.**
-  `register_docx_template()` removes the existing tool *before* rebuilding it,
-  so a template whose source file has gone missing since startup is not merely
-  stale — it is off the server, and the registration loop logs it and moves
-  on. `resync_docx_style_map()` therefore returns `(live, lost)` from a
-  before/after comparison of the live names. From the admin's side the only
-  thing that happened was saving a style, so this must not arrive as a success
-  message with a smaller number in it. The remove-before-rebuild ordering
-  itself is [#192](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/192).
+  A failed rebuild keeps the previous tool (#192) — except a Word tool whose
+  `.docx` has gone missing since startup, which could only fail and is removed.
+  `resync_docx_style_map()` returns `(rebuilt, lost, stale)`: `lost` from a
+  before/after comparison of the live names, so that removal is named, and
+  `stale` from the names the registration loop could not build that are still
+  live — kept on the previous build, so still on the *old* mapping, and not
+  counted as re-registered. From the admin's side the only thing that
+  happened was saving a style, so neither may arrive as a success message
+  with a smaller number in it.
+- **Saving an edit that cannot be built keeps the previous version and says
+  so.** The save page uses the kind's `save_warn_kept` wording — the AI keeps
+  the previous version until the next restart — rather than "could not be
+  registered", which would be false. The route reads `live_names()` straight
+  after `sync()`, with no `await` between, to tell the two apart. A rename
+  whose new build fails gets the plain `save_warn`: nothing is live under
+  either name.
 
 Route ordering matters here as it does for `/base` and `/files`: `/styles/save`
 also fits `/{kind}/save`, so the three `/styles` routes are registered before

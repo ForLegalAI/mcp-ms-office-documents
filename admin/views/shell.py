@@ -157,12 +157,15 @@ def save_failed_page(ctx, message: str, kind: str = ""):
     )
 
 
-def saved_page(ctx, kind: str, name: str, ok: bool, enabled: bool = True):
+def saved_page(ctx, kind: str, name: str, ok: bool, enabled: bool = True,
+               kept: bool = False):
     """Confirmation after a save, worded for what the kind actually produces.
 
-    Three outcomes, not two. A template saved while disabled is not live, but
+    Four outcomes, not two. A template saved while disabled is not live, but
     that is what was asked for — wording it as a failed registration sends the
     admin to read logs about something that was never going to happen (#164).
+    A failed build with *kept* set left the previous version serving (#192),
+    which is neither a success nor "not registered".
     """
     d = descriptor(kind)
     s = section_for_kind(kind)
@@ -170,6 +173,8 @@ def saved_page(ctx, kind: str, name: str, ok: bool, enabled: bool = True):
         template, heading, tone = d.save_disabled, "✓ Saved", "ok"
     elif ok:
         template, heading, tone = d.save_ok, "✓ Saved", "ok"
+    elif kept and d.save_warn_kept:
+        template, heading, tone = d.save_warn_kept, "Saved with a warning", "warn"
     else:
         template, heading, tone = d.save_warn, "Saved with a warning", "warn"
     return kind_page(

@@ -104,6 +104,9 @@ class KindDescriptor:
     preview_label: str
     preview_hint: str = ""
     section_blurb: str = ""     # extra prose under the index section heading
+    # Confirmation when the new version could not be built but the previous
+    # one is still serving (#192). Empty for a kind with no live tool to keep.
+    save_warn_kept: str = ""
 
     # -- storage metadata, delegated so a view needs one lookup --------------
 
@@ -166,6 +169,11 @@ _DOCX = KindDescriptor(
     draft_hint="Analyzed {filename} — review the arguments below, preview, then save.",
     save_ok="Saved — the tool '{name}' is now live and ready for the AI to use.",
     save_warn="Saved, but the tool '{name}' could not be registered (check the logs).",
+    save_warn_kept="Saved, but the new version of '{name}' could not be built, so the "
+                   "AI keeps the previous version's arguments and style mapping — "
+                   "rendering whatever Word file is stored now — until the server "
+                   "restarts or the template is switched off. Check the logs, fix "
+                   "the template and save again.",
     save_disabled="Saved. '{name}' stays disabled, so the AI cannot call it — "
                   "enable it from the template list when you are ready.",
     preview_label="Preview",
@@ -184,6 +192,10 @@ _EMAIL = KindDescriptor(
     draft_hint="Analyzed {filename} — review the arguments below, preview, then save.",
     save_ok="Saved — the tool '{name}' is now live and ready for the AI to use.",
     save_warn="Saved, but the tool '{name}' could not be registered (check the logs).",
+    save_warn_kept="Saved, but the new version of '{name}' could not be built, so the "
+                   "AI keeps using the previous version until the server restarts or "
+                   "the template is switched off. Check the logs, fix the template "
+                   "and save again.",
     save_disabled="Saved. '{name}' stays disabled, so the AI cannot call it — "
                   "enable it from the template list when you are ready.",
     preview_label="Preview",

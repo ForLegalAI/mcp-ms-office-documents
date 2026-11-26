@@ -77,9 +77,10 @@ either the master file or the `.d` directory exists.
 
 ## What a spec becomes
 
-`_register_single_template()` in `docx_tools/dynamic_docx_tools.py` and
-`_register_single_email_template()` in `email_tools/dynamic_email_tools.py`
-follow the same steps:
+`_build_template_tool()` in `docx_tools/dynamic_docx_tools.py` and
+`_build_email_template_tool()` in `email_tools/dynamic_email_tools.py`
+follow the same steps. They build the tool without touching the server;
+`register_*_template()` swaps it in (see [Live registration](#live-registration)):
 
 1. **Validate the spec.** `name` is required. `docx_path` or `html_path`
    must be a bare filename; it is resolved through `template_utils`, custom
@@ -95,13 +96,14 @@ follow the same steps:
 3. **Expose the model in module globals.** FastMCP resolves the handler's
    annotation by name against the module namespace when it builds the
    schema, so the class must be importable from there.
-4. **Register an `async def` handler** whose body is
+4. **Build the tool** with `Tool.from_function()` around an `async def` handler whose body is
    `await run_blocking(_sync_impl, data)`. The synchronous body renders,
    assembles the file and uploads it in one go. See
    [`architecture.md`](architecture.md#dynamic-template-tools) for why it does
    not go through the shared upload helper.
-5. **Record the registration** in a lock-guarded module dict so the admin
-   Status page can list live tools.
+5. **Return it** to `register_*_template()`, which swaps it in and records
+   the registration in a lock-guarded module dict so the admin Status page
+   can list live tools.
 
 ### Rendering, Word
 
@@ -223,12 +225,51 @@ An optional value is shown with a Mustache section over the argument itself
 
 ## Live registration
 
-`register_docx_template()` / `register_email_template()` remove any existing
-tool of the same name through `template_registry.safe_remove_tool()`, which
-calls FastMCP's `local_provider.remove_tool` and treats its `KeyError` (no
-such tool) as nothing to remove, then register afresh. `unregister_*` removes and forgets. The
-admin UI calls these after writing the `.d` file and the asset, so a saved
-template is callable immediately.
+`register_docx_template()` / `register_email_template()` **build first, swap
+second** (#192). The new tool is built in full — spec validation, file
+resolution, the argument model, `Tool.from_function()` — and only then is the
+existing tool of the same name removed through
+`template_registry.safe_remove_tool()` (which treats FastMCP's `KeyError` for
+an unknown name as nothing to remove) and the new one added with
+`mcp.add_tool()`. `unregister_*` removes and forgets. The admin UI calls these
+after writing the `.d` file and the asset, so a saved template is callable
+immediately.
+
+A build that is skipped or raises returns `False` — logged, never propagated —
+and **leaves the previous tool serving**. Re-registration runs on admin
+actions about something else (saving the global style mapping rebuilds every
+Word tool), so removing first used to take a working tool off the server as a
+side effect. Two consequences:
+
+- **A kept tool runs, or it is removed.** An email tool rendered from the
+  HTML it read at build time, so it keeps working whatever happened to the
+  file. A Word tool opens its `.docx` on every call, so after a failed rebuild
+  it is kept only while that file (`_LIVE_SOURCE[name]`) still exists; with
+  the file gone it is removed, as before #192, and the style-mapping save
+  reports it (see [admin-ui.md](admin-ui.md)). Existence is all that is
+  checked: a Word file replaced on the volume or through *Replace document*
+  is rendered with the kept tool's old arguments and style mapping, which is
+  what the docx `save_warn_kept` wording says.
+- **A kept tool is stale.** It keeps the style mapping baked in when it was
+  built, so a later style-mapping save cannot move it either.
+  `register_docx_template_tools_from_yaml()` returns the names whose build
+  failed, and `resync_docx_style_map()` reports the ones still live as
+  `stale` rather than counting them as re-registered.
+- **Kept is until the next reload.** The stored spec is the new one, so at
+  startup — or when the template is switched off and on — the build fails
+  again and nothing registers. The admin's save page says so
+  (`save_warn_kept` in `admin/kinds.py`).
+
+A **rename** is the exception the swap does not cover: the save route
+unregisters the old name, then registers the new one, so a failed build of the
+new name leaves nothing live under either. Keeping the old name instead would
+leave a live tool with no stored spec, which the admin could neither edit,
+disable nor delete.
+
+The remove and the add run with **no `await` between them**, so on the event
+loop — where startup and every admin route call them — no tool call can see
+the name missing. Calling them from a synchronous handler (which Starlette
+runs in a threadpool) would open that gap.
 
 `metrics.record_call()` and `record_error()` are called from the tool body,
 keyed by kind and template name, for the Status page.

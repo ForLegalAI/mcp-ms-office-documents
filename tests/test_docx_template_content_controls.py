@@ -61,7 +61,7 @@ def tool(tmp_path):
     spec = {"name": "cc_probe", "description": "probe", "docx_path": "t.docx", "args": SPEC_ARGS}
     with patch.object(dd, "find_docx_template_by_name", lambda f: str(template)), \
             patch.object(dd, "upload_file", fake_upload):
-        assert dd._register_single_template(mcp, spec)
+        assert dd.register_docx_template(mcp, spec)
         yield mcp, out
 
 
@@ -128,7 +128,7 @@ def test_a_plain_list_without_enum_is_unchanged():
     spec = {"name": "plain_list", "docx_path": "x.docx",
             "args": [{"name": "tags", "type": "list", "required": False, "description": "d"}]}
     with patch.object(dd, "find_docx_template_by_name", lambda f: "/tmp/x.docx"):
-        assert dd._register_single_template(mcp, spec)
+        assert dd.register_docx_template(mcp, spec)
 
     async def go():
         async with Client(mcp) as c:
@@ -158,7 +158,7 @@ def test_a_value_written_into_a_control_is_not_expanded_as_a_placeholder(tmp_pat
     mcp = FastMCP("t3")
     with patch.object(dd, "find_docx_template_by_name", lambda f: str(template)), \
             patch.object(dd, "upload_file", fake_upload):
-        assert dd._register_single_template(
+        assert dd.register_docx_template(
             mcp, {"name": "cc_probe", "docx_path": "t.docx", "args": args})
         _call(mcp, {"first": "{{other}}", "second": "{{other}}", "third": "{{other}}",
                     "other": "EXPANDED"})
@@ -185,7 +185,7 @@ def _register_dropdown_tool(tmp_path, out, enum=None):
     p2 = patch.object(dd, "upload_file", fake_upload)
     p1.start()
     p2.start()
-    assert dd._register_single_template(mcp, {"name": "cc_probe", "docx_path": "dd.docx", "args": [arg]})
+    assert dd.register_docx_template(mcp, {"name": "cc_probe", "docx_path": "dd.docx", "args": [arg]})
     return mcp, (p1, p2)
 
 

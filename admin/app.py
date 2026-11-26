@@ -164,20 +164,22 @@ class AdminContext:
         """Re-register every live Word template tool for a changed global map.
 
         The global mapping is *baked into each tool at registration time* —
-        ``_register_single_template`` resolves ``build_style_map(global,
+        ``_build_template_tool`` resolves ``build_style_map(global,
         per-template)`` once and closes over the result — so saving a new
         global mapping without this leaves every existing tool rendering on the
         old one, and only the static Word tool (which resolves per document)
         would follow the change. That split is precisely the kind of thing an
         admin would never think to suspect.
 
-        Returns ``(live, lost)``. ``lost`` is why the before/after comparison
-        is here at all: ``register_docx_template()`` removes the existing tool
-        *before* rebuilding it, so a template whose source file has gone
-        missing since startup does not merely fail to re-register — it is
-        taken off the server, and the loop that registers them logs the
-        failure and moves on. The caller has to be able to say so, because
-        from the admin's side the only thing that happened was saving a style.
+        Returns ``(rebuilt, lost, stale)``. A failed rebuild keeps the previous
+        tool (#192), which still renders with the *old* mapping baked in, so
+        it is ``stale``: named, and not counted in ``rebuilt``. The exception
+        is a tool whose ``.docx`` has gone missing since startup: it opens the
+        file on every call, so it could only fail, and
+        ``register_docx_template()`` takes it off the server — ``lost``, from
+        the before/after comparison of the live names. Either way the caller
+        has to be able to say so: from the admin's side the only thing that
+        happened was saving a style.
         """
         from docx_tools.dynamic_docx_tools import (
             register_docx_template_tools_from_yaml, registered_docx_template_names,
@@ -190,13 +192,17 @@ class AdminContext:
         # about, so say so rather than hope the fingerprint moved.
         invalidate_global_style_map()
         before = set(registered_docx_template_names())
-        register_docx_template_tools_from_yaml(self.mcp, self.docx_master_yaml)
-        after = registered_docx_template_names()
-        lost = sorted(before - set(after))
+        failed = register_docx_template_tools_from_yaml(self.mcp, self.docx_master_yaml)
+        after = set(registered_docx_template_names())
+        lost = sorted(before - after)
+        stale = sorted(set(failed) & before & after)
         if lost:
             logger.error("[admin] Re-registration dropped Word template(s): %s",
                          ", ".join(lost))
-        return len(after), lost
+        if stale:
+            logger.error("[admin] Word template(s) kept on the previous mapping: %s",
+                         ", ".join(stale))
+        return len(after) - len(stale), lost, stale
 
     # -- live MCP tool registration ----------------------------------------
 
@@ -895,21 +901,27 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
     # is_kind() instead of reaching this handler. Starlette matches in
     # registration order; tests/test_admin_global_styles.py pins it.
 
-    def _resync_message(ok: str, lost):
+    def _resync_message(ok: str, lost, stale=()):
         """The flash for a save, worded for what the re-registration did.
 
-        A template that could not be rebuilt is *gone*, not merely stale, and
-        the admin was only saving a style — so that outcome must not arrive as
-        a success message with a smaller number in it.
+        A template that could not be rebuilt is either *gone* (its source file
+        is missing) or *stale* (kept on its previous build, so still on the
+        old mapping, #192). The admin was only saving a style — so neither
+        outcome may arrive as a success message with a smaller number in it.
         """
-        if not lost:
+        if not lost and not stale:
             return ok, "ok"
-        return (
-            ok + " But " + ", ".join(lost) + " could not be rebuilt and is no "
-            "longer registered — its source file is most likely missing. Check "
-            "Source files, then re-upload it on the template's page.",
-            "warn",
-        )
+        msg = ok
+        if lost:
+            msg += (" But " + ", ".join(lost) + " could not be rebuilt and is no "
+                    "longer registered — its source file is missing. Check "
+                    "Source files, then re-upload it on the template's page.")
+        if stale:
+            msg += ((" Also, " if lost else " But ") + ", ".join(stale)
+                    + " could not be rebuilt and still uses the previous mapping. "
+                    "Open the template, fix what its save page reported, and "
+                    "save it again.")
+        return msg, "warn"
 
     def _styles_page(sess, message=None, message_kind="ok"):
         """Re-render the Word section's Style mapping tab."""
@@ -947,11 +959,11 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         except (TemplateStoreError, OSError) as e:
             logger.exception("[admin] Could not save the global style mapping")
             return _styles_page(sess, f"Could not save: {e}", "err")
-        live, lost = ctx.resync_docx_style_map()
+        live, lost, stale = ctx.resync_docx_style_map()
         logger.info("[admin] Global style mapping set to %r", mapping)
         return _styles_page(sess, *_resync_message(
             f"Saved. {len(mapping)} key(s) overridden; {live} Word template "
-            "tool(s) re-registered on the new mapping.", lost))
+            "tool(s) re-registered on the new mapping.", lost, stale))
 
     @rt("/styles/revert", methods=["post"])
     async def revert_global_styles(req, sess):
@@ -964,13 +976,13 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
         except (TemplateStoreError, OSError) as e:
             logger.exception("[admin] Could not clear the global style mapping")
             return _styles_page(sess, f"Could not revert: {e}", "err")
-        live, lost = ctx.resync_docx_style_map()
+        live, lost, stale = ctx.resync_docx_style_map()
         if not removed:
             return _styles_page(sess, "There was nothing stored to revert.", "info")
         logger.info("[admin] Global style mapping reverted to the master YAML")
         return _styles_page(sess, *_resync_message(
             "Reverted to config/docx_templates.yaml. "
-            f"{live} Word template tool(s) re-registered.", lost))
+            f"{live} Word template tool(s) re-registered.", lost, stale))
 
     @rt("/new/{kind}")
     def new(sess, kind: str):
@@ -1232,8 +1244,11 @@ def build_admin_app(mcp, config: Config) -> FastHTML:
             # failure to report, not an unhandled 500.
             return views.save_failed_page(ctx, str(e))
         ok = ctx.sync(kind, spec)
+        # A failed build keeps the previous tool live (#192). Read right after
+        # sync(), with no await between, so it describes this save.
+        kept = not ok and spec["name"] in ctx.live_names(kind)
         return views.saved_page(ctx, kind, spec["name"], ok,
-                                enabled=is_enabled(spec))
+                                enabled=is_enabled(spec), kept=kept)
 
     @rt("/{kind}/preview/values", methods=["post"])
     async def preview_values(req, sess, kind: str):
