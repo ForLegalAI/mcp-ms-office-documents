@@ -33,6 +33,8 @@ template_utils.py   template file resolution (custom → default, container → 
 template_registry.py  YAML merging (master + *.d/) for specs and for the
                     kind-wide _global.yaml; live tool removal
 inline_markdown.py  the inline-emphasis grammar shared by Word and PowerPoint
+markdown_table.py   the table-row grammar (is_table_line, split_row,
+                    is_separator_cells) shared by Word and Excel
 warning_channel.py  DocumentWarning + WarningChannel: what a build worked around
 image_utils.py      image download/decode with the SSRF guard
 metrics.py          in-process counters for the admin Status page
@@ -74,6 +76,10 @@ backend → URL string or LibreChat artifact dict. Details:
 - Links: a renderer makes a hyperlink only when
   `inline_markdown.is_safe_link_target()` allows it, and the build reports a
   refusal from `refused_link_targets()`.
+- Table rows: Word and Excel detect and split Markdown table rows through
+  `markdown_table` (`is_table_line()`, `split_row()`, `is_separator_cells()`);
+  never `startswith('|')` / `split('|')` in a renderer. The trailing pipe is
+  optional (#144).
 - Logging: `logging.getLogger(__name__)`. Level comes from `DEBUG` only.
 
 **Errors**
@@ -113,6 +119,11 @@ backend → URL string or LibreChat artifact dict. Details:
   as one break, never with a bare `_BR_RE.sub()`. Never give `expand_br_to_block_breaks()`
   the renderer's numbering state (#110). Details in
   [word.md](docs/development/tools/word.md#one-line-break-model).
+- The dispatcher and `parse_table()` take any line starting with `|` as a
+  table row; the questions asked before parsing (`line_starts_block()`,
+  `expand_br_to_block_breaks()`) read a pipe line strictly through
+  `patterns._pipe_line_is_table()`, so prose like `|x| < 5` stays prose there.
+  Do not swap `is_table_line()` into them (#144).
 
 **PowerPoint**
 - Never index `slide_layouts[N]` in a builder; go through `_new_slide()`.

@@ -40,7 +40,7 @@ markdown_content
   ├─ <!-- key: value -->   → pending directive (attaches to the next table)
   ├─ ## Sheet: Name        → SheetEvent (rename of the default sheet, or a new one)
   ├─ # … ######            → HeaderEvent at the current row, then +2 rows
-  ├─ | … |                 → helpers.parse_table() → TableEvent at the current row,
+  ├─ | …                   → helpers.parse_table() → TableEvent at the current row,
   │                           then +len(rows)+2; directives attached; T-number assigned
   │                           no table in them → `table_incomplete`
   └─ anything else         → dropped, reported as `line_dropped` (clears pending directives)
@@ -83,7 +83,7 @@ an earlier version computed positions twice and the copies drifted.
 |--------|------|
 | `base_xlsx_tool.py` | The three entry points; the event loop that turns events into sheets, headers and tables; the zero-tables check; the post-save circular-reference warning |
 | `parser.py` | `walk_markdown_lines()`, the event dataclasses, `collect_table_positions()`, sheet-name sanitising, the spacing constants |
-| `helpers.py` | Everything cell-level: `parse_table()`, `resolve_cell()`, date and number detection, `adjust_formula_references()`, the `types` directive, formula-length guard, header uniqueness, `add_table_to_sheet()` |
+| `helpers.py` | Everything cell-level: `parse_table()` (on the root `markdown_table` row grammar, shared with Word), `resolve_cell()`, date and number detection, `adjust_formula_references()`, the `types` directive, formula-length guard, header uniqueness, `add_table_to_sheet()` |
 | `styles.py` | The `styles` directive: colour parsing, target and range expansion, named styles loaded from `custom_xlsx_template.xlsx`, and the non-destructive named-style application |
 | `circular_refs.py` | Static dependency graph over formula strings and DFS cycle detection; diagnostic only |
 | `warnings.py` | The Excel warning codes and their severities; `channel()` builds the per-build collector |
@@ -297,6 +297,17 @@ the response. `add_table_to_sheet()` collects `[count, first cell, first value]`
 per column and `_report_kept_as_text()` adds one warning each after the cell
 loop. A new per-cell code that a caller can trip in bulk should do the same.
 
+A table row is any line that starts with `|`; the trailing pipe is optional,
+and a lone `|` inside a table is an empty row. `parse_table()` gets that rule
+and the cell split from the root module `markdown_table.py`
+(`is_table_line()`, `split_row()`) and its separator test from
+`is_separator_cells()`; the Word tool's `parse_table()` calls the same three,
+so the two tools keep the same rows for the same input. This is the rule
+Excel always had — Word used to demand the trailing pipe and dropped a row
+without it from the table
+([#144](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/144)).
+`walk_markdown_lines()` starts a table on `is_table_line()` too.
+
 `parse_table()` never *requires* the separator row — it only skips rows that
 look like one, wherever in the run they are — so a table written without one,
 or with one somewhere other than under the header, still parses, with its
@@ -379,6 +390,7 @@ report in the `else` branch below it.
 | `tests/test_xlsx_styling.py` | The `styles` directive and template-defined named styles |
 | `tests/test_xlsx_warnings.py` | The warnings channel: every code, sheet/cell/line locations, the cap, the tool-boundary response shape |
 | `tests/test_xlsx_percent_european_143.py` | Decimal commas in typed and untyped percents, the ambiguous `0,125` form, the format learner agreeing with the coercion, and the per-column `typed_value_kept_as_text` warning |
+| `tests/test_table_trailing_pipe_144.py` | The table-row grammar shared with Word: rows without a trailing pipe, a lone `\|` row, Word and Excel giving the same rows |
 | `tests/test_warning_channel.py` | The shared record and collector the channel is built on |
 
 The usual pattern is to build the workbook, save it to a buffer, and reload

@@ -7,6 +7,7 @@ docx_tools package can import them without circular dependencies.
 import re
 
 from inline_markdown import ESCAPE_RE, LINK_RE, build_inline_pattern
+from markdown_table import is_table_line
 
 # ---------------------------------------------------------------------------
 # Block-level patterns (compiled once, used by many modules)
@@ -31,16 +32,23 @@ BLOCKQUOTE_PATTERN = re.compile(r'^>')
 PAGE_BREAK_PATTERN = re.compile(r'^-{3,}\s*$')
 HORIZONTAL_LINE_PATTERN = re.compile(r'^\*{3,}\s*$')
 IMAGE_PATTERN = re.compile(r'^!\[([^\]]*)\]\(([^)]+)\)$')
+# A pipe line with both pipes: the strict reading of a table row. The table
+# parser itself takes any line starting with "|" (markdown_table.is_table_line,
+# trailing pipe optional — #144); this pattern is what lets the block-detection
+# questions below keep prose such as "|x| < 5" from being read as a table. See
+# _pipe_line_is_table().
 TABLE_LINE_PATTERN = re.compile(r'^\|.+\|$')
 # Fenced code block opener: 3+ backticks or tildes, optional info/language string.
 # Group 1 is the fence run (its char/length identify the matching close).
 CODE_FENCE_PATTERN = re.compile(r'^(`{3,}|~{3,})(.*)$')
 
-# All block-level patterns checked by contains_block_markdown
+# All block-level patterns checked by contains_block_markdown. A table line is
+# not among them: whether a pipe line is a table depends on its neighbours, so
+# line_starts_block() asks _pipe_line_is_table() instead.
 _BLOCK_PATTERNS = [
     ORDERED_LIST_PATTERN, UNORDERED_LIST_PATTERN, HEADING_PATTERN,
     BLOCKQUOTE_PATTERN, PAGE_BREAK_PATTERN, HORIZONTAL_LINE_PATTERN,
-    IMAGE_PATTERN, TABLE_LINE_PATTERN, CODE_FENCE_PATTERN,
+    IMAGE_PATTERN, CODE_FENCE_PATTERN,
 ]
 
 # ---------------------------------------------------------------------------
@@ -148,6 +156,33 @@ def br_to_newlines(text: str) -> str:
     return _BR_RE.sub('\n', _BR_BEFORE_NEWLINE_RE.sub('\n', text))
 
 
+def _pipe_line_is_table(lines, idx, *, look_back=False) -> bool:
+    """True if ``lines[idx]`` reads as a table row to the block-detection layer.
+
+    The table parser takes any line that starts with ``|``
+    (:func:`markdown_table.is_table_line`; the trailing pipe is optional,
+    #144). The questions asked *before* parsing — does this line stop a
+    soft-break run or a list item, is this placeholder value block markdown,
+    may a ``<br>`` on this line be promoted — read a pipe line more strictly,
+    so that prose such as ``|x| < 5`` keeps behaving as prose there: it counts
+    when it has both pipes (:data:`TABLE_LINE_PATTERN`, the rule before #144),
+    or when the next line is a pipe line too, so a table whose header lacks
+    its trailing pipe is still a table. *look_back* also accepts a pipe line
+    whose previous line is one — the last row of a table, which has no pipe
+    line after it.
+    """
+    stripped = lines[idx].strip()
+    if TABLE_LINE_PATTERN.match(stripped):
+        return True
+    if not is_table_line(stripped):
+        return False
+
+    def _pipe(j):
+        return 0 <= j < len(lines) and is_table_line(lines[j].strip())
+
+    return _pipe(idx + 1) or (look_back and _pipe(idx - 1))
+
+
 def ordered_list_is_genuine(lines, idx) -> bool:
     """Return True if the ordered-list marker at ``lines[idx]`` should start a list.
 
@@ -238,23 +273,30 @@ def expand_br_to_block_breaks(text: str) -> str:
     interposed content is written with real newlines; the renderer's own count
     handles that, and is untouched by any of this.
 
-    Table rows (``| ... |``) and fenced code blocks are never touched: a row is
+    Table rows and fenced code blocks are never touched: a row is
     one physical line, so a ``<br>`` in a cell is an in-cell break (rendered by
     the inline layer, with ``<br><br>`` splitting the cell into paragraphs in
-    ``add_table_to_doc``), and code is taken verbatim. Idempotent — running it on already-expanded text is a
-    no-op, so it is safe to call on both the base and placeholder paths.
+    ``add_table_to_doc``), and code is taken verbatim. A table row here is a
+    pipe line with both pipes or with a pipe line beside it
+    (:func:`_pipe_line_is_table` with *look_back*), so a row missing its
+    trailing pipe keeps its in-cell ``<br>`` too (#144), while a lone
+    ``|x| < 5<br>- item`` is still split like any other prose. Idempotent —
+    running it on already-expanded text is a no-op, so it is safe to call on
+    both the base and placeholder paths.
     """
     if not text or not _BR_RE.search(text):
         return text
     out = []
     in_code = False
-    for line in text.split('\n'):
+    lines = text.split('\n')
+    for idx, line in enumerate(lines):
         stripped = line.strip()
         if CODE_FENCE_PATTERN.match(stripped):
             in_code = not in_code
             out.append(line)
             continue
-        if in_code or TABLE_LINE_PATTERN.match(stripped) or not _BR_RE.search(line):
+        if (in_code or not _BR_RE.search(line)
+                or _pipe_line_is_table(lines, idx, look_back=True)):
             out.append(line)
             continue
         segments = [seg.strip() for seg in _BR_RE.split(line)]
@@ -281,10 +323,17 @@ def line_starts_block(lines, idx) -> bool:
     placeholder value (:func:`contains_block_markdown`) and to stop a soft-break
     run before a block it must not swallow
     (:func:`docx_tools.markdown_processor.process_markdown_block`).
+
+    A pipe line counts only under the strict reading of
+    :func:`_pipe_line_is_table` — both pipes, or another pipe line after it —
+    not the table parser's wider one, so prose such as ``|x| < 5`` still joins
+    a soft-break run and still fills a placeholder inline (#144).
     """
     from .block_elements import detect_alignment  # deferred to avoid circular
 
     stripped = lines[idx].strip()
+    if _pipe_line_is_table(lines, idx):
+        return True
     for pattern in _BLOCK_PATTERNS:
         if not pattern.match(stripped):
             continue

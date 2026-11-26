@@ -139,6 +139,32 @@ counts `![alt](src)` as a link, because that is how the inline renderers draw
 it; a caller that turns some of that shape into something else removes it
 first (Word's `_inline_text()` drops whole-line images and fenced code).
 
+## `markdown_table.py`
+
+The Markdown table-row grammar the Word and Excel renderers share.
+`is_table_line(stripped)` says whether a line is a row: it starts with `|`,
+and the trailing pipe is optional, as in GitHub-flavoured Markdown (a lone
+`|` is a row with no cells, so it does not end a table). `split_row(line)`
+adds a missing trailing `|` and splits the row into stripped cells.
+`is_separator_cells(cells)` says whether split cells are a `|---|:---:|` row:
+every cell, empty ones included, is dashes with optional colons. Each tool's
+`parse_table()` decides the rest — where the table ends, and that only the
+row directly under the header can be the separator. Excel had always read
+rows this way and Word had demanded both pipes, so a row missing its trailing
+pipe kept its place in a sheet and fell out of a Word table as prose with
+nothing reported
+([#144](https://github.com/ForLegalAI/mcp-ms-office-documents/issues/144)).
+It lives at the root, like `inline_markdown.py`, because `xlsx_tools` must
+not import `docx_tools`.
+
+Word's pre-parse block detection (`docx_tools.patterns.line_starts_block()`)
+reads a pipe line more strictly on purpose, so prose such as `|x| < 5` is not
+taken for a table before parsing; see
+[word.md](tools/word.md#table-rows). PowerPoint takes table rows as JSON
+arrays and keeps its own separator check in `pptx_tools/helpers.py`.
+`tests/test_table_trailing_pipe_144.py` covers the module and the two
+parsers agreeing.
+
 ## `image_utils.py`
 
 `load_image(source)` returns `(BytesIO, extension)` for an `https` URL or a

@@ -1,7 +1,8 @@
 """Cell-level machinery for the Excel tool.
 
 Everything that happens inside one table once the parser has placed it:
-``parse_table`` splits the Markdown rows; ``resolve_cell`` decides whether a
+``parse_table`` splits the Markdown rows (the row grammar is the root
+``markdown_table`` module, shared with Word); ``resolve_cell`` decides whether a
 cell is a formula, percent, number, date or text; ``adjust_formula_references``
 rewrites the table-relative formula syntax (``T1.B[0]``, ``B[-1]``,
 ``Sheet!T1.SUM(...)``) to real cell references; the ``types`` directive
@@ -22,6 +23,8 @@ from dateutil import parser as dateutil_parser
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
+
+from markdown_table import is_separator_cells, is_table_line, split_row
 
 from . import warnings as W
 
@@ -274,34 +277,15 @@ def _percent_format_for_column(table_data: list[list[str]], col_idx: int) -> str
     return None if decimals is None else _percent_format_with(decimals)
 
 
-def _is_separator_row(line: str) -> bool:
-    """Check if a table line is a markdown separator row (e.g. |---|:---:|---:|).
-
-    Only returns True if ALL cells in the row match the separator pattern,
-    preventing false positives from data cells that happen to contain '---'.
-
-    One dash is enough, as in CommonMark and in the Word tool's own check.
-    Demanding three wrote a caller's ``|--|--|`` into the sheet as a row of
-    literal dashes and then reported ``table_separator_missing`` against a
-    table that had one (#114).
-    """
-    cells = [c.strip() for c in line.split('|')[1:-1]]
-    if not cells:
-        return False
-    return all(re.match(r'^:?-+:?$', c) for c in cells)
-
-
-def _parse_column_alignments(separator_line: str) -> list[str | None]:
-    """Extract column alignments from a markdown separator row.
+def _parse_column_alignments(cells: list[str]) -> list[str | None]:
+    """Extract column alignments from a separator row's split *cells*.
 
     Returns a list of alignment strings ('left', 'center', 'right') or None per column.
     This is the same logic used by docx_tools but returns generic strings
     instead of Word-specific enums.
     """
-    cells = [c.strip() for c in separator_line.split('|')[1:-1]]
     alignments: list[str | None] = []
     for cell in cells:
-        cell = cell.strip()
         if cell.startswith(':') and cell.endswith(':'):
             alignments.append('center')
         elif cell.endswith(':'):
@@ -316,31 +300,33 @@ def _parse_column_alignments(separator_line: str) -> list[str | None]:
 def parse_table(lines: list[str], start_idx: int) -> tuple[list[list[str]] | None, int]:
     """Parse markdown table and return (table_data, next_index).
 
+    The table runs while lines are table rows by
+    :func:`markdown_table.is_table_line` — a leading ``|``, the trailing one
+    optional — and each row is split by :func:`markdown_table.split_row`; the
+    Word tool's ``parse_table()`` uses the same two functions, so the two
+    tools keep the same rows (#144).
+
     Also extracts column alignments from the separator row and attaches them
     as the 'col_alignments' attribute on the returned TableData instance.
     """
-    table_lines: list[str] = []
+    rows: list[list[str]] = []
     i = start_idx
 
-    # Find all consecutive table lines (allow missing trailing pipe)
+    # Find all consecutive table lines
     while i < len(lines):
         line = lines[i].strip()
-        if line.startswith('|'):
-            # Normalize: ensure trailing pipe for consistent splitting
-            if not line.endswith('|'):
-                line = line + '|'
-            table_lines.append(line)
-            i += 1
-        else:
+        if not is_table_line(line):
             break
+        rows.append(split_row(line))
+        i += 1
 
-    if len(table_lines) < 2:  # Need at least header and separator
+    if len(rows) < 2:  # Need at least header and separator
         return None, i if i > start_idx else start_idx + 1
 
     # A run of nothing but separator rows is not a table at all: there is no
     # header for them to sit under. Empty table_data is what the caller of this
     # function reads as "no table here", and it reports table_incomplete.
-    if all(_is_separator_row(line) for line in table_lines):
+    if all(is_separator_cells(cells) for cells in rows):
         return TableData([], [], has_separator=False), i
 
     # Parse table data, extracting alignment from the separator row.
@@ -351,16 +337,17 @@ def parse_table(lines: list[str], start_idx: int) -> tuple[list[list[str]] | Non
     # from the sheet with nothing said, and widening the match from three
     # dashes to one (#114) made a lone `-` hit it, which is the likelier
     # spelling by far. So position decides: row 1 may be the separator, every
-    # other row is content.
+    # other row is content. One dash is enough, as in CommonMark: demanding
+    # three wrote a caller's ``|--|--|`` into the sheet as a row of literal
+    # dashes and then reported ``table_separator_missing`` (#114).
     table_data: list[list[str]] = []
     col_alignments: list[str | None] = []
     separator_in_place = False
-    for idx, line in enumerate(table_lines):
-        if idx == 1 and _is_separator_row(line):
-            col_alignments = _parse_column_alignments(line)
+    for idx, cells in enumerate(rows):
+        if idx == 1 and is_separator_cells(cells):
+            col_alignments = _parse_column_alignments(cells)
             separator_in_place = True
             continue
-        cells = [cell.strip() for cell in line.split('|')[1:-1]]
         table_data.append(cells)
 
     # Attach alignment info to the table_data list
