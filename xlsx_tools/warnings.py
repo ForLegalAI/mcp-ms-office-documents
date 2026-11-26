@@ -6,7 +6,10 @@ does not exist still resolves — to the wrong cell, or to ``#REF!`` once Excel
 opens it — and an over-length formula is stored as text. Each produced a
 success response and a log line the caller never sees. A value a ``types``
 column cannot read is kept as text the same way (#143); that one is reported
-once per column, with a count, rather than once per cell.
+once per column, with a count, rather than once per cell. A ``number`` or
+``currency`` column that reads ``4,375`` as 4375 with nothing in its table to
+say whether that comma groups thousands or marks a decimal says so too, the
+same way (#211).
 
 Each code below names one of those situations, and :data:`WARNING_SEVERITY`
 fixes what it costs. Locations are the ``sheet`` the problem is on plus either
@@ -21,6 +24,7 @@ from __future__ import annotations
 
 from warning_channel import (
     SEVERITY_ERROR,
+    SEVERITY_INFO,
     SEVERITY_WARNING,
     WarningChannel,
 )
@@ -47,6 +51,9 @@ STYLE_RANGE_TOO_LARGE = "style_range_too_large"
 STYLE_FAILED = "style_failed"
 TYPED_VALUE_KEPT_AS_TEXT = "typed_value_kept_as_text"
 
+# A value read one of two ways, with nothing in the table to say which.
+AMBIGUOUS_COMMA_READ_AS_THOUSANDS = "ambiguous_comma_read_as_thousands"
+
 #: One severity per code, in one place.
 WARNING_SEVERITY: dict[str, str] = {
     LINE_DROPPED: SEVERITY_ERROR,
@@ -67,6 +74,8 @@ WARNING_SEVERITY: dict[str, str] = {
     STYLE_RANGE_TOO_LARGE: SEVERITY_WARNING,
     STYLE_FAILED: SEVERITY_WARNING,
     TYPED_VALUE_KEPT_AS_TEXT: SEVERITY_WARNING,
+
+    AMBIGUOUS_COMMA_READ_AS_THOUSANDS: SEVERITY_INFO,
 }
 
 

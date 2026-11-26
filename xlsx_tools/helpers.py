@@ -6,7 +6,9 @@ Everything that happens inside one table once the parser has placed it:
 cell is a formula, percent, number, date or text; ``adjust_formula_references``
 rewrites the table-relative formula syntax (``T1.B[0]``, ``B[-1]``,
 ``Sheet!T1.SUM(...)``) to real cell references; the ``types`` directive
-coerces typed columns; ``add_table_to_sheet`` writes the table with fonts,
+coerces typed columns, whose numbers all go through ``_parse_decimal_text``
+and the table's evidence for an ambiguous ``4,375`` (``_comma3_policies``);
+``add_table_to_sheet`` writes the table with fonts,
 borders, alignment, number formats, column widths, the ``styles`` directive
 and an optional Excel Table object.
 
@@ -66,23 +68,32 @@ DATE_FORMATS: list[tuple[str, str]] = [
     ("%B %d, %Y", "MMMM DD, YYYY"),
 ]
 
+# The leading group of real digit grouping: one to three digits, not starting
+# with 0. Nobody groups thousands as ``0,125`` or ``01,234``, so a lead group
+# with a leading zero is never grouping — in a typed column it marks a decimal
+# comma, in an untyped cell it stays text (#211).
+_LEAD_GROUP = r'[1-9]\d{0,2}'
+
 # Digit-grouping patterns accepted in columns with no `types` directive.
 #
 # A lone comma is deliberately NOT enough: "1,5" is 1.5 across most of Europe
 # and 15 nowhere, so auto-detection must not guess at it. Only groups of
-# exactly three digits are unambiguous:
+# exactly three digits are taken:
 #     1,234    1,234.56    1,234,567.89      comma grouping, dot decimal
 #     1.234,56             1.234.567         dot grouping, comma decimal
 # Dot grouping additionally needs a disambiguator — a comma decimal part or a
 # second group — because a bare "1.234" is a plain decimal in English and must
-# keep parsing as 1.234.
+# keep parsing as 1.234. The lead group must not start with 0: "0,125" read as
+# 125 here, and "0,125,000" as 125000 (#211); both now stay text.
 #
-# A column that needs the ambiguous forms should declare `types: number`,
-# which applies the full locale heuristic in _strip_thousands_separators.
-_GROUPED_COMMA_RE = re.compile(r'^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?$')
+# "1,234" itself is still read as 1234 untyped, and so is a Czech "4,375": an
+# untyped cell has no column to learn from and nothing to warn with. A column
+# of decimal commas declares `types: number`, which reads it with
+# _parse_decimal_text and the table's own evidence (add_table_to_sheet).
+_GROUPED_COMMA_RE = re.compile(rf'^[+-]?{_LEAD_GROUP}(?:,\d{{3}})+(?:\.\d+)?$')
 _GROUPED_DOT_RE = re.compile(
-    r'^[+-]?\d{1,3}(?:\.\d{3})+,\d+$'       # 1.234,56
-    r'|^[+-]?\d{1,3}(?:\.\d{3}){2,}$'       # 1.234.567
+    rf'^[+-]?{_LEAD_GROUP}(?:\.\d{{3}})+,\d+$'      # 1.234,56
+    rf'|^[+-]?{_LEAD_GROUP}(?:\.\d{{3}}){{2,}}$'    # 1.234.567
 )
 
 # Excel number formats for plain numeric cells (no `types` directive). Only
@@ -95,36 +106,61 @@ _THOUSANDS_THRESHOLD = 1000
 # Cap on decimals carried from a percentage's source text into its format.
 _PERCENT_MAX_DECIMALS = 4
 
-# A percent body whose one comma is followed by exactly three digits, with no
-# dot: ``0,125``, ``4,375``, ``1,234``. Thousands grouping and a European
-# decimal comma both read it, a thousand times apart, so it is left as text
-# rather than guessed at (#143). See _parse_percent_body.
-_AMBIGUOUS_PERCENT_COMMA_RE = re.compile(r'^[+-]?\d*,\d{3}$')
+# ── The numeric grammar of typed columns (#143, #211) ──────────────────────
+#
+# One reader, _parse_decimal_text, for every column type that holds a number —
+# ``number``, ``currency`` and ``percent`` — and for an untyped ``…%``. The
+# patterns below are its grammar; the function states the rules in prose.
 
-# What a percent body may look like once its edges are trimmed: a sign,
-# digits with dots and commas, and an exponent only where there is no comma
-# (``1,5e3`` is refused: _strip_thousands_separators would read ``,5e3`` as a
-# thousands group and give 10x the number). Whitespace inside is allowed only
-# as digit grouping (``1 234,56``); anything looser — ``10, 20``, ``4 3`` —
-# was text on master and must not become a number in an untyped cell, where
-# nothing can warn about it (#143 review).
-_PERCENT_BODY_RE = re.compile(
+# What a numeric body may look like once its edges are trimmed and any space
+# grouping removed: a sign, digits with dots and commas, and an exponent only
+# where there is no comma (``1,5e3`` is refused: read as thousands it gives
+# 10x the number). ``nan``, ``inf`` and PEP 515 underscores never match.
+_NUMBER_BODY_RE = re.compile(
     r'^[+-]?(?=[\d.,]*\d)[\d.,]+$'
     r'|^[+-]?(?=[\d.]*\d)[\d.]+[eE][+-]?\d+$'
 )
 # A body with two separators, or several of one, must be genuine digit
-# grouping — groups of three after the first — with an optional decimal part
-# in the other separator: ``1,234.5``, ``1,234,567``, ``1.234,56``. Without
-# this, _strip_thousands_separators reads ``4,3.`` as 43 and ``1.5,2`` as 15.2
-# (#143 review).
-_PERCENT_GROUPED_RE = re.compile(
-    r'^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?$'
-    r'|^[+-]?\d{1,3}(?:\.\d{3})+(?:,\d+)?$'
+# grouping — groups of three after a lead group that does not start with 0 —
+# with an optional decimal part in the other separator: ``1,234.5``,
+# ``1,234,567``, ``1.234,56``, ``1.234.567``. Without this ``4,3.`` read as 43
+# and ``1.5,2`` as 15.2 (#143 review), and ``0,125,000`` as 125000 (#211).
+_DIGIT_GROUPED_RE = re.compile(
+    _GROUPED_COMMA_RE.pattern
+    + rf'|^[+-]?{_LEAD_GROUP}(?:\.\d{{3}})+(?:,\d+)?$'
 )
-_SPACE_GROUPED_RE = re.compile(r'^[+-]?\d{1,3}(?: \d{3})+(?:[.,]\d+)?$')
-# Non-breaking and narrow non-breaking spaces, as Czech typography writes
-# them before % and between digit groups.
-_PERCENT_SPACES = str.maketrans({'\u00a0': ' ', '\u202f': ' ', '\u2009': ' '})
+# Whitespace inside a body is allowed only as digit grouping: ``1 234,56``.
+# ``10, 20``, ``10 20`` and ``4 3`` stay text (#143 review, #211).
+_SPACE_GROUPED_RE = re.compile(rf'^[+-]?{_LEAD_GROUP}(?: \d{{3}})+(?:[.,]\d+)?$')
+# The one truly ambiguous lone comma: a real lead group, a comma, exactly
+# three digits and nothing else — ``1,234``, ``4,375``, ``125,500``. Thousands
+# grouping in English, a decimal comma in most of Europe, a thousand times
+# apart. A lone comma anywhere else is a decimal comma: ``4,3``; ``0,125`` and
+# ``,125``, since a zero or empty lead group is never grouping; ``1234,567``,
+# since four digits before the comma cannot be one group.
+_AMBIGUOUS_COMMA_RE = re.compile(rf'^[+-]?{_LEAD_GROUP},\d{{3}}$')
+# Its mirror: ``1.234`` is a decimal in English and 1234 in a European table.
+_AMBIGUOUS_DOT_RE = re.compile(rf'^[+-]?{_LEAD_GROUP}\.\d{{3}}$')
+# A sign written apart from its number — ``- 5``, or ``€ - 5`` once the symbol
+# is gone. Number and currency columns close it up, as they always read it;
+# a percent body keeps the #143 rule, under which it stays text.
+_SIGN_SPACE_RE = re.compile(r'^([+-]) +(?=[\d.,])')
+
+# Policies for the truly ambiguous ``d,ddd`` (see _parse_decimal_text).
+COMMA3_REFUSE = 'refuse'          # stays text: percent, and a mixed table
+COMMA3_THOUSANDS = 'thousands'    # 4,375 → 4375: English evidence, or none
+COMMA3_DECIMAL = 'decimal'        # 4,375 → 4.375: European evidence
+_COMMA3_POLICIES = frozenset({COMMA3_REFUSE, COMMA3_THOUSANDS, COMMA3_DECIMAL})
+
+# What one value proves about how its table writes numbers (_decimal_evidence).
+EVIDENCE_EUROPEAN = 'european'    # a decimal comma, or dot grouping
+EVIDENCE_ENGLISH = 'english'      # a decimal point, or comma grouping
+
+# Non-breaking, narrow non-breaking and thin spaces, as Czech typography
+# writes them before % and between digit groups.
+_NUMBER_SPACES = str.maketrans({'\u00a0': ' ', '\u202f': ' ', '\u2009': ' '})
+# The typographic minus sign, read as a hyphen-minus.
+_MINUS_SIGN = '\u2212'
 
 # Minimum length to even attempt date parsing (avoids matching plain numbers)
 _MIN_DATE_LENGTH = 6
@@ -193,6 +229,147 @@ def _thousands_format_for(value: float) -> str:
     return THOUSANDS_FORMAT if float(value).is_integer() else THOUSANDS_FORMAT_DECIMALS
 
 
+# The kinds _lex_decimal sorts a body into.
+_KIND_PLAIN = 'plain'                       # 1234, 1 234, 1e3
+_KIND_DOT_DECIMAL = 'dot_decimal'           # 1.5, 0.125, 1234.567
+_KIND_COMMA_DECIMAL = 'comma_decimal'       # 4,3, 0,125, ,125, 1234,567
+_KIND_COMMA_GROUPED = 'comma_grouped'       # 1,234.5, 1,234,567
+_KIND_DOT_GROUPED = 'dot_grouped'           # 1.234,56, 1.234.567
+_KIND_AMBIGUOUS_COMMA = 'ambiguous_comma'   # 1,234, 4,375
+_KIND_AMBIGUOUS_DOT = 'ambiguous_dot'       # 1.234
+
+# What each kind proves about the table it is in. The neutral kinds — plain
+# integers and the two ambiguous forms — prove nothing and are absent.
+_KIND_EVIDENCE = {
+    _KIND_COMMA_DECIMAL: EVIDENCE_EUROPEAN,
+    _KIND_DOT_GROUPED: EVIDENCE_EUROPEAN,
+    _KIND_DOT_DECIMAL: EVIDENCE_ENGLISH,
+    _KIND_COMMA_GROUPED: EVIDENCE_ENGLISH,
+}
+
+
+def _lex_decimal(text: str) -> tuple[str, str] | None:
+    """Check *text* against the numeric grammar: ``(compact_text, kind)`` or None.
+
+    *compact_text* has its edges trimmed, its space grouping removed and a
+    typographic minus read as ``-``; *kind* is one of the ``_KIND_*`` names.
+    The grammar is :func:`_parse_decimal_text`'s, which states it in prose;
+    :func:`_decimal_evidence` reads the kind for what it proves.
+    """
+    text = text.translate(_NUMBER_SPACES).replace(_MINUS_SIGN, '-').strip()
+    if ' ' in text or '\t' in text:
+        if not _SPACE_GROUPED_RE.match(text):
+            return None
+        text = text.replace(' ', '')
+    if not _NUMBER_BODY_RE.match(text):
+        return None
+    mantissa, _, exponent = text.replace('E', 'e').partition('e')
+    commas, dots = mantissa.count(','), mantissa.count('.')
+    if not commas and not dots:
+        kind = _KIND_PLAIN
+    elif (commas and dots) or commas > 1 or dots > 1:
+        if exponent:
+            return None                     # 1.234.567e3 is nobody's number
+        if _GROUPED_COMMA_RE.match(mantissa):
+            kind = _KIND_COMMA_GROUPED
+        elif _DIGIT_GROUPED_RE.match(mantissa):
+            kind = _KIND_DOT_GROUPED
+        else:
+            return None
+    elif commas:
+        kind = (_KIND_AMBIGUOUS_COMMA if _AMBIGUOUS_COMMA_RE.match(mantissa)
+                else _KIND_COMMA_DECIMAL)
+    else:
+        kind = (_KIND_AMBIGUOUS_DOT
+                if not exponent and _AMBIGUOUS_DOT_RE.match(mantissa)
+                else _KIND_DOT_DECIMAL)
+    return text, kind
+
+
+def _parse_decimal_text(text: str, *, comma3: str) -> tuple[float, str] | None:
+    """Read a number written with dots, commas or spaces: ``(value, normalised)``.
+
+    The one numeric reader for every column type that holds a number —
+    ``number`` and ``currency`` in :func:`_apply_column_type`, ``percent``
+    through :func:`_parse_percent_body` — so the three read the same text the
+    same way (#143, #211). Callers strip what is theirs first — a currency
+    symbol and accounting parentheses, a ``%`` — through
+    :func:`_numeric_body`.
+
+    Returns None for anything the grammar refuses, and the cell stays text,
+    which a typed column then reports as ``typed_value_kept_as_text``. The
+    normalised text is what ``float()`` read; a percent counts its decimals on
+    it, so ``1.234,56`` shows two, not the six its raw text implies.
+
+    The grammar:
+
+    - Whitespace at the edges is dropped (``4,3 %``, a Czech non-breaking
+      space). Inside, it is allowed only as digit grouping (``1 234,56``);
+      ``10 20``, ``10, 20`` and ``4 3`` are refused. Non-breaking, narrow
+      non-breaking and thin spaces count as spaces.
+    - The typographic minus sign (U+2212) reads as ``-``.
+    - An exponent is accepted only without a comma: ``1,5e3`` is refused.
+    - Two separators, or several of one, must be real digit grouping — groups
+      of three after a lead group that does not start with 0: ``1.234,56``,
+      ``1,234.5``, ``1,234,567`` and ``1.234.567`` read; ``4,3.``, ``1.5,2``
+      and ``0,125,000`` are refused.
+    - A lone comma is a decimal comma — ``4,3``, ``,5``, ``3,14159`` — and so
+      is a lone comma before three digits wherever the digits in front of it
+      cannot be a thousands group: ``0,125`` and ``,125`` (nobody groups
+      behind a zero), ``1234,567`` (four digits are not one group). Before
+      this, ``types: number`` read ``0,125`` as 125 (#211).
+    - The one truly ambiguous form is a lone comma after one to three digits
+      and before exactly three, with no dot: ``1,234``, ``4,375``. *comma3*
+      decides it: ``'refuse'`` returns None (a percent column, and a number
+      column whose table writes numbers both ways), ``'thousands'`` reads
+      4375, ``'decimal'`` reads 4.375. Under ``'decimal'`` — a table that
+      writes European numbers — the mirror ``1.234`` is read as thousands;
+      under the other two it is the decimal it is in English.
+    - ``nan``, ``inf`` and PEP 515 underscores are refused: the first two
+      serialise as an empty cell, the third would turn a product code into a
+      number.
+    """
+    if comma3 not in _COMMA3_POLICIES:
+        raise ValueError(f"unknown comma3 policy {comma3!r}")
+    lexed = _lex_decimal(text)
+    if lexed is None:
+        return None
+    compact, kind = lexed
+    if kind == _KIND_AMBIGUOUS_COMMA and comma3 == COMMA3_REFUSE:
+        return None
+    normalised = _strip_thousands_separators(compact, comma3=comma3)
+    try:
+        value = float(normalised)
+    except ValueError:
+        return None
+    if not math.isfinite(value):
+        return None
+    return value, normalised
+
+
+def _decimal_evidence(text: str) -> str | None:
+    """What *text* proves about how its table writes numbers, or None.
+
+    ``EVIDENCE_EUROPEAN`` for a value that can only be a decimal comma or dot
+    grouping — ``4,3``, ``0,125``, ``1234,567``, ``1.234,5``, ``1.234.567``,
+    ``1 234,5``. ``EVIDENCE_ENGLISH`` for a decimal point or comma grouping —
+    ``1.5``, ``12.50``, ``0.125``, ``1,234.5``, ``1,234,567``. None for what
+    proves nothing — integers, ``1 234``, the ambiguous ``1,234`` and
+    ``1.234`` themselves — and for anything the grammar refuses.
+    """
+    lexed = _lex_decimal(text)
+    return None if lexed is None else _KIND_EVIDENCE.get(lexed[1])
+
+
+def _ambiguous_comma_text(text: str) -> str | None:
+    """*text* compacted if it is the truly ambiguous ``4,375`` form, else None.
+
+    What the two warnings about that form quote in their hint.
+    """
+    lexed = _lex_decimal(text)
+    return lexed[0] if lexed is not None and lexed[1] == _KIND_AMBIGUOUS_COMMA else None
+
+
 def _parse_percent_body(body: str) -> tuple[float, str] | None:
     """Read the number in front of a ``%`` as a fraction, or None.
 
@@ -205,48 +382,15 @@ def _parse_percent_body(body: str) -> tuple[float, str] | None:
     it).
 
     Returns ``(fraction, normalised_text)``: ``4,3`` → ``(0.043, '4.3')``.
-    The normalised text is what the precision of the percent format is counted
-    on, so ``1.234,56`` shows two decimals, not the six its raw text implies.
-
-    Separators, in a percent body:
-
-    - Whitespace at the edges is dropped, so ``4,3 %`` and a Czech
-      non-breaking space before the sign both read. Inside, it is allowed only
-      as digit grouping (``1 234,56``); ``10, 20`` and ``4 3`` stay text.
-    - The typographic minus sign (U+2212) reads as ``-``.
-    - An exponent is accepted only without a comma: ``1,5e3`` stays text.
-    - Two separators, or several of one, must be real digit grouping
-      (groups of three): ``4,3.`` and ``1.5,2`` stay text.
-    - A lone comma is a decimal comma — ``4,3``, ``0,5``, ``,5``, ``4,30``,
-      ``3,14159`` — except when exactly three digits follow it and there is
-      no dot: ``0,125`` is 0.125 in Prague and 125 in an English thousands
-      reading, and choosing either one silently is a 1000x error for the
-      other. That form returns None and stays text.
-    - Both separators, or several commas, are digit grouping:
-      ``1.234,56``, ``1,234.5``, ``1,234,567``
-      (:func:`_strip_thousands_separators`).
-
-    ``nan``, ``inf`` and PEP 515 underscores are refused, as an untyped number
-    is in :func:`resolve_cell`: the first two serialise as an empty cell.
+    The number is read by :func:`_parse_decimal_text` under the ``'refuse'``
+    policy: ``0,125`` is 0.125 % and ``1234,567`` is 1234.567 % (#211), but
+    the truly ambiguous ``4,375`` and ``1,234`` stay text. A percent takes no
+    evidence from its table — the number columns do — so it does not guess.
     """
-    text = body.translate(_PERCENT_SPACES).replace('\u2212', '-').strip()
-    if ' ' in text or '\t' in text:
-        if not _SPACE_GROUPED_RE.match(text):
-            return None
-        text = text.replace(' ', '')
-    if not _PERCENT_BODY_RE.match(text) or _AMBIGUOUS_PERCENT_COMMA_RE.match(text):
+    parsed = _parse_decimal_text(body, comma3=COMMA3_REFUSE)
+    if parsed is None:
         return None
-    mantissa = re.split(r'[eE]', text, maxsplit=1)[0]
-    if ((',' in mantissa and '.' in mantissa) or mantissa.count(',') > 1
-            or mantissa.count('.') > 1) and not _PERCENT_GROUPED_RE.match(mantissa):
-        return None
-    normalised = _strip_thousands_separators(text)
-    try:
-        value = float(normalised)
-    except ValueError:
-        return None
-    if not math.isfinite(value):
-        return None
+    value, normalised = parsed
     return value / 100, normalised
 
 
@@ -291,8 +435,8 @@ def _percent_format_for_column(table_data: list[list[str]], col_idx: int) -> str
     percent to learn from, leaving the caller its own fallback.
 
     A cell counts exactly when :func:`_apply_column_type` would coerce it, and
-    the two tests are deliberately identical: ``rstrip('%')`` then
-    :func:`_parse_percent_body`, the one function both call. Either half
+    the two tests are deliberately identical: :func:`_numeric_body` then
+    :func:`_parse_percent_body`, the functions both call. Either half
     drifting apart from the coercion has already caused this both ways —
     ``1,234%`` is ambiguous, so the coercion leaves it as text and it must not
     set the format of the cells that are percents; while a bare ``50.5`` or a
@@ -302,17 +446,32 @@ def _percent_format_for_column(table_data: list[list[str]], col_idx: int) -> str
     normalised text, so ``1.234,56`` teaches two.
     """
     decimals = None
-    for row in table_data[1:]:                      # data rows only
+    for _, text in _data_cell_texts(table_data, col_idx):
+        body, _ = _numeric_body(text, 'percent')         # exactly what the
+        parsed = _parse_percent_body(body)               # column coercion
+        if parsed is None:                               # itself accepts
+            continue
+        decimals = max(decimals or 0, _percent_decimals(parsed[1]))
+    return None if decimals is None else _percent_format_with(decimals)
+
+
+def _data_cell_texts(table_data: list[list[str]], col_idx: int):
+    """Yield ``(row_idx, text)`` for each literal data cell of column *col_idx*.
+
+    The one walk over a column's values that the learners share — the
+    percent format learner above and the evidence pass,
+    :func:`_comma3_policies` — so neither can count what the coercion skips:
+    data rows only (the header is a name, not a value), whole-cell markdown
+    stripped as the cell loop strips it (``**2,5**`` is ``2,5``), formulas
+    and empty cells skipped (a formula has no source text, an empty cell no
+    value), and a ragged row that stops short of the column is passed over.
+    """
+    for row_idx, row in enumerate(table_data[1:], start=1):
         if col_idx >= len(row):
             continue
         text = _strip_markdown_formatting(row[col_idx])[0].strip()
-        if text.startswith('='):
-            continue                                 # a formula teaches nothing
-        parsed = _parse_percent_body(text.rstrip('%'))   # exactly what the
-        if parsed is None:                               # column coercion
-            continue                                     # itself accepts
-        decimals = max(decimals or 0, _percent_decimals(parsed[1]))
-    return None if decimals is None else _percent_format_with(decimals)
+        if text and not text.startswith('='):
+            yield row_idx, text
 
 
 def _parse_column_alignments(cells: list[str]) -> list[str | None]:
@@ -930,40 +1089,108 @@ def _parse_types_directive(value: str) -> list[str | None]:
     return specs
 
 
-def _strip_thousands_separators(text: str) -> str:
+def _strip_thousands_separators(text: str, *, comma3: str = COMMA3_THOUSANDS) -> str:
     """Normalise a numeric string that may carry thousands/decimal separators.
 
-    Handles English (``1,234.56``), European (``1.234,56``) and bare thousands
-    (``1,234``). Returns a string suitable for ``float()``; input that isn't
-    numeric is returned unchanged so the caller's ``float()`` still raises.
+    The normaliser, not the validator: :func:`_parse_decimal_text` checks the
+    grammar first and hands this only text it accepts, so a malformed
+    ``4,3.`` or ``1,5e3`` never gets here to be misread. Returns a string for
+    ``float()``.
 
-    The ambiguous case is a lone comma: ``1,234`` is read as thousands (exactly
-    three trailing digits), ``1,5`` as a European decimal.
+    Handles English (``1,234.56``), European (``1.234,56``, ``1.234.567``) and
+    a lone comma. Both separators present: the last one is the decimal
+    separator. Several commas: thousands. A lone comma is a decimal comma
+    (``1,5``, ``0,125``, ``1234,567``) except the truly ambiguous ``1,234``,
+    which *comma3* decides — thousands unless it is ``'decimal'``; a caller
+    that must not guess refuses it before calling. Under ``'decimal'`` the
+    mirror ``1.234`` is thousands too (#211).
     """
     text = text.strip()
-    if ',' not in text:
-        return text
-    if '.' in text:
+    if ',' in text and '.' in text:
         # Both separators present — the LAST one is the decimal separator.
         if text.rfind(',') > text.rfind('.'):
             return text.replace('.', '').replace(',', '.')  # European 1.234,56
         return text.replace(',', '')                        # English  1,234.56
-    if len(text.rsplit(',', 1)[-1]) == 3:
-        return text.replace(',', '')     # thousands: 1,234
-    return text.replace(',', '.')        # European decimal: 1,5
+    if text.count(',') > 1:
+        return text.replace(',', '')                        # 1,234,567
+    if ',' in text:
+        if _AMBIGUOUS_COMMA_RE.match(text) and comma3 != COMMA3_DECIMAL:
+            return text.replace(',', '')                    # thousands: 1,234
+        return text.replace(',', '.')                       # decimal: 1,5  0,125
+    if text.count('.') > 1:
+        return text.replace('.', '')                        # 1.234.567
+    if comma3 == COMMA3_DECIMAL and _AMBIGUOUS_DOT_RE.match(text):
+        return text.replace('.', '')                        # European 1.234
+    return text
 
 
-def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
+def _currency_symbol(type_spec: str) -> str:
+    """The symbol a ``currency`` spec names; ``$`` when it names none."""
+    symbol = type_spec.split(':', 1)[1].strip() if ':' in type_spec else ''
+    return symbol or '$'
+
+
+def _is_numeric_type(type_spec: str | None) -> bool:
+    """Whether *type_spec* is a ``number``, ``currency`` or ``percent`` column."""
+    return bool(type_spec) and type_spec.strip().lower().startswith(
+        ('number', 'currency', 'percent'))
+
+
+def _numeric_body(text: str, type_spec: str) -> tuple[str, bool]:
+    """The number a cell of a numeric column holds: ``(body, negative)``.
+
+    The one extraction step in front of :func:`_parse_decimal_text`, shared by
+    the coercion in :func:`_apply_column_type` and by the learners that must
+    count exactly what it reads — :func:`_percent_format_for_column` and the
+    evidence pass :func:`_comma3_policies` (#211). *text* is the cell with its
+    whole-cell markdown already stripped.
+
+    - ``percent``: the ``%`` is optional; the rest is left to the grammar,
+      which keeps the #143 whitespace rule (``- 4,3`` stays text).
+    - ``currency``: the symbol is removed, then accounting parentheses —
+      ``($1,234)`` is -1234, flagged by *negative* — each with the whitespace
+      around it.
+    - ``number`` and ``currency``: a sign written apart from its number is
+      closed up (``- 5``, ``€ - 5``, ``- $1,234.50``), as these columns always
+      read it. Any other inner whitespace is left for the grammar, which takes
+      it only as digit grouping: ``1 234,5`` reads, ``10 20`` does not.
+    """
+    type_lower = type_spec.strip().lower()
+    text = text.strip()
+    if type_lower.startswith('percent'):
+        return text.rstrip('%'), False
+    negative = False
+    if type_lower.startswith('currency'):
+        text = text.replace(_currency_symbol(type_spec), '').strip()
+        # Accounting-style negatives wrap the amount in parentheses:
+        # ($1,234) means -1234. float('(1234)') raises, so without this the
+        # cell stayed text.
+        if text.startswith('(') and text.endswith(')'):
+            negative = True
+            text = text[1:-1].strip()
+    text = text.translate(_NUMBER_SPACES).replace(_MINUS_SIGN, '-').strip()
+    return _SIGN_SPACE_RE.sub(r'\1', text), negative
+
+
+def _apply_column_type(cell, raw_text: str, type_spec: str | None, *,
+                       comma3: str = COMMA3_THOUSANDS) -> bool:
     """Apply column type coercion to a cell based on directive.
 
     Returns True if type was applied (caller should skip default processing),
     False if default processing should continue.
 
-    A value the declared type cannot read is kept as text (``nan``/``inf`` in
-    a number or currency column are the pre-existing exception: they become a
-    float, which serialises as an empty cell); ask
+    ``number``, ``currency`` and ``percent`` read their value with
+    :func:`_parse_decimal_text`, after :func:`_numeric_body` has taken off
+    the symbol, the parentheses or the ``%``. *comma3* is how a ``number`` or
+    ``currency`` column reads the truly ambiguous ``4,375``: the table loop
+    passes what the table's own evidence implies (:func:`_comma3_policies`,
+    #211); the default, ``'thousands'``, is the reading with no evidence. A
+    ``percent`` column always refuses that form (:func:`_parse_percent_body`).
+
+    A value the declared type cannot read is kept as text — ``nan`` and
+    ``inf`` too, which no longer become an empty cell (#211); ask
     :func:`_kept_as_text` afterwards whether that happened, so the caller can
-    report it (#143). The signature takes no warnings channel on purpose: the
+    report it (#143). The function takes no warnings channel on purpose: the
     report is one per column, not one per cell, and only the table loop sees
     the whole column.
     """
@@ -989,43 +1216,34 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
             cell.value = clean  # Unrecognized → keep as text
         return True
 
-    # currency:<symbol> — strip symbol and thousands separators, store as number
+    # currency:<symbol> — strip the symbol and any accounting parentheses,
+    # then read the number as a number column does.
     if type_lower.startswith('currency'):
-        symbol = type_spec.split(':', 1)[1].strip() if ':' in type_spec else '$'
-        if not symbol:
-            symbol = '$'  # Default if directive is 'currency:' with no symbol
-        # Strip the currency symbol and any spacing around the number.
-        numeric_str = clean.replace(symbol, '').replace(' ', '').strip()
-        # Accounting-style negatives wrap the amount in parentheses:
-        # ($1,234) means -1234. Strip them and negate after parsing —
-        # float('(1234)') raises, so without this the cell stayed text.
-        is_negative = numeric_str.startswith('(') and numeric_str.endswith(')')
-        if is_negative:
-            numeric_str = numeric_str[1:-1]
-        numeric_str = _strip_thousands_separators(numeric_str)
-        try:
-            value = float(numeric_str)
-            cell.value = -abs(value) if is_negative else value
-            cell.number_format = _CURRENCY_FORMATS.get(symbol, f'#,##0.00 "{symbol}"')
-        except ValueError:
+        symbol = _currency_symbol(type_spec)
+        body, negative = _numeric_body(clean, type_spec)
+        parsed = _parse_decimal_text(body, comma3=comma3)
+        if parsed is None:
             cell.value = clean  # Can't parse → keep as text
+        else:
+            cell.value = -abs(parsed[0]) if negative else parsed[0]
+            cell.number_format = _CURRENCY_FORMATS.get(symbol, f'#,##0.00 "{symbol}"')
         return True
 
-    # number or number:<format> — parse as number with optional format
+    # number or number:<format> — parse as number with optional format.
+    # Was `clean.replace(',', '')`, which turned the European decimal '1,5'
+    # into 15 — a silent 10x error — and then read `0,125` as 125 (#211).
     if type_lower.startswith('number'):
         fmt = type_spec.split(':', 1)[1].strip() if ':' in type_spec else None
-        # Was `clean.replace(',', '')`, which turned the European decimal
-        # '1,5' into 15 — a silent 10x error. _strip_thousands_separators
-        # distinguishes a thousands comma from a decimal comma.
-        numeric_str = _strip_thousands_separators(clean.replace(' ', ''))
-        try:
-            cell.value = float(numeric_str)
+        body, _ = _numeric_body(clean, type_spec)
+        parsed = _parse_decimal_text(body, comma3=comma3)
+        if parsed is None:
+            cell.value = clean
+        else:
+            cell.value = parsed[0]
             if fmt:
                 cell.number_format = fmt
             elif abs(cell.value) >= _THOUSANDS_THRESHOLD:
                 cell.number_format = _thousands_format_for(cell.value)
-        except ValueError:
-            cell.value = clean
         return True
 
     # date or date:<format> — parse with dateutil, apply format
@@ -1045,12 +1263,12 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
     # what declaring it is for. Without one, each literal keeps the precision
     # of its own source text.
     #
-    # European decimals read as they do in a `number` column (`4,3` → 4.3%),
-    # except the ambiguous `0,125` form, which stays text — see
-    # _parse_percent_body (#143).
+    # European decimals read as they do in a `number` column (`4,3` → 4.3%,
+    # `0,125` → 0.125%), except the truly ambiguous `4,375`, which stays
+    # text — see _parse_percent_body (#143, #211).
     if type_lower.startswith('percent'):
         explicit = type_spec.split(':', 1)[1].strip() if ':' in type_spec else ''
-        parsed = _parse_percent_body(clean.rstrip('%'))
+        parsed = _parse_percent_body(_numeric_body(clean, type_spec)[0])
         if parsed is None:
             cell.value = clean
         else:
@@ -1059,12 +1277,6 @@ def _apply_column_type(cell, raw_text: str, type_spec: str | None) -> bool:
         return True
 
     return False
-
-
-def _is_ambiguous_percent(value: str) -> bool:
-    """Whether *value* is the refused ``0,125`` form (for the warning's hint)."""
-    text = value.rstrip('%').translate(_PERCENT_SPACES).replace('\u2212', '-').strip()
-    return bool(_AMBIGUOUS_PERCENT_COMMA_RE.match(text.replace(' ', '')))
 
 
 def _kept_as_text(cell, type_spec: str) -> bool:
@@ -1093,21 +1305,19 @@ def _report_kept_as_text(
     """Report each typed column that kept values as text — once per column.
 
     *kept* maps a 0-based column index to ``[count, first_coordinate,
-    first_value, first_ambiguous_value_or_None]``; the last one is what the
-    percent hint quotes, so a column whose first kept value is ``-`` still
-    gets it. One warning per table column, with the count, rather than one
-    per cell: a column of ``-`` placeholders would otherwise fill the channel
-    up to its cap and push out the formula errors after it (#143).
+    first_value, first_ambiguous_or_None]``; the last one — the compacted
+    ``4,375`` of the first kept value that is the truly ambiguous form — is
+    what the hint quotes, so a column whose first kept value is ``-`` still
+    gets it. In a percent column that form is always refused; in a number or
+    currency column only when the table writes numbers both ways (#211). One
+    warning per table column, with the count, rather than one per cell: a
+    column of ``-`` placeholders would otherwise fill the channel up to its
+    cap and push out the formula errors after it (#143).
     """
     for col_idx, (count, first_cell, first_value, ambiguous) in sorted(kept.items()):
         type_spec = col_types[col_idx]
-        letter = get_column_letter(col_idx + 1)
-        header_row = table_data[0] if table_data else []
-        header = (_strip_markdown_formatting(header_row[col_idx])[0]
-                  if col_idx < len(header_row) else '')
-        column = f"column {letter} ('{header}')" if header else f"column {letter}"
-        quoted = (first_value if len(first_value) <= _KEPT_VALUE_EXCERPT
-                  else first_value[:_KEPT_VALUE_EXCERPT] + '…')
+        column = _column_label(table_data, col_idx)
+        quoted = _excerpt(first_value)
         if count == 1:
             what = (f"'{quoted}' in {column} does not read as {type_spec}, so "
                     f"it was kept as text")
@@ -1116,10 +1326,18 @@ def _report_kept_as_text(
                     f"so they were kept as text — the first is '{quoted}' at "
                     f"{first_cell}")
         hint = ''
-        if type_spec.strip().lower().startswith('percent') and ambiguous is not None:
-            hint = (" A comma followed by exactly three digits is ambiguous in "
-                    "a percent (0,125 is 0.125 or 125): write the decimal with "
-                    "a dot (0.125), or drop the comma if it groups thousands.")
+        if ambiguous is not None:
+            decimal, whole = ambiguous.replace(',', '.'), ambiguous.replace(',', '')
+            if type_spec.strip().lower().startswith('percent'):
+                why = f"ambiguous in a percent ({ambiguous} is {decimal} or {whole})"
+            else:
+                why = (f"ambiguous ({ambiguous} is {decimal} or {whole}), and "
+                       f"this table writes its other numbers both ways — with a "
+                       f"decimal comma and with a decimal point or comma "
+                       f"grouping — so neither reading was chosen")
+            hint = (f" A comma followed by exactly three digits is {why}: write "
+                    f"the decimal with a dot ({decimal}), or drop the comma if "
+                    f"it groups thousands.")
         logger.warning(
             "Sheet '%s' %s: %d value(s) kept as text against type '%s' "
             "(first %s: %r)", worksheet.title, column, count, type_spec,
@@ -1134,6 +1352,147 @@ def _report_kept_as_text(
                 sheet=worksheet.title,
                 cell=first_cell,
             )
+
+
+def _report_ambiguous_read_as_thousands(
+    read: dict[int, list],
+    table_data: list[list[str]],
+    worksheet,
+    warnings,
+) -> None:
+    """Report each column that read ``4,375`` as 4375 on no evidence — once.
+
+    *read* maps a 0-based column index to ``[count, first_coordinate,
+    first_value, first_compact, first_number]``. A ``number`` or ``currency``
+    column whose table shows neither a decimal comma nor a decimal point
+    (:func:`_comma3_policies`) reads the truly ambiguous form as thousands,
+    as it always did; that is right for ``1,234`` in English and a 1000x
+    error for a Czech ``4,375``, so the caller is told, with what to write
+    instead (#211). Severity ``info``: the value is in the file, as the
+    commoner reading. Aggregated per table column like
+    ``typed_value_kept_as_text``, so a column of them is one entry.
+    """
+    for col_idx, (count, first_cell, first_value, compact, number) in sorted(read.items()):
+        column = _column_label(table_data, col_idx)
+        quoted = _excerpt(first_value)
+        decimal, whole = compact.replace(',', '.'), compact.replace(',', '')
+        shown = f"{number:.15g}"
+        if count == 1:
+            what = f"'{quoted}' in {column} was read as {shown}"
+            comma = "a comma before exactly three digits"
+            which = "this one uses"
+            fix = (f"If it is a decimal, write {decimal}; if it is the whole "
+                   f"number, write {whole}")
+        else:
+            what = (f"{count} values in {column} with a comma before exactly "
+                    f"three digits were read as thousands — the first is "
+                    f"'{quoted}' at {first_cell}, read as {shown}")
+            comma = "such a comma"
+            which = "these use"
+            fix = (f"If they are decimals, write them with a dot ({decimal}); "
+                   f"if they are whole numbers, without the comma ({whole})")
+        logger.info(
+            "Sheet '%s' %s: %d value(s) with a comma before three digits read "
+            "as thousands, with no evidence in the table (first %s: %r)",
+            worksheet.title, column, count, first_cell, first_value,
+        )
+        if warnings is not None:
+            warnings.add(
+                W.AMBIGUOUS_COMMA_READ_AS_THOUSANDS,
+                f"{what}: {comma} groups thousands in English but is a "
+                f"decimal comma in most of Europe, and no "
+                f"other number in the table shows which {which}. {fix}, and "
+                f"the reading no longer depends on a guess.",
+                sheet=worksheet.title,
+                cell=first_cell,
+            )
+
+
+def _column_label(table_data: list[list[str]], col_idx: int) -> str:
+    """``column B ('Amount')`` — how a column warning names its column."""
+    letter = get_column_letter(col_idx + 1)
+    header_row = table_data[0] if table_data else []
+    header = (_strip_markdown_formatting(header_row[col_idx])[0]
+              if col_idx < len(header_row) else '')
+    return f"column {letter} ('{header}')" if header else f"column {letter}"
+
+
+def _excerpt(value: str) -> str:
+    """*value* cut to what a column warning quotes."""
+    return (value if len(value) <= _KEPT_VALUE_EXCERPT
+            else value[:_KEPT_VALUE_EXCERPT] + '…')
+
+
+def _evidence_in(table_data: list[list[str]],
+                 columns: list[tuple[int, str | None]]) -> set[str]:
+    """The evidence the literal values of *columns* give: a set of EVIDENCE_*.
+
+    Each value is read as its own column would extract it
+    (:func:`_numeric_body`); an untyped cell (spec None) has only a trailing
+    ``%`` to take off. Stops once both kinds are found.
+    """
+    found: set[str] = set()
+    for col_idx, spec in columns:
+        for _, text in _data_cell_texts(table_data, col_idx):
+            evidence = _decimal_evidence(_numeric_body(text, spec or 'percent')[0])
+            if evidence:
+                found.add(evidence)
+                if len(found) == 2:
+                    return found
+    return found
+
+
+def _comma3_policies(table_data: list[list[str]],
+                     col_types: list[str | None]) -> dict[int, tuple[str, bool]]:
+    """How each ``number`` and ``currency`` column reads ``4,375``: the evidence pass.
+
+    Returns ``{col_idx: (comma3, guessed)}`` for :func:`_apply_column_type`.
+    Nobody declares a locale; the table's own numbers do (#211). Evidence is
+    what a value proves (:func:`_decimal_evidence`): a decimal comma or dot
+    grouping is European, a decimal point or comma grouping English, an
+    integer or the ambiguous form itself nothing. It is looked for in order,
+    and the first place that has any decides:
+
+    1. the column's own literal values;
+    2. every literal in the table's typed ``number``, ``currency`` and
+       ``percent`` columns;
+    3. the numeric-looking cells of its untyped columns.
+
+    European only → ``'decimal'`` (``4,375`` is 4.375, and ``1.234`` is
+    1234). English only → ``'thousands'``. Both → ``'refuse'``: the table
+    writes numbers both ways, so ``4,375`` stays text and is reported by
+    ``typed_value_kept_as_text``. None anywhere → ``'thousands'`` with
+    *guessed* set, so the loop reports each such value as
+    ``ambiguous_comma_read_as_thousands``. Header, formula and empty cells
+    never count (:func:`_data_cell_texts`). A ``percent`` column is not
+    given a policy — it always refuses the form — but its values are
+    evidence for the others.
+    """
+    width = max((len(row) for row in table_data), default=0)
+    typed = [(idx, spec) for idx, spec in enumerate(col_types) if _is_numeric_type(spec)]
+    untyped = [(idx, None) for idx in range(width)
+               if idx >= len(col_types) or not col_types[idx]]
+    table_wide: set[str] | None = None        # steps 2 and 3, on first need
+
+    policies: dict[int, tuple[str, bool]] = {}
+    for idx, spec in typed:
+        if spec.strip().lower().startswith('percent'):
+            continue
+        found = _evidence_in(table_data, [(idx, spec)])
+        if not found:
+            if table_wide is None:
+                table_wide = (_evidence_in(table_data, typed)
+                              or _evidence_in(table_data, untyped))
+            found = table_wide
+        if found == {EVIDENCE_EUROPEAN}:
+            policies[idx] = (COMMA3_DECIMAL, False)
+        elif found == {EVIDENCE_ENGLISH}:
+            policies[idx] = (COMMA3_THOUSANDS, False)
+        elif found:
+            policies[idx] = (COMMA3_REFUSE, False)
+        else:
+            policies[idx] = (COMMA3_THOUSANDS, True)
+    return policies
 
 
 def _number_format_for_type(type_spec: str | None) -> str | None:
@@ -1156,9 +1515,7 @@ def _number_format_for_type(type_spec: str | None) -> str | None:
     type_lower = type_spec.lower()
 
     if type_lower.startswith('currency'):
-        symbol = type_spec.split(':', 1)[1].strip() if ':' in type_spec else '$'
-        if not symbol:
-            symbol = '$'
+        symbol = _currency_symbol(type_spec)
         return _CURRENCY_FORMATS.get(symbol, f'#,##0.00 "{symbol}"')
 
     if type_lower.startswith('percent'):
@@ -1315,10 +1672,18 @@ def add_table_to_sheet(
     if hasattr(table_data, 'col_alignments'):
         col_alignments = table_data.col_alignments
 
+    # How each number/currency column reads the ambiguous `4,375`, from the
+    # table's own evidence (#211): col_idx -> (comma3 policy, guessed).
+    comma3_policies = _comma3_policies(table_data, col_types)
+
     # Typed values the column could not read and kept as text, per column:
-    # col_idx -> [count, first coordinate, first value]. Reported once per
-    # column after the loop by _report_kept_as_text (#143).
+    # col_idx -> [count, first coordinate, first value, first ambiguous].
+    # Reported once per column after the loop by _report_kept_as_text (#143).
     kept_as_text: dict[int, list] = {}
+    # `4,375` read as 4375 with no evidence either way, per column:
+    # col_idx -> [count, first coordinate, first value, compact, number].
+    # Reported once per column by _report_ambiguous_read_as_thousands (#211).
+    read_as_thousands: dict[int, list] = {}
 
     # Styles
     header_font = Font(bold=True, color="FFFFFF")
@@ -1345,13 +1710,22 @@ def add_table_to_sheet(
                     # which Excel shows as #NAME?. Fall through to the formula
                     # path below, which re-applies the column's number format.
                     is_formula = clean_text.startswith('=')
-                    if not is_formula and _apply_column_type(cell, clean_text, col_type):
+                    comma3, guessed = comma3_policies.get(
+                        col_idx, (COMMA3_THOUSANDS, False))
+                    if not is_formula and _apply_column_type(cell, clean_text, col_type,
+                                                             comma3=comma3):
+                        ambiguous = (_ambiguous_comma_text(_numeric_body(clean_text, col_type)[0])
+                                     if _is_numeric_type(col_type) else None)
                         if _kept_as_text(cell, col_type):
                             entry = kept_as_text.setdefault(
                                 col_idx, [0, cell.coordinate, cell.value, None])
                             entry[0] += 1
-                            if entry[3] is None and _is_ambiguous_percent(cell.value):
-                                entry[3] = cell.value
+                            if entry[3] is None:
+                                entry[3] = ambiguous
+                        elif guessed and ambiguous is not None:
+                            entry = read_as_thousands.setdefault(
+                                col_idx, [0, cell.coordinate, clean_text, ambiguous, cell.value])
+                            entry[0] += 1
                         # Type directive handled the cell value — apply formatting, border, alignment
                         apply_cell_formatting(cell, fmt_info)
                         cell.border = border
@@ -1446,6 +1820,7 @@ def add_table_to_sheet(
                     )
 
     _report_kept_as_text(kept_as_text, table_data, col_types, worksheet, warnings)
+    _report_ambiguous_read_as_thousands(read_as_thousands, table_data, worksheet, warnings)
 
     # Column widths — based on clean text length (not raw markdown with formatting markers)
     # When type directives are active, estimate display width from the type spec.
