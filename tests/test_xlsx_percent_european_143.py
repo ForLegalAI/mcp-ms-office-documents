@@ -6,10 +6,12 @@ decided "is this a percent" with a bare ``float()``, and none of them knew the
 decimal comma. They now share ``_parse_percent_body()``.
 
 The one form that is refused is a lone comma before exactly three digits with
-no dot (``0,125``): 0.125 to a European reader and 125 to an English one, so
-guessing either is a 1000x error for the other. It stays text, as it did, and
-a typed column now says so — once per column, with a count — instead of
-handing back a success response with a string where a number was declared.
+no dot after one to three digits (``4,375``): 4.375 to a European reader and
+4375 to an English one, so guessing either is a 1000x error for the other. It
+stays text, as it did, and a typed column now says so — once per column, with
+a count — instead of handing back a success response with a string where a
+number was declared. (``0,125`` was refused too until #211: no locale groups
+thousands behind a zero, so it is now the decimal 0.125 %.)
 
 Every build here goes through ``_markdown_to_excel_buffer()``, the path the
 tool handler uses, and reads the saved workbook back.
@@ -120,17 +122,19 @@ class TestTypedPercentColumn:
 class TestTheAmbiguousForm:
 
     def test_a_comma_before_three_digits_stays_text_and_says_so(self):
-        ws, warnings = build(table("text, percent", "0,125"))
+        # Was "0,125" until #211, which made a zero lead group a decimal.
+        ws, warnings = build(table("text, percent", "4,375"))
 
-        assert ws["B2"].value == "0,125"
+        assert ws["B2"].value == "4,375"
         [warning] = kept_as_text(warnings)
         assert warning.severity == "warning"
         assert warning.location == {"sheet": ws.title, "cell": "B2"}
-        assert "0,125" in warning.message
+        assert "4,375" in warning.message
         assert "ambiguous" in warning.message
 
     def test_the_ambiguous_form_teaches_a_formula_nothing(self):
-        ws, _ = build(table("text, percent", "0,125", "=B2*2"))
+        # Was "0,125" until #211.
+        ws, _ = build(table("text, percent", "4,375", "=B2*2"))
 
         assert ws["B3"].number_format == "0%"     # not 0.000%
 
@@ -257,10 +261,11 @@ class TestTheAmbiguityHint:
 
     def test_the_hint_appears_when_any_kept_value_is_ambiguous(self):
         """The first kept value is `-`; the comma hint must still be there."""
-        _, warnings = build(table("text, percent", "-", "0,125"))
+        # Was "0,125" until #211, which made a zero lead group a decimal.
+        _, warnings = build(table("text, percent", "-", "4,375"))
         [w] = kept_as_text(warnings)
         assert "2 values" in w.message
-        assert "0.125" in w.message, w.message
+        assert "4.375" in w.message, w.message
 
     def test_two_typed_tables_on_one_sheet_report_separately(self):
         md = table("text, percent", "x") + "\n" + table("text, percent", "y")
